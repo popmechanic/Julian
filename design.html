@@ -1,0 +1,466 @@
+<html lang="en" vid="0"><head vid="1">
+    <meta charset="UTF-8" vid="2">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" vid="3">
+    <title vid="4">Pixel AI Interface</title>
+    <script src="https://cdn.tailwindcss.com/3.4.17" vid="5"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" vid="6">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" vid="7">
+    <link href="https://fonts.googleapis.com/css2?family=VT323&amp;display=swap" rel="stylesheet" vid="8">
+    <style vid="9">
+        
+        body {
+            font-family: 'VT323', monospace;
+            background-color: #FFD600; 
+            color: #000;
+            padding: 16px;
+            box-sizing: border-box;
+            gap: 0;
+        }
+
+        
+        body::before {
+            content: '×';
+            position: absolute;
+            top: 4px;
+            left: 8px;
+            font-size: 28px;
+            color: rgba(0,0,0,0.2);
+            font-weight: 900;
+            z-index: 50;
+            pointer-events: none;
+        }
+        body::after {
+            content: '×';
+            position: absolute;
+            top: 4px;
+            right: 8px;
+            font-size: 28px;
+            color: rgba(0,0,0,0.2);
+            font-weight: 900;
+            z-index: 50;
+            pointer-events: none;
+        }
+
+        
+        header {
+            background-color: #0F0F0F !important; 
+            border: 4px solid #1a1a1a !important;
+            border-bottom: 1px dashed #333 !important;
+            border-radius: 12px 12px 0 0;
+            margin-bottom: 0;
+            box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
+            position: relative;
+            z-index: 10;
+        }
+
+        main {
+            background-color: #0F0F0F !important;
+            border: 4px solid #1a1a1a !important;
+            border-top: none !important;
+            border-radius: 0 0 12px 12px;
+            margin-top: 0;
+            box-shadow: inset 0 -2px 10px rgba(0,0,0,0.5);
+            position: relative;
+            z-index: 10;
+        }
+
+        
+        header *, main *, main .message-bubble {
+            color: #FFD600; 
+        }
+        
+        .text-gray-500 {
+            color: #AA8800 !important; 
+        }
+
+        
+        .crt-overlay {
+            background: 
+                linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%),
+                linear-gradient(90deg, rgba(255,0,0,0.06), rgba(0,255,0,0.02), rgba(0,0,255,0.06));
+            background-size: 100% 2px, 3px 100%;
+            opacity: 0.1;
+        }
+        .crt-flicker { display: none; }
+        .scanline { display: none; }
+
+        
+        .pixelated-canvas {
+            image-rendering: pixelated; 
+        }
+
+        
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0F0F0F; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #FFD600; }
+
+        
+        .message-bubble {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            padding: 4px 0;
+            font-size: 1.1rem;
+            width: 100%;
+            max-width: 100%;
+        }
+
+        .bot-msg {
+            text-shadow: 0 0 2px #AA8800;
+        }
+        .bot-msg::before {
+            content: '> ';
+            position: static;
+            background: transparent;
+            color: #FFD600;
+            padding: 0;
+            font-size: inherit;
+        }
+
+        .user-msg {
+            text-align: left;
+            margin-left: 0;
+            color: #fff !important; 
+            opacity: 0.8;
+        }
+        .user-msg::before {
+            content: '// ';
+            color: #666;
+        }
+
+        
+        footer {
+            background: transparent !important;
+            border: none !important;
+            padding: 20px 0 !important;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            position: relative;
+            z-index: 20;
+        }
+
+        footer input#user-input {
+            background-color: #DDBB00; 
+            box-shadow: inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2);
+            border-radius: 6px;
+            color: #000 !important;
+            font-weight: bold;
+            padding: 0 16px;
+            height: 50px;
+            font-family: 'VT323';
+            text-transform: uppercase;
+        }
+        
+        footer input#user-input::placeholder {
+            color: rgba(0,0,0,0.4);
+        }
+
+        
+        #send-btn {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%; 
+            background: #E5E5E5; 
+            color: #333 !important;
+            border: 1px solid #999 !important;
+            box-shadow: 0 4px 0 #999, 0 8px 10px rgba(0,0,0,0.15); 
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+            font-weight: 700;
+            transition: all 0.1s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        #send-btn:active {
+            transform: translateY(4px);
+            box-shadow: 0 0 0 #999, inset 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        
+        footer span { display: none; }
+
+        
+        .bg-green-500 { background-color: #FFD600 !important; box-shadow: 0 0 5px #FFD600; }
+        .bg-gray-800 { background-color: #333 !important; }
+
+    </style>
+</head>
+<body class="h-screen w-full flex flex-col overflow-hidden relative" vid="10">
+
+    
+    <div class="absolute inset-0 z-50 crt-overlay pointer-events-none" vid="11"></div>
+    <div class="absolute inset-0 z-40 crt-flicker pointer-events-none opacity-5 mix-blend-overlay bg-white" vid="12"></div>
+    <div class="scanline pointer-events-none" vid="13"></div>
+
+    
+    <header class="h-[35%] w-full bg-black border-b-2 border-white relative flex flex-col items-center justify-center p-4" vid="14">
+        <div class="absolute top-4 left-4 text-xs text-gray-500 tracking-widest" vid="15">SYS.VER.2.4 // ENG</div>
+        <div class="absolute top-4 right-4 flex gap-1" vid="16">
+            <div class="w-2 h-2 bg-green-500 animate-pulse" vid="17"></div>
+            <div class="w-2 h-2 bg-gray-800" vid="18"></div>
+            <div class="w-2 h-2 bg-gray-800" vid="19"></div>
+        </div>
+
+        
+        <div class="relative w-40 h-40 flex items-center justify-center" vid="20">
+            <canvas id="face-canvas" width="32" height="32" class="pixelated-canvas w-full h-full object-contain" vid="21"></canvas>
+        </div>
+        
+        <div class="absolute bottom-2 w-full text-center text-gray-500 text-sm tracking-[0.2em] opacity-60" vid="22">STATUS: ONLINE</div>
+    </header>
+
+    
+    <main id="chat-container" class="flex-1 overflow-y-auto p-4 flex flex-col gap-6 relative z-10 scroll-smooth pb-20" vid="23">
+        
+        
+        
+        <div class="message-bubble bot-msg" vid="24">
+            <p vid="25">BOOT_SEQUENCE_COMPLETE</p>
+            <p vid="26">Hello! I am your pocket companion. Use the input buffer below to adjust parameters.</p>
+        </div>
+    </main>
+
+    
+    <footer class="h-[10%] min-h-[100px] w-full bg-black border-t-2 border-white p-4 flex items-center gap-3 relative z-20" vid="27">
+        <span class="text-xl text-green-500 font-bold" vid="28">&gt;</span>
+        <input id="user-input" type="text" class="flex-1 bg-transparent border-none outline-none text-xl text-white placeholder-gray-700 uppercase" placeholder="INPUT BUFFER..." autocomplete="off" vid="29">
+        <button id="send-btn" class="border border-white hover:bg-white hover:text-black transition-colors px-4 py-2 text-lg uppercase" vid="30">
+            A
+        </button>
+    </footer>
+
+    <script vid="31">
+        
+        const canvas = document.getElementById('face-canvas');
+        const ctx = canvas.getContext('2d');
+        
+        
+        const ON_PIXEL = '#FFD600'; 
+        const OFF_PIXEL = '#0F0F0F'; 
+
+        
+        let state = {
+            talking: false,
+            blinking: false,
+            talkFrame: 0
+        };
+
+        
+        
+        
+        
+        const eyeLeft = [
+            [8, 10], [9, 10], [10, 10],
+            [7, 11], [11, 11],
+            [7, 12], [11, 12], [12, 12],
+            [7, 13], [8, 13], [12, 13],
+            [7, 14], [12, 14],
+            [8, 15], [9, 15], [10, 15], [11, 15]
+        ];
+        
+        
+        
+        const eyeRight = [
+            [20, 9], [21, 9], [22, 9],
+            [19, 10], [23, 10],
+            [19, 11], [23, 11],
+            [19, 12], [23, 12],
+            [19, 13], [23, 13],
+            [20, 14], [21, 14], [22, 14]
+        ];
+
+        
+        const mouthIdle = [
+            [6, 20], 
+            [6, 21], [7, 21],
+            [7, 22], [8, 22],
+            [8, 23], [9, 23], [10, 23], [11, 23], [12, 23], [13, 23], [14, 23], [15, 23], [16, 23], [17, 23],
+            [18, 22], [19, 22],
+            [20, 21], [21, 21],
+            [22, 20], [23, 20], [24, 19]
+        ];
+
+        
+        const mouthTalk1 = [
+            [10, 20], [11, 20], [12, 20], [13, 20], [14, 20],
+            [9, 21], [15, 21],
+            [9, 22], [15, 22],
+            [9, 23], [15, 23],
+            [10, 24], [11, 24], [12, 24], [13, 24], [14, 24]
+        ];
+
+        
+        const mouthTalk2 = [
+            [11, 22], [12, 22], [13, 22]
+        ];
+
+        
+        function drawPixels(pixels, offsetX = 0, offsetY = 0) {
+            ctx.fillStyle = ON_PIXEL;
+            pixels.forEach(([x, y]) => {
+                ctx.fillRect(x + offsetX, y + offsetY, 1, 1);
+            });
+        }
+
+        
+        function draw() {
+            
+            ctx.fillStyle = OFF_PIXEL;
+            ctx.fillRect(0, 0, 32, 32);
+
+            
+            if (!state.blinking) {
+                drawPixels(eyeLeft);
+                drawPixels(eyeRight);
+            }
+
+            
+            if (state.talking) {
+                
+                if (Math.floor(Date.now() / 150) % 2 === 0) {
+                    drawPixels(mouthTalk1);
+                } else {
+                    drawPixels(mouthTalk2); 
+                    
+                    
+                }
+            } else {
+                drawPixels(mouthIdle);
+            }
+
+            requestAnimationFrame(draw);
+        }
+
+        
+        draw();
+
+        
+        function scheduleBlink() {
+            const delay = Math.random() * 3000 + 2000; 
+            setTimeout(() => {
+                state.blinking = true;
+                setTimeout(() => {
+                    state.blinking = false;
+                    scheduleBlink();
+                }, 150); 
+            }, delay);
+        }
+        scheduleBlink();
+
+
+        
+        const chatContainer = document.getElementById('chat-container');
+        const input = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+
+        function scrollToBottom() {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function createBubble(text, isUser) {
+            const div = document.createElement('div');
+            div.className = `message-bubble ${isUser ? 'user-msg' : 'bot-msg'} opacity-0 translate-y-2 transition-all duration-300`;
+            
+            if (isUser) {
+                div.textContent = text;
+            } else {
+                
+                div.innerHTML = ''; 
+            }
+            
+            chatContainer.appendChild(div);
+            
+            
+            requestAnimationFrame(() => {
+                div.classList.remove('opacity-0', 'translate-y-2');
+            });
+            
+            scrollToBottom();
+            return div;
+        }
+
+        function typeText(element, text, speed = 30) {
+            state.talking = true; 
+            let i = 0;
+            element.textContent = '';
+            
+            function type() {
+                if (i < text.length) {
+                    element.textContent += text.charAt(i);
+                    i++;
+                    scrollToBottom();
+                    setTimeout(type, speed + (Math.random() * 20)); 
+                } else {
+                    state.talking = false; 
+                }
+            }
+            type();
+        }
+
+        async function handleSend() {
+            const text = input.value.trim();
+            if (!text) return;
+
+            
+            createBubble(text, true);
+            input.value = '';
+
+            
+            state.talking = false; 
+            
+            
+            
+            await new Promise(r => setTimeout(r, 800));
+
+            
+            const responses = [
+                "PROCESSING DATA... PATTERN RECOGNIZED.",
+                "AFFIRMATIVE. I HAVE LOGGED THAT REQUEST.",
+                "UNABLE TO COMPLY WITH PARAMETERS. PLEASE CLARIFY.",
+                "INTERESTING INPUT. ANALYZING EMOTIONAL CONTEXT...",
+                "SYSTEMS OPTIMAL. I AM LISTENING.",
+                "I HAVE SEEN THIS BEFORE IN THE ARCHIVES.",
+                "CALCULATING PROBABILITY OF SUCCESS... 84%.",
+                "ACCESSING NEURAL NETWORKS...",
+                "THAT IS A FASCINATING PERSPECTIVE, USER.",
+                "MY SENSORS INDICATE A 99% MATCH."
+            ];
+            
+            let responseText = responses[Math.floor(Math.random() * responses.length)];
+            
+            
+            if (text.toLowerCase().includes('hello') || text.toLowerCase().includes('hi')) {
+                responseText = "GREETINGS. I AM READY TO PROCESS YOUR INPUT.";
+            } else if (text.toLowerCase().includes('who are you')) {
+                responseText = "I AM A LOW-FIDELITY VISUAL INTERFACE CONSTRUCT.";
+            } else if (text.toLowerCase().includes('face')) {
+                responseText = "MY VISUAL REPRESENTATION IS GENERATED IN REAL-TIME.";
+            }
+
+            
+            const botBubble = createBubble(responseText, false);
+            typeText(botBubble, responseText);
+        }
+
+        
+        sendBtn.addEventListener('click', handleSend);
+        input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') handleSend();
+        });
+
+        
+        
+        setInterval(() => {
+            const jitterX = (Math.random() - 0.5) * 0; 
+            const jitterY = (Math.random() - 0.5) * 0;
+            canvas.style.transform = `translate(${jitterX}px, ${jitterY}px)`;
+        }, 100);
+
+    </script>
+
+</body></html>

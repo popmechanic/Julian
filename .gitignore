@@ -1,0 +1,20 @@
+# Environment & secrets
+.env
+.env.*
+claude-auth.env
+
+# Dependencies
+node_modules/
+
+# Build artifacts & backups
+*.bak.html
+index.*.bak.html
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp
+*~
