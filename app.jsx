@@ -283,9 +283,9 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, getAuthHeaders })
   return (
     <div className="flex flex-col h-full" style={{
       background: '#0F0F0F',
-      border: '4px solid #1a1a1a',
+      border: '4px solid #2a2a2a',
       borderRadius: 12,
-      margin: '0 16px 16px 0',
+      margin: 0,
       overflow: 'hidden',
       boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
       position: 'relative',
@@ -553,6 +553,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
       alignItems: 'center',
       justifyContent: 'center',
       padding: 24,
+      backgroundColor: '#FFD600',
     }}>
       <div style={{ width: '100%', maxWidth: 480, display: 'flex', flexDirection: 'column', gap: 20 }}>
         <div style={{ textAlign: 'center' }}>
@@ -579,7 +580,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
 
         <div style={{
           background: '#0F0F0F',
-          border: '4px solid #1a1a1a',
+          border: '4px solid #2a2a2a',
           borderRadius: 12,
           padding: 24,
           boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
@@ -627,7 +628,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
               disabled={isLoading}
               style={{
                 width: '100%',
-                backgroundColor: '#DDBB00',
+                backgroundColor: '#C8A800',
                 boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2)',
                 borderRadius: 6,
                 color: '#000',
@@ -715,7 +716,7 @@ function ChatInput({ onSend, disabled }) {
         disabled={disabled}
         style={{
           flex: 1,
-          backgroundColor: '#DDBB00',
+          backgroundColor: '#C8A800',
           boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2)',
           borderRadius: 6,
           color: '#000',
@@ -1016,6 +1017,40 @@ function App() {
         input::placeholder {
           color: rgba(0,0,0,0.4);
         }
+        body::before {
+          content: '\u00D7';
+          position: fixed;
+          top: 4px;
+          left: 8px;
+          font-size: 28px;
+          color: rgba(0,0,0,0.2);
+          font-weight: 900;
+          z-index: 50;
+          pointer-events: none;
+        }
+        body::after {
+          content: '\u00D7';
+          position: fixed;
+          top: 4px;
+          right: 8px;
+          font-size: 28px;
+          color: rgba(0,0,0,0.2);
+          font-weight: 900;
+          z-index: 50;
+          pointer-events: none;
+        }
+        /* Override HiddenMenuWrapper dark background to create yellow device frame */
+        :root {
+          --hm-content-bg: #FFD600 !important;
+        }
+        @media (prefers-color-scheme: dark) {
+          :root {
+            --hm-content-bg: #FFD600 !important;
+          }
+        }
+        #container {
+          background-color: #FFD600 !important;
+        }
       `}</style>
 
       {setupNeeded === null ? (
@@ -1027,6 +1062,7 @@ function App() {
           justifyContent: 'center',
           flexDirection: 'column',
           gap: 16,
+          backgroundColor: '#FFD600',
         }}>
           <PixelFace talking={false} size={100} />
           <div style={{
@@ -1053,12 +1089,13 @@ function App() {
           alignItems: 'center',
           justifyContent: 'center',
           padding: 16,
+          backgroundColor: '#FFD600',
         }}>
           <div style={{ width: '100%', maxWidth: 520, display: 'flex', flexDirection: 'column', gap: 0 }}>
             {/* Header panel */}
             <div style={{
               background: '#0F0F0F',
-              border: '4px solid #1a1a1a',
+              border: '4px solid #2a2a2a',
               borderBottom: '1px dashed #333',
               borderRadius: '12px 12px 0 0',
               padding: 24,
@@ -1100,7 +1137,7 @@ function App() {
             {/* Main panel */}
             <div style={{
               background: '#0F0F0F',
-              border: '4px solid #1a1a1a',
+              border: '4px solid #2a2a2a',
               borderTop: 'none',
               borderRadius: '0 0 12px 12px',
               padding: 24,
@@ -1151,7 +1188,8 @@ function App() {
           display: 'flex',
           height: '100vh',
           padding: 16,
-          gap: 0,
+          gap: 16,
+          backgroundColor: '#FFD600',
         }}>
           {/* Left column: Chat sidebar */}
           <div style={{
@@ -1165,7 +1203,7 @@ function App() {
             {/* Face header */}
             <div style={{
               background: '#0F0F0F',
-              border: '4px solid #1a1a1a',
+              border: '4px solid #2a2a2a',
               borderBottom: '1px dashed #333',
               borderRadius: '12px 12px 0 0',
               padding: '12px 16px',
@@ -1230,7 +1268,7 @@ function App() {
             <div style={{
               flex: 1,
               background: '#0F0F0F',
-              border: '4px solid #1a1a1a',
+              border: '4px solid #2a2a2a',
               borderTop: 'none',
               borderBottom: 'none',
               overflowY: 'auto',
@@ -1258,7 +1296,7 @@ function App() {
             {/* Input footer */}
             <div style={{
               background: '#0F0F0F',
-              border: '4px solid #1a1a1a',
+              border: '4px solid #2a2a2a',
               borderTop: '1px dashed #333',
               borderRadius: '0 0 12px 12px',
               padding: '0 16px',
@@ -1269,7 +1307,7 @@ function App() {
           </div>
 
           {/* Right column: Artifact viewer */}
-          <div style={{ flex: 1, minWidth: 0, paddingLeft: 0 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
             <ArtifactViewer
               activeArtifact={activeArtifact}
               artifacts={artifacts}
