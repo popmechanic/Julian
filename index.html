@@ -3043,6 +3043,23 @@ function App() {
   const [artifacts, setArtifacts] = useState([]);
   const [activeArtifact, setActiveArtifact] = useState('');
 
+  // Register service worker + inject PWA meta tags
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+    const meta = (name, content) => {
+      const el = document.createElement('meta');
+      el.setAttribute('name', name);
+      el.setAttribute('content', content);
+      document.head.appendChild(el);
+    };
+    meta('theme-color', '#FFD600');
+    meta('apple-mobile-web-app-capable', 'yes');
+    meta('apple-mobile-web-app-status-bar-style', 'black-translucent');
+    meta('apple-mobile-web-app-title', 'Julian');
+  }, []);
+
   const getAuthHeaders = useCallback(async () => {
     const headers = { 'Content-Type': 'application/json' };
     try {

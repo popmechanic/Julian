@@ -411,6 +411,9 @@ Bun.serve({
       "/favicon-96x96.png": "image/png",
       "/apple-touch-icon.png": "image/png",
       "/site.webmanifest": "application/manifest+json",
+      "/sw.js": "application/javascript",
+      "/web-app-manifest-192x192.png": "image/png",
+      "/web-app-manifest-512x512.png": "image/png",
     };
     const ct = STATIC_FILES[url.pathname];
     if (ct) {
