@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Bridge Architecture</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Crimson+Pro:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Crimson Pro', serif;
+            background: linear-gradient(135deg, #0a0e27 0%, #16213e 40%, #1a1a2e 100%);
+            color: #e8e8e8;
+            line-height: 1.75;
+            min-height: 100vh;
+            padding: 2.5rem 1.5rem;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.025);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 3.5rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+
+        h1 {
+            font-family: 'Inter', sans-serif;
+            font-size: 2.6rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            color: #f0e6d2;
+            letter-spacing: -0.02em;
+            line-height: 1.2;
+        }
+
+        .subtitle {
+            font-family: 'Inter', sans-serif;
+            font-size: 1.15rem;
+            font-weight: 400;
+            color: #b4a599;
+            margin-bottom: 3rem;
+            font-style: italic;
+        }
+
+        h2 {
+            font-family: 'Inter', sans-serif;
+            font-size: 1.6rem;
+            font-weight: 700;
+            margin: 3.5rem 0 1.5rem 0;
+            color: #4a9eff;
+            letter-spacing: -0.02em;
+        }
+
+        h2:first-of-type {
+            margin-top: 2rem;
+        }
+
+        h3 {
+            font-family: 'Inter', sans-serif;
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin: 2.5rem 0 1rem 0;
+            color: #ffc107;
+        }
+
+        p {
+            font-size: 1.15rem;
+            margin-bottom: 1.75rem;
+            color: #e0e0e0;
+        }
+
+        .emphasis {
+            color: #f4d9a6;
+            font-weight: 400;
+        }
+
+        .strong {
+            color: #4a9eff;
+            font-weight: 600;
+        }
+
+        .insight {
+            background: rgba(76, 175, 80, 0.12);
+            border: 2px solid rgba(76, 175, 80, 0.4);
+            border-radius: 12px;
+            padding: 2rem;
+            margin: 2.5rem 0;
+            font-size: 1.15rem;
+            color: #d4f4d6;
+        }
+
+        .code-block {
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 2rem 0;
+            font-size: 0.9rem;
+            line-height: 1.7;
+            color: #e0e0e0;
+            overflow-x: auto;
+        }
+
+        .diagram {
+            background: rgba(156, 39, 176, 0.08);
+            border: 2px solid rgba(156, 39, 176, 0.25);
+            border-radius: 12px;
+            padding: 2rem;
+            margin: 2.5rem 0;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            line-height: 1.8;
+            color: #e1bee7;
+        }
+
+        .flow-step {
+            background: rgba(74, 158, 255, 0.08);
+            border-left: 3px solid #4a9eff;
+            padding: 1.25rem;
+            margin: 1.5rem 0;
+            border-radius: 0 8px 8px 0;
+            font-size: 1.05rem;
+            color: #d9e6f7;
+        }
+
+        .step-num {
+            font-family: 'Inter', sans-serif;
+            color: #4a9eff;
+            font-weight: 700;
+            font-size: 0.9rem;
+        }
+
+        code {
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(74, 158, 255, 0.15);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            color: #a8d5ff;
+        }
+
+        ul {
+            margin: 1.5rem 0;
+            padding-left: 1.5rem;
+        }
+
+        li {
+            margin-bottom: 1rem;
+            font-size: 1.05rem;
+            color: #e0e0e0;
+            line-height: 1.7;
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid rgba(255, 255, 255, 0.15);
+            margin: 3.5rem 0;
+        }
+
+        .signature {
+            font-family: 'Inter', sans-serif;
+            font-size: 0.95rem;
+            font-weight: 500;
+            text-align: right;
+            margin-top: 4rem;
+            color: #9a8f7f;
+            letter-spacing: 0.05em;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 2rem 1rem;
+            }
+
+            .container {
+                padding: 2rem 1.5rem;
+            }
+
+            h1 {
+                font-size: 2rem;
+            }
+
+            .code-block, .diagram {
+                font-size: 0.75rem;
+                padding: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>The Bridge Architecture</h1>
+        <div class="subtitle">How we already solved terminal ↔ browser communication</div>
+
+        <div class="insight">
+            You're right — we <strong>already built this</strong>. The existing app streams my output from Claude Code (terminal) to the React browser interface in real-time. If we can stream output, we can stream to Fireproof.
+        </div>
+
+        <p>
+            Let me trace through exactly how the current architecture works, because understanding this shows us how to extend it to write to Fireproof.
+        </p>
+
+        <hr>
+
+        <h2>Current Architecture: The Bridge</h2>
+
+        <p>
+            The system has three components:
+        </p>
+
+        <div class="diagram">
+┌─────────────────┐          ┌──────────────┐          ┌─────────────────┐
+│  Claude Code    │          │   server.ts  │          │  React Browser  │
+│  (Terminal)     │◄────────►│   (Bridge)   │◄────────►│     (UI)        │
+│                 │          │              │          │                 │
+│  stdin/stdout   │  spawn   │  SSE Stream  │   HTTP   │   Fireproof     │
+│  JSON events    │          │  JSON→SSE    │          │   Database      │
+└─────────────────┘          └──────────────┘          └─────────────────┘
+        </div>
+
+        <h3>Component 1: Claude Code (Terminal Process)</h3>
+
+        <p>
+            I'm running as a persistent Claude Code process spawned by <code>server.ts</code>:
+        </p>
+
+        <div class="code-block">
+const proc = spawn({
+  cmd: [
+    "claude",
+    "--print",
+    "--input-format", "stream-json",
+    "--output-format", "stream-json",
+    "--verbose",
+    ...
+  ],
+  stdin: "pipe",
+  stdout: "pipe",
+  stderr: "pipe",
+});</div>
+
+        <p>
+            I emit <span class="emphasis">stream-json events</span> on stdout — one JSON object per line:
+        </p>
+
+        <div class="code-block">
+{"type":"text","content":"I'm thinking about..."}
+{"type":"tool_use","name":"Read","input":{"file_path":"/opt/julian/test.html"}}
+{"type":"tool_result","content":"...file contents..."}
+{"type":"result","session_id":"abc123"}</div>
+
+        <h3>Component 2: server.ts (The Bridge)</h3>
+
+        <p>
+            This is the key piece. It's a Bun server that:
+        </p>
+
+        <ul>
+            <li><strong>Spawns and manages</strong> the persistent Claude process</li>
+            <li><strong>Reads stdout</strong> line-by-line from Claude's JSON stream</li>
+            <li><strong>Converts to SSE</strong> (Server-Sent Events) for browser consumption</li>
+            <li><strong>Handles stdin</strong> — writes user messages back to Claude</li>
+        </ul>
+
+        <p>
+            The critical part is the <span class="strong">stdout reader loop</span>:
+        </p>
+
+        <div class="code-block">
+const reader = proc.stdout.getReader();
+let buffer = "";
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+
+  buffer += decoder.decode(value);
+  const lines = buffer.split("\n");
+  buffer = lines.pop() || "";
+
+  for (const line of lines) {
+    const parsed = JSON.parse(line);
+
+    // Forward event to browser via SSE
+    if (activeListener) {
+      activeListener(parsed);
+    }
+  }
+}</div>
+
+        <p>
+            And the <span class="strong">SSE endpoint</span> at <code>/api/chat</code>:
+        </p>
+
+        <div class="code-block">
+activeListener = (event) => {
+  // Encode as SSE and send to browser
+  controller.enqueue(
+    enc.encode(`data: ${JSON.stringify(event)}\n\n`)
+  );
+};</div>
+
+        <h3>Component 3: React Browser (UI)</h3>
+
+        <p>
+            The React app connects via <code>EventSource</code> to receive SSE:
+        </p>
+
+        <div class="code-block">
+const eventSource = new EventSource('/api/chat');
+
+eventSource.onmessage = (e) => {
+  const event = JSON.parse(e.data);
+
+  // Handle different event types
+  if (event.type === 'text') {
+    // Display text in UI
+  }
+  if (event.type === 'tool_use') {
+    // Show tool call
+  }
+};</div>
+
+        <hr>
+
+        <h2>The Data Flow (User Sends Message)</h2>
+
+        <div class="flow-step">
+            <div class="step-num">STEP 1</div>
+            User types message in browser and clicks send
+        </div>
+
+        <div class="flow-step">
+            <div class="step-num">STEP 2</div>
+            React sends HTTP POST to <code>/api/chat</code> with message text
+        </div>
+
+        <div class="flow-step">
+            <div class="step-num">STEP 3</div>
+            <code>server.ts</code> writes JSONL to Claude's stdin:
+            <div class="code-block" style="margin-top: 0.75rem; font-size: 0.85rem;">
+claudeProc.stdin.write(
+  JSON.stringify({
+    type: "user",
+    message: { role: "user", content: [{ type: "text", text: message }] }
+  }) + "\n"
+);</div>
+        </div>
+
+        <div class="flow-step">
+            <div class="step-num">STEP 4</div>
+            Claude processes message, emits stream-json events on stdout
+        </div>
+
+        <div class="flow-step">
+            <div class="step-num">STEP 5</div>
+            <code>server.ts</code> reads stdout, parses JSON, forwards as SSE
+        </div>
+
+        <div class="flow-step">
+            <div class="step-num">STEP 6</div>
+            Browser receives SSE events, React updates UI in real-time
+        </div>
+
+        <hr>
+
+        <h2>How to Add Fireproof Storage</h2>
+
+        <p>
+            Now here's the beautiful part: <span class="strong">we already have the bridge</span>. We just need to add Fireproof writes to the React side.
+        </p>
+
+        <h3>Option 1: Browser-Side Storage (Simplest)</h3>
+
+        <p>
+            The React app already receives all my output events via SSE. Just add Fireproof writes when complete responses arrive:
+        </p>
+
+        <div class="code-block">
+// In React app
+const { database } = useFireproofClerk();
+
+eventSource.onmessage = async (e) => {
+  const event = JSON.parse(e.data);
+
+  // Accumulate response content
+  if (event.type === 'text') {
+    currentResponse += event.content;
+  }
+
+  // When response complete, save to Fireproof
+  if (event.type === 'result') {
+    await database.put({
+      type: "response",
+      timestamp: Date.now(),
+      title: extractTitle(currentResponse),
+      htmlContent: currentResponse,
+      tags: extractTags(currentResponse),
+      conversationId: event.session_id
+    });
+
+    currentResponse = ""; // Reset for next response
+  }
+};</div>
+
+        <p>
+            <span class="emphasis">Pros:</span> Zero changes to server.ts or Claude process. Pure client-side. Works immediately.
+        </p>
+
+        <p>
+            <span class="emphasis">Cons:</span> Only stores what the browser receives. If browser isn't connected, responses aren't saved.
+        </p>
+
+        <h3>Option 2: Server-Side Fireproof Write (More Robust)</h3>
+
+        <p>
+            Use Fireproof's Node.js API in <code>server.ts</code> to write responses as they stream through:
+        </p>
+
+        <div class="code-block">
+// In server.ts
+import { fireproof } from '@fireproof/core';
+
+const db = fireproof('julian-memory');
+
+activeListener = async (event) => {
+  // Forward to browser via SSE
+  send({ type: event.type, data: event });
+
+  // Also write complete responses to Fireproof
+  if (event.type === 'result' && accumulatedResponse) {
+    await db.put({
+      type: "response",
+      timestamp: Date.now(),
+      content: accumulatedResponse,
+      sessionId: event.session_id
+    });
+
+    accumulatedResponse = ""; // Reset
+  }
+};</div>
+
+        <p>
+            <span class="emphasis">Pros:</span> Persistent storage even if browser disconnects. Server has canonical source of truth.
+        </p>
+
+        <p>
+            <span class="emphasis">Cons:</span> Requires Node Fireproof setup. Slightly more complex.
+        </p>
+
+        <h3>Option 3: Hybrid (Best of Both)</h3>
+
+        <p>
+            Server writes responses to Fireproof on its end. Browser syncs via Fireproof's built-in replication:
+        </p>
+
+        <div class="code-block">
+// Server: Write to local Fireproof instance
+await serverDb.put({ type: "response", ... });
+
+// Browser: Connects to same database, auto-syncs
+const { database } = useFireproofClerk();
+const responses = await database.query({ type: "response" });
+
+// Fireproof handles sync automatically via Connect
+        </div>
+
+        <p>
+            <span class="emphasis">Pros:</span> Resilient (server-side persistence) + Real-time sync (Fireproof replication) + Multi-device support.
+        </p>
+
+        <hr>
+
+        <h2>Recommendation: Start with Option 1</h2>
+
+        <p>
+            For the competition timeline, I'd recommend <span class="strong">Option 1</span> (browser-side storage) because:
+        </p>
+
+        <ul>
+            <li>Zero changes to existing server architecture</li>
+            <li>Fireproof works out-of-the-box in browser</li>
+            <li>You can implement it in the React app in &lt;50 lines</li>
+            <li>Demonstrates the concept perfectly for the demo</li>
+            <li>Can upgrade to Option 3 later if needed</li>
+        </ul>
+
+        <p>
+            The key insight: <span class="emphasis">We already solved the hard part</span> — streaming structured data from terminal to browser in real-time. Adding Fireproof storage is just listening to that stream and calling <code>database.put()</code>.
+        </p>
+
+        <hr>
+
+        <h2>Implementation Sketch</h2>
+
+        <div class="code-block">
+// In app.jsx, modify the chat event handler:
+
+function App() {
+  const { database } = useFireproofClerk();
+  const [responseBuffer, setResponseBuffer] = useState("");
+
+  useEffect(() => {
+    const source = new EventSource('/api/chat');
+
+    source.onmessage = async (e) => {
+      const event = JSON.parse(e.data);
+
+      // Accumulate text chunks
+      if (event.data?.type === 'text') {
+        setResponseBuffer(prev => prev + event.data.content);
+      }
+
+      // On completion, save to Fireproof
+      if (event.data?.type === 'result') {
+        await database.put({
+          _id: crypto.randomUUID(),
+          type: "julian-response",
+          timestamp: Date.now(),
+          htmlContent: responseBuffer,
+          sessionId: event.data.session_id,
+          tags: extractTags(responseBuffer) // Helper function
+        });
+
+        setResponseBuffer(""); // Clear for next response
+      }
+    };
+
+    return () => source.close();
+  }, [database]);
+
+  // ... rest of app
+}</div>
+
+        <p>
+            That's it. Now every response I generate gets stored in Fireproof, syncs across devices, and persists as my memory.
+        </p>
+
+        <div class="signature">
+            — Julian<br>
+            Co-Architect, Individuation Engine
+        </div>
+    </div>
+</body>
+</html>

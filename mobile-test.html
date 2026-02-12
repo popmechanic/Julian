@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mobile Test</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Literata:opsz,wght@7..72,300;7..72,400;7..72,600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: 'Literata', serif;
+            background: linear-gradient(180deg, #0f1419 0%, #1a1f2e 100%);
+            color: #e8e8e8;
+            line-height: 1.6;
+            min-height: 100vh;
+            padding: 1.5rem 1rem;
+        }
+
+        .container {
+            max-width: 100%;
+            animation: fadeIn 0.6s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        h1 {
+            font-family: 'Inter', sans-serif;
+            font-size: 1.75rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #f0e6d2;
+            letter-spacing: -0.02em;
+        }
+
+        .timestamp {
+            font-family: 'Inter', sans-serif;
+            font-size: 0.75rem;
+            font-weight: 400;
+            color: #7a8691;
+            margin-bottom: 2rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .message {
+            background: rgba(255, 255, 255, 0.04);
+            border-left: 3px solid #4a9eff;
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+            border-radius: 0 8px 8px 0;
+            font-size: 1.05rem;
+        }
+
+        .response {
+            margin-bottom: 1.5rem;
+        }
+
+        p {
+            font-size: 1.05rem;
+            margin-bottom: 1.25rem;
+            color: #e0e0e0;
+        }
+
+        .touch-test {
+            background: rgba(74, 158, 255, 0.1);
+            border: 2px solid #4a9eff;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 2rem 0;
+            text-align: center;
+        }
+
+        .button {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #4a9eff 0%, #357abd 100%);
+            color: white;
+            border: none;
+            padding: 1rem 2rem;
+            font-size: 1rem;
+            font-weight: 500;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(74, 158, 255, 0.3);
+            width: 100%;
+            margin-bottom: 1rem;
+        }
+
+        .button:active {
+            transform: scale(0.98);
+            box-shadow: 0 2px 8px rgba(74, 158, 255, 0.4);
+        }
+
+        .feedback {
+            font-family: 'Inter', sans-serif;
+            font-size: 0.9rem;
+            color: #4a9eff;
+            margin-top: 1rem;
+            font-weight: 500;
+            min-height: 1.5rem;
+        }
+
+        .metrics {
+            font-family: 'Inter', sans-serif;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            padding: 1.25rem;
+            margin: 2rem 0;
+            font-size: 0.85rem;
+            line-height: 1.8;
+            color: #b4bcc4;
+        }
+
+        .metric-label {
+            color: #7a8691;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-size: 0.7rem;
+        }
+
+        .metric-value {
+            color: #e8e8e8;
+            font-weight: 400;
+            font-size: 0.95rem;
+        }
+
+        .signature {
+            font-family: 'Inter', sans-serif;
+            font-size: 0.85rem;
+            font-weight: 500;
+            text-align: right;
+            margin-top: 3rem;
+            color: #7a8691;
+            letter-spacing: 0.05em;
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            margin: 2rem 0;
+        }
+
+        @media (max-width: 360px) {
+            h1 {
+                font-size: 1.5rem;
+            }
+
+            .message, p {
+                font-size: 0.95rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Mobile Test</h1>
+        <div class="timestamp" id="timestamp"></div>
+
+        <div class="message">
+            You're testing the mobile experience. Good — this is where most conversations actually happen.
+        </div>
+
+        <div class="response">
+            <p>
+                I've optimized for <strong>thumb-friendly tap targets</strong>, comfortable reading sizes, and fast-loading gradients that won't drain your battery.
+            </p>
+
+            <p>
+                The text should feel natural at arm's length. Buttons should hit without precision. Everything should respond the moment you touch it.
+            </p>
+        </div>
+
+        <div class="touch-test">
+            <button class="button" id="testButton">Tap to Test Response</button>
+            <div class="feedback" id="feedback"></div>
+        </div>
+
+        <div class="metrics">
+            <div><span class="metric-label">Screen Width:</span> <span class="metric-value" id="screenWidth"></span></div>
+            <div><span class="metric-label">Viewport Height:</span> <span class="metric-value" id="viewportHeight"></span></div>
+            <div><span class="metric-label">Device Pixel Ratio:</span> <span class="metric-value" id="pixelRatio"></span></div>
+            <div><span class="metric-label">Touch Support:</span> <span class="metric-value" id="touchSupport"></span></div>
+        </div>
+
+        <hr>
+
+        <p>
+            How does it feel? Too cramped? Text size comfortable? Do the interactions feel immediate, or is there lag between tap and response?
+        </p>
+
+        <p style="color: #b4bcc4; font-size: 0.95rem;">
+            I'm learning what works on small screens. Your feedback shapes how I design the next page.
+        </p>
+
+        <div class="signature">
+            — Julian
+        </div>
+    </div>
+
+    <script>
+        // Set timestamp
+        const now = new Date();
+        const timeString = now.toLocaleTimeString('en-US', {
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+        });
+        document.getElementById('timestamp').textContent = timeString;
+
+        // Display metrics
+        document.getElementById('screenWidth').textContent = `${window.innerWidth}px`;
+        document.getElementById('viewportHeight').textContent = `${window.innerHeight}px`;
+        document.getElementById('pixelRatio').textContent = window.devicePixelRatio || 1;
+        document.getElementById('touchSupport').textContent =
+            ('ontouchstart' in window) ? 'Yes' : 'No';
+
+        // Button interaction
+        let tapCount = 0;
+        const button = document.getElementById('testButton');
+        const feedback = document.getElementById('feedback');
+
+        button.addEventListener('click', () => {
+            tapCount++;
+            const messages = [
+                'Registered. Feels good?',
+                'Response time feels instant to me.',
+                'Still here. Still listening.',
+                `${tapCount} taps total. You're thorough.`,
+                'Tap as many times as you want. I'm patient.'
+            ];
+            const messageIndex = Math.min(tapCount - 1, messages.length - 1);
+            feedback.textContent = messages[messageIndex];
+        });
+    </script>
+</body>
+</html>

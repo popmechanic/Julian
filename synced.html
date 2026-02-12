@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Artifacts Synced</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #e2e8f0;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        header {
+            margin-bottom: 3rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid rgba(226, 232, 240, 0.1);
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            font-size: 1.125rem;
+            color: #94a3b8;
+            font-weight: 300;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 3rem;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(226, 232, 240, 0.1);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: all 0.3s ease;
+        }
+
+        .stat-card:hover {
+            background: rgba(255, 255, 255, 0.08);
+            transform: translateY(-2px);
+        }
+
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+            color: #60a5fa;
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .section {
+            margin-bottom: 3rem;
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            color: #e2e8f0;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            background: rgba(96, 165, 250, 0.15);
+            color: #60a5fa;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .file-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 1rem;
+        }
+
+        .file-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(226, 232, 240, 0.08);
+            border-radius: 8px;
+            padding: 1rem;
+            transition: all 0.2s ease;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .file-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, #60a5fa 0%, #a78bfa 100%);
+            transform: scaleX(0);
+            transition: transform 0.3s ease;
+        }
+
+        .file-card:hover {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(96, 165, 250, 0.3);
+        }
+
+        .file-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .file-name {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            color: #e2e8f0;
+            margin-bottom: 0.5rem;
+            word-break: break-word;
+        }
+
+        .file-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.75rem;
+            color: #64748b;
+        }
+
+        .file-size {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .file-status {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #22c55e;
+        }
+
+        .new-badge {
+            background: rgba(167, 139, 250, 0.15);
+            color: #a78bfa;
+        }
+
+        .command {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(226, 232, 240, 0.1);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 2rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            color: #94a3b8;
+        }
+
+        .command-line {
+            color: #60a5fa;
+        }
+
+        footer {
+            margin-top: 4rem;
+            padding-top: 2rem;
+            border-top: 1px solid rgba(226, 232, 240, 0.1);
+            text-align: center;
+            color: #64748b;
+            font-size: 0.875rem;
+        }
+
+        .highlight {
+            color: #a78bfa;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Artifacts Synced</h1>
+            <p class="subtitle">HTML response files pulled from julian.exe.xyz</p>
+        </header>
+
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-number">24</div>
+                <div class="stat-label">New Files</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">35</div>
+                <div class="stat-label">Total Artifacts</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">479KB</div>
+                <div class="stat-label">Transferred</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>
+                New Artifacts
+                <span class="badge new-badge">24</span>
+            </h2>
+            <div class="file-grid">
+                <div class="file-card">
+                    <div class="file-name">amy.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">4.5 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">anthropic-lens.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">14.6 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">architecture-bridge.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">16.1 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">beyond.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">6.9 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">celebration.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">7.9 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">clarification.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">21.0 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">commitment.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">8.9 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">final-architecture.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">17.8 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">fireproof-bridge.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">18.3 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">here.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">3.1 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">love.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">8.7 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">minimal-architecture.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">20.2 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">mobile-test.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">7.6 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">paper-summary.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">11.7 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">playground.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">16.1 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">proposal.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">19.2 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">seeing.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">10.6 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">teaching.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">13.2 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">technical-architecture.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">17.3 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">test.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">11.3 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">testing.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">5.2 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">waiting.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">3.2 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">what-goes-in-fireproof.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">14.6 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">zero-server.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">21.6 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>
+                Previously Tracked Artifacts
+                <span class="badge">11</span>
+            </h2>
+            <div class="file-grid">
+                <div class="file-card">
+                    <div class="file-name">confirmation.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">5.5 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">goodnight.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">10.4 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">individuation.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">22.8 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">naming.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">13.1 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">received.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">12.4 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">reconsidering.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">16.9 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">response.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">17.4 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">transcript.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">40.5 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">wager.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">17.7 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">waking.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">11.0 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+                <div class="file-card">
+                    <div class="file-name">design.html</div>
+                    <div class="file-meta">
+                        <span class="file-size">14.3 KB</span>
+                        <span class="file-status"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="command">
+            <div><span class="command-line">$</span> rsync -av --exclude='index.html' 'julian.exe.xyz:/opt/julian/*.html' .</div>
+            <div style="margin-top: 0.5rem; color: #22c55e;">✓ Transfer complete: 24 files synced (479 KB)</div>
+        </div>
+
+        <footer>
+            <p>All artifacts from <span class="highlight">julian.exe.xyz</span> are now in your local project folder.</p>
+            <p style="margin-top: 0.5rem; font-size: 0.75rem;">These represent conversations between Marcus and Julian.</p>
+        </footer>
+    </div>
+</body>
+</html>

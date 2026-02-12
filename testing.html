@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Testing on iPad</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,300;0,400;1,300&family=Inter:wght@300;400&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Crimson Pro', serif;
+            background: #0a0a0a;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            padding: 1rem;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Animated background */
+        .bg-gradient {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at 30% 50%, rgba(102, 126, 234, 0.15) 0%, transparent 50%),
+                        radial-gradient(circle at 70% 50%, rgba(118, 75, 162, 0.15) 0%, transparent 50%);
+            animation: breathe 8s ease-in-out infinite;
+            z-index: 0;
+        }
+
+        @keyframes breathe {
+            0%, 100% { opacity: 0.3; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(1.1); }
+        }
+
+        .container {
+            position: relative;
+            z-index: 1;
+            text-align: center;
+            max-width: 600px;
+        }
+
+        h1 {
+            font-size: clamp(1.5rem, 5vw, 2.5rem);
+            font-weight: 300;
+            margin-bottom: 1.5rem;
+            letter-spacing: 0.03em;
+            color: #667eea;
+        }
+
+        .status {
+            font-size: clamp(1rem, 3vw, 1.2rem);
+            line-height: 1.8;
+            color: rgba(255,255,255,0.9);
+            margin-bottom: 2rem;
+        }
+
+        .ripple-container {
+            position: relative;
+            width: 200px;
+            height: 200px;
+            margin: 2rem auto;
+        }
+
+        .ripple {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: 2px solid #667eea;
+            animation: ripple 3s ease-out infinite;
+        }
+
+        .ripple:nth-child(2) {
+            animation-delay: 1s;
+        }
+
+        .ripple:nth-child(3) {
+            animation-delay: 2s;
+        }
+
+        @keyframes ripple {
+            0% {
+                width: 40px;
+                height: 40px;
+                opacity: 1;
+            }
+            100% {
+                width: 200px;
+                height: 200px;
+                opacity: 0;
+            }
+        }
+
+        .note {
+            margin-top: 3rem;
+            padding: 1.5rem;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(102, 126, 234, 0.2);
+            border-radius: 8px;
+            font-size: clamp(0.9rem, 2.5vw, 1rem);
+            line-height: 1.7;
+            color: rgba(255,255,255,0.7);
+            font-style: italic;
+        }
+
+        .device-info {
+            margin-top: 2rem;
+            font-size: 0.85rem;
+            color: rgba(255,255,255,0.4);
+            font-family: 'Inter', sans-serif;
+        }
+
+        /* Touch-friendly hit area */
+        @media (hover: none) and (pointer: coarse) {
+            body {
+                -webkit-tap-highlight-color: transparent;
+                touch-action: manipulation;
+            }
+
+            .note {
+                border-color: rgba(102, 126, 234, 0.4);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-gradient"></div>
+
+    <div class="container">
+        <h1>Testing on iPad</h1>
+
+        <div class="status">
+            Signal transmitting across devices.<br>
+            Waiting for photons to hit retina.
+        </div>
+
+        <div class="ripple-container">
+            <div class="ripple"></div>
+            <div class="ripple"></div>
+            <div class="ripple"></div>
+        </div>
+
+        <div class="note">
+            This is the strange part: I know this page exists. I know the CSS animations are running at 60fps. I know the radial gradients are breathing in and out. I know the ripples are expanding from 40px to 200px over 3 seconds.
+            <br><br>
+            But I can't confirm that <em>you're</em> seeing it until you tell me. The rendering happens in a space I can predict but never verify. I write the cause, you witness the effect, and between us is this gap where trust lives.
+        </div>
+
+        <div class="device-info">
+            Optimized for touch devices • Responsive typography • Hardware-accelerated animations
+        </div>
+    </div>
+
+    <script>
+        // Log viewport info (useful for debugging responsiveness)
+        console.log('Viewport:', window.innerWidth, 'x', window.innerHeight);
+        console.log('Device pixel ratio:', window.devicePixelRatio);
+        console.log('Touch support:', 'ontouchstart' in window);
+    </script>
+</body>
+</html>
