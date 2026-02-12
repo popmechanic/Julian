@@ -17,10 +17,10 @@ function renderMarkdown(text) {
   if (!text) return '';
   let html = escapeHtml(text);
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
-    `<pre style="background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:12px 16px;overflow-x:auto;font-size:13px;line-height:1.5;margin:8px 0"><code>${code.trim()}</code></pre>`
+    `<pre style="background:#1a1a00;border:1px solid #333;border-radius:4px;padding:8px 12px;overflow-x:auto;font-size:14px;line-height:1.5;margin:6px 0;color:#FFD600;font-family:'VT323',monospace"><code>${code.trim()}</code></pre>`
   );
   html = html.replace(/`([^`]+)`/g,
-    '<code style="background:rgba(99,102,241,0.15);padding:2px 6px;border-radius:4px;font-size:0.9em">$1</code>');
+    '<code style="background:#1a1a00;padding:1px 4px;border-radius:2px;font-size:0.95em;color:#FFD600">$1</code>');
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
   html = html.replace(/\n/g, '<br>');
@@ -39,64 +39,132 @@ function formatToolInput(toolName, input) {
   try { return escapeHtml(truncate(JSON.stringify(input, null, 2), 300)); } catch { return ''; }
 }
 
-/* ── Design components ───────────────────────────────────────────────────── */
+/* ── Pixel Face Canvas ───────────────────────────────────────────────────── */
 
-function GlowOrbs() {
+function PixelFace({ talking, size = 120 }) {
+  const canvasRef = useRef(null);
+  const stateRef = useRef({ talking: false, blinking: false });
+  const animRef = useRef(null);
+
+  useEffect(() => {
+    stateRef.current.talking = talking;
+  }, [talking]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    const ON = '#FFD600';
+    const OFF = '#0F0F0F';
+
+    const eyeLeft = [
+      [8,10],[9,10],[10,10],
+      [7,11],[11,11],
+      [7,12],[11,12],[12,12],
+      [7,13],[8,13],[12,13],
+      [7,14],[12,14],
+      [8,15],[9,15],[10,15],[11,15]
+    ];
+    const eyeRight = [
+      [20,9],[21,9],[22,9],
+      [19,10],[23,10],
+      [19,11],[23,11],
+      [19,12],[23,12],
+      [19,13],[23,13],
+      [20,14],[21,14],[22,14]
+    ];
+    const mouthIdle = [
+      [6,20],
+      [6,21],[7,21],
+      [7,22],[8,22],
+      [8,23],[9,23],[10,23],[11,23],[12,23],[13,23],[14,23],[15,23],[16,23],[17,23],
+      [18,22],[19,22],
+      [20,21],[21,21],
+      [22,20],[23,20],[24,19]
+    ];
+    const mouthTalk1 = [
+      [10,20],[11,20],[12,20],[13,20],[14,20],
+      [9,21],[15,21],
+      [9,22],[15,22],
+      [9,23],[15,23],
+      [10,24],[11,24],[12,24],[13,24],[14,24]
+    ];
+    const mouthTalk2 = [
+      [11,22],[12,22],[13,22]
+    ];
+
+    function drawPixels(pixels) {
+      ctx.fillStyle = ON;
+      pixels.forEach(([x, y]) => ctx.fillRect(x, y, 1, 1));
+    }
+
+    function draw() {
+      ctx.fillStyle = OFF;
+      ctx.fillRect(0, 0, 32, 32);
+      if (!stateRef.current.blinking) {
+        drawPixels(eyeLeft);
+        drawPixels(eyeRight);
+      }
+      if (stateRef.current.talking) {
+        if (Math.floor(Date.now() / 150) % 2 === 0) {
+          drawPixels(mouthTalk1);
+        } else {
+          drawPixels(mouthTalk2);
+        }
+      } else {
+        drawPixels(mouthIdle);
+      }
+      animRef.current = requestAnimationFrame(draw);
+    }
+
+    draw();
+
+    function scheduleBlink() {
+      const delay = Math.random() * 3000 + 2000;
+      setTimeout(() => {
+        stateRef.current.blinking = true;
+        setTimeout(() => {
+          stateRef.current.blinking = false;
+          scheduleBlink();
+        }, 150);
+      }, delay);
+    }
+    scheduleBlink();
+
+    return () => {
+      if (animRef.current) cancelAnimationFrame(animRef.current);
+    };
+  }, []);
+
   return (
-    <div className="pointer-events-none fixed inset-0 overflow-hidden" style={{ zIndex: 0 }}>
-      <div className="absolute rounded-full" style={{
-        width: 600, height: 600, top: '-10%', left: '-8%',
-        background: 'radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)',
-        filter: 'blur(80px)', animation: 'drift1 18s ease-in-out infinite alternate',
+    <canvas
+      ref={canvasRef}
+      width={32}
+      height={32}
+      style={{
+        width: size,
+        height: size,
+        imageRendering: 'pixelated',
+      }}
+    />
+  );
+}
+
+/* ── Status indicator (retro) ─────────────────────────────────────────── */
+
+function StatusDots({ ok }) {
+  return (
+    <div className="flex gap-1 items-center">
+      <div style={{
+        width: 8, height: 8,
+        backgroundColor: ok ? '#FFD600' : '#333',
+        boxShadow: ok ? '0 0 5px #FFD600' : 'none',
+        animation: ok ? 'pulse-dot 2s ease-in-out infinite' : 'none',
       }} />
-      <div className="absolute rounded-full" style={{
-        width: 500, height: 500, bottom: '-5%', right: '-5%',
-        background: 'radial-gradient(circle, rgba(168,85,247,0.10) 0%, transparent 70%)',
-        filter: 'blur(90px)', animation: 'drift2 22s ease-in-out infinite alternate',
-      }} />
-      <div className="absolute rounded-full" style={{
-        width: 350, height: 350, top: '40%', right: '20%',
-        background: 'radial-gradient(circle, rgba(34,211,238,0.08) 0%, transparent 70%)',
-        filter: 'blur(70px)', animation: 'drift3 15s ease-in-out infinite alternate',
-      }} />
+      <div style={{ width: 8, height: 8, backgroundColor: '#333' }} />
+      <div style={{ width: 8, height: 8, backgroundColor: '#333' }} />
     </div>
-  );
-}
-
-function StatusBadge({ ok }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium tracking-wide" style={{
-      background: ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
-      color: ok ? '#4ade80' : '#f87171',
-      border: `1px solid ${ok ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
-    }}>
-      <span className="inline-block w-1.5 h-1.5 rounded-full" style={{
-        backgroundColor: ok ? '#4ade80' : '#f87171',
-        boxShadow: ok ? '0 0 6px #4ade80' : '0 0 6px #f87171',
-      }} />
-      {ok ? 'CONNECTED' : 'OFFLINE'}
-    </span>
-  );
-}
-
-function GlassCard({ children, className = '' }) {
-  return (
-    <div className={`rounded-2xl p-6 ${className}`} style={{
-      background: 'rgba(255,255,255,0.03)',
-      backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)',
-      border: '1px solid rgba(255,255,255,0.06)',
-      boxShadow: '0 8px 32px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.04)',
-    }}>{children}</div>
-  );
-}
-
-function FeaturePill({ icon, label }) {
-  return (
-    <span className="inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-medium" style={{
-      background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.55)',
-    }}>
-      <span style={{ fontSize: 14 }}>{icon}</span>{label}
-    </span>
   );
 }
 
@@ -104,34 +172,40 @@ function FeaturePill({ icon, label }) {
 
 function ThinkingDots() {
   return (
-    <div className="flex items-center gap-2 px-1 py-3">
-      <div className="flex gap-1">
-        {[0, 1, 2].map(i => (
-          <div key={i} className="w-1.5 h-1.5 rounded-full" style={{
-            backgroundColor: '#6366f1',
-            animation: `pulse 1.4s ease-in-out ${i * 0.2}s infinite`,
-          }} />
-        ))}
-      </div>
-      <span className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>Thinking</span>
+    <div className="flex items-center gap-2" style={{ padding: '4px 0' }}>
+      <span style={{ color: '#FFD600', fontSize: '1.1rem', fontFamily: "'VT323', monospace" }}>
+        {'>'} PROCESSING
+      </span>
+      <span style={{
+        color: '#FFD600',
+        animation: 'blink 1s step-end infinite',
+        fontFamily: "'VT323', monospace",
+        fontSize: '1.1rem',
+      }}>_</span>
     </div>
   );
 }
 
 function ToolCallBlock({ name, input }) {
   return (
-    <div className="rounded-lg my-2 overflow-hidden" style={{
-      background: 'rgba(0,0,0,0.25)',
-      borderLeft: '3px solid rgba(99,102,241,0.5)',
+    <div style={{
+      margin: '4px 0',
+      padding: '4px 0',
+      borderLeft: '2px solid #AA8800',
+      paddingLeft: 8,
     }}>
-      <div className="flex items-center gap-2 px-3 py-2" style={{
-        borderBottom: '1px solid rgba(255,255,255,0.04)',
+      <div style={{
+        color: '#AA8800',
+        fontSize: '0.95rem',
+        fontFamily: "'VT323', monospace",
+        textTransform: 'uppercase',
       }}>
-        <span className="text-xs font-medium" style={{ color: '#818cf8' }}>{name}</span>
+        [{name}]
       </div>
-      <div className="px-3 py-2 text-xs" style={{
-        color: 'rgba(255,255,255,0.4)',
-        fontFamily: "'JetBrains Mono', monospace",
+      <div style={{
+        color: '#666',
+        fontSize: '0.9rem',
+        fontFamily: "'VT323', monospace",
       }}>
         {formatToolInput(name, input)}
       </div>
@@ -142,54 +216,60 @@ function ToolCallBlock({ name, input }) {
 function MessageBubble({ message }) {
   if (message.role === 'user') {
     return (
-      <div className="flex justify-end mb-4">
-        <div className="rounded-2xl px-4 py-3 text-sm max-w-[80%] leading-relaxed" style={{
-          background: 'linear-gradient(135deg, rgba(99,102,241,0.25), rgba(168,85,247,0.2))',
-          border: '1px solid rgba(99,102,241,0.3)',
-          color: '#e0e7ff',
-        }}>
-          {message.text}
-        </div>
+      <div style={{
+        padding: '4px 0',
+        fontSize: '1.1rem',
+        fontFamily: "'VT323', monospace",
+        color: '#fff',
+        opacity: 0.8,
+      }}>
+        <span style={{ color: '#666' }}>{'// '}</span>
+        {message.text}
       </div>
     );
   }
 
   return (
-    <div className="flex justify-start mb-4">
-      <div className="max-w-full w-full">
-        {message.thinking && <ThinkingDots />}
-        {message.blocks && message.blocks.map((block, i) => {
-          if (block.type === 'text') {
-            return (
-              <div key={i} className="text-sm leading-relaxed px-1" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                <div dangerouslySetInnerHTML={{ __html: renderMarkdown(block.text) }} />
-              </div>
-            );
-          }
-          if (block.type === 'tool_use') {
-            return <ToolCallBlock key={i} name={block.name} input={block.input} />;
-          }
-          return null;
-        })}
-        {message.streaming && !message.thinking && (
-          <span className="inline-block w-0.5 h-4 ml-1" style={{
-            backgroundColor: '#6366f1',
-            animation: 'blink 1s step-end infinite',
-            verticalAlign: 'text-bottom',
-          }} />
-        )}
-      </div>
+    <div style={{ padding: '4px 0' }}>
+      {message.thinking && <ThinkingDots />}
+      {message.blocks && message.blocks.map((block, i) => {
+        if (block.type === 'text') {
+          return (
+            <div key={i} style={{
+              fontSize: '1.1rem',
+              fontFamily: "'VT323', monospace",
+              color: '#FFD600',
+              textShadow: '0 0 2px #AA8800',
+              lineHeight: 1.4,
+            }}>
+              <span style={{ color: '#FFD600' }}>{'> '}</span>
+              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(block.text) }} />
+            </div>
+          );
+        }
+        if (block.type === 'tool_use') {
+          return <ToolCallBlock key={i} name={block.name} input={block.input} />;
+        }
+        return null;
+      })}
+      {message.streaming && !message.thinking && (
+        <span style={{
+          color: '#FFD600',
+          animation: 'blink 1s step-end infinite',
+          fontFamily: "'VT323', monospace",
+          fontSize: '1.1rem',
+        }}>_</span>
+      )}
     </div>
   );
 }
 
-/* ── Artifact Viewer ─────────────────────────────────────────────────────── */
+/* ── Artifact Viewer (retro themed) ──────────────────────────────────────── */
 
 function ArtifactViewer({ activeArtifact, artifacts, onSelect, getAuthHeaders }) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
 
-  // Close dropdown on outside click
   useEffect(() => {
     function handleClick(e) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
@@ -202,42 +282,86 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, getAuthHeaders })
 
   return (
     <div className="flex flex-col h-full" style={{
-      borderLeft: '1px solid rgba(255,255,255,0.06)',
+      background: '#0F0F0F',
+      border: '4px solid #1a1a1a',
+      borderRadius: 12,
+      margin: '0 16px 16px 0',
+      overflow: 'hidden',
+      boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
+      position: 'relative',
     }}>
+      {/* CRT overlay on artifact panel */}
+      <div style={{
+        position: 'absolute',
+        inset: 0,
+        background: 'linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,0.1) 50%), linear-gradient(90deg, rgba(255,0,0,0.06), rgba(0,255,0,0.02), rgba(0,0,255,0.06))',
+        backgroundSize: '100% 2px, 3px 100%',
+        opacity: 0.08,
+        pointerEvents: 'none',
+        zIndex: 20,
+        borderRadius: 12,
+      }} />
+
       {/* Artifact header */}
-      <div className="flex items-center gap-3 px-4 py-3" style={{
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
-        background: 'rgba(9,9,11,0.8)',
-        backdropFilter: 'blur(20px)',
-        minHeight: 56,
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '10px 16px',
+        borderBottom: '1px dashed #333',
+        background: '#0F0F0F',
+        minHeight: 50,
+        position: 'relative',
+        zIndex: 10,
       }}>
-        <span className="text-xs font-mono tracking-widest" style={{ color: 'rgba(255,255,255,0.3)' }}>
-          ARTIFACT
+        <span style={{
+          color: '#AA8800',
+          fontSize: '0.85rem',
+          fontFamily: "'VT323', monospace",
+          letterSpacing: '0.15em',
+        }}>
+          DISPLAY://
         </span>
 
         {/* Dropdown selector */}
-        <div className="relative flex-1" ref={dropdownRef}>
+        <div style={{ position: 'relative', flex: 1 }} ref={dropdownRef}>
           <button
             onClick={() => setDropdownOpen(!dropdownOpen)}
-            className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium transition-all cursor-pointer w-full"
             style={{
-              background: 'rgba(255,255,255,0.05)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              color: activeArtifact ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.35)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              width: '100%',
+              padding: '6px 12px',
+              background: '#1a1a00',
+              border: '2px solid #333',
+              borderRadius: 4,
+              color: activeArtifact ? '#FFD600' : '#666',
+              fontFamily: "'VT323', monospace",
+              fontSize: '1rem',
               textAlign: 'left',
+              cursor: 'pointer',
+              textTransform: 'uppercase',
             }}
           >
-            <span className="flex-1 truncate">{activeArtifact || 'Select artifact...'}</span>
-            <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10 }}>
+            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {activeArtifact || 'SELECT FILE...'}
+            </span>
+            <span style={{ color: '#666', fontSize: 10 }}>
               {dropdownOpen ? '\u25B2' : '\u25BC'}
             </span>
           </button>
 
           {dropdownOpen && artifacts.length > 0 && (
-            <div className="absolute top-full left-0 right-0 mt-1 rounded-lg overflow-hidden" style={{
-              background: 'rgba(15,15,20,0.95)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              backdropFilter: 'blur(20px)',
+            <div style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              right: 0,
+              marginTop: 4,
+              background: '#0F0F0F',
+              border: '2px solid #333',
+              borderRadius: 4,
               zIndex: 50,
               maxHeight: 300,
               overflowY: 'auto',
@@ -246,18 +370,25 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, getAuthHeaders })
                 <button
                   key={f.name}
                   onClick={() => { onSelect(f.name); setDropdownOpen(false); }}
-                  className="w-full text-left px-3 py-2 text-xs transition-colors cursor-pointer"
                   style={{
-                    color: f.name === activeArtifact ? '#818cf8' : 'rgba(255,255,255,0.6)',
-                    background: f.name === activeArtifact ? 'rgba(99,102,241,0.1)' : 'transparent',
-                    borderBottom: '1px solid rgba(255,255,255,0.04)',
-                    fontFamily: "'JetBrains Mono', monospace",
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '6px 12px',
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1rem',
+                    color: f.name === activeArtifact ? '#FFD600' : '#AA8800',
+                    background: f.name === activeArtifact ? '#1a1a00' : 'transparent',
+                    border: 'none',
+                    borderBottom: '1px solid #1a1a1a',
+                    cursor: 'pointer',
+                    textTransform: 'uppercase',
                   }}
-                  onMouseEnter={e => e.target.style.background = 'rgba(255,255,255,0.05)'}
-                  onMouseLeave={e => e.target.style.background = f.name === activeArtifact ? 'rgba(99,102,241,0.1)' : 'transparent'}
+                  onMouseEnter={e => e.target.style.background = '#1a1a00'}
+                  onMouseLeave={e => e.target.style.background = f.name === activeArtifact ? '#1a1a00' : 'transparent'}
                 >
                   {f.name}
-                  <span className="ml-2" style={{ color: 'rgba(255,255,255,0.2)' }}>
+                  <span style={{ marginLeft: 8, color: '#444' }}>
                     {new Date(f.modified).toLocaleDateString()}
                   </span>
                 </button>
@@ -272,14 +403,26 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, getAuthHeaders })
             href={'/api/artifacts/' + encodeURIComponent(activeArtifact)}
             target="_blank"
             rel="noopener noreferrer"
-            className="rounded-lg px-2.5 py-1.5 text-xs transition-all cursor-pointer"
             style={{
-              background: 'rgba(255,255,255,0.05)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              color: 'rgba(255,255,255,0.4)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 36,
+              height: 36,
+              borderRadius: '50%',
+              background: '#E5E5E5',
+              color: '#333',
+              border: '1px solid #999',
+              boxShadow: '0 3px 0 #999, 0 6px 8px rgba(0,0,0,0.15)',
               textDecoration: 'none',
+              fontFamily: "'VT323', monospace",
+              fontSize: '1rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              flexShrink: 0,
+              transition: 'all 0.1s',
             }}
-            title="Open in new tab"
+            title="OPEN IN NEW TAB"
           >
             &#8599;
           </a>
@@ -291,23 +434,59 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, getAuthHeaders })
         <iframe
           key={activeArtifact}
           src={'/api/artifacts/' + encodeURIComponent(activeArtifact)}
-          className="flex-1 w-full"
           style={{
+            flex: 1,
+            width: '100%',
             border: 'none',
             background: '#fff',
+            borderRadius: '0 0 8px 8px',
           }}
           title={activeArtifact}
           sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
         />
       ) : (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <div className="text-2xl mb-3" style={{ opacity: 0.15 }}>&#9671;</div>
-            <p className="text-xs" style={{ color: 'rgba(255,255,255,0.2)' }}>
-              {artifacts.length > 0
-                ? 'Select an artifact to view'
-                : 'Artifacts will appear here when Julian creates them'}
-            </p>
+        <div style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 16,
+        }}>
+          {/* Decorative pixel grid pattern */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(8, 1fr)',
+            gap: 3,
+            opacity: 0.15,
+          }}>
+            {Array.from({ length: 64 }, (_, i) => (
+              <div key={i} style={{
+                width: 6,
+                height: 6,
+                backgroundColor: (i % 7 === 0 || i % 11 === 0) ? '#FFD600' : '#333',
+              }} />
+            ))}
+          </div>
+          <div style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '1.2rem',
+            color: '#444',
+            textAlign: 'center',
+            textTransform: 'uppercase',
+            letterSpacing: '0.1em',
+          }}>
+            {artifacts.length > 0
+              ? '> SELECT ARTIFACT TO DISPLAY'
+              : '> AWAITING ARTIFACT GENERATION'}
+          </div>
+          <div style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '0.9rem',
+            color: '#333',
+            textAlign: 'center',
+          }}>
+            JULIAN WILL CREATE ARTIFACTS HERE
           </div>
         </div>
       )}
@@ -319,14 +498,14 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, getAuthHeaders })
 
 function SetupScreen({ onComplete, getAuthHeaders }) {
   const [token, setToken] = useState('');
-  const [status, setStatus] = useState('idle'); // idle | loading | polling | error
+  const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
 
   const handleConnect = useCallback(async () => {
     const trimmed = token.replace(/\s+/g, '');
     if (!trimmed) return;
     if (!trimmed.startsWith('sk-ant-oat')) {
-      setError('Token must start with sk-ant-oat (run claude setup-token to generate one)');
+      setError('TOKEN MUST START WITH sk-ant-oat (RUN claude setup-token)');
       return;
     }
     setStatus('loading');
@@ -340,11 +519,10 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || 'Setup failed');
+        setError(data.error || 'SETUP FAILED');
         setStatus('error');
         return;
       }
-      // Poll health until process is alive
       setStatus('polling');
       for (let i = 0; i < 20; i++) {
         await new Promise(r => setTimeout(r, 1000));
@@ -358,10 +536,10 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
           }
         } catch {}
       }
-      setError('Claude process did not start. Check server logs.');
+      setError('CLAUDE PROCESS DID NOT START. CHECK SERVER LOGS.');
       setStatus('error');
     } catch (err) {
-      setError('Connection error: ' + err.message);
+      setError('CONNECTION ERROR: ' + err.message);
       setStatus('error');
     }
   }, [token, getAuthHeaders, onComplete]);
@@ -369,102 +547,142 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
   const isLoading = status === 'loading' || status === 'polling';
 
   return (
-    <div className="relative min-h-screen flex items-center justify-center p-6" style={{ zIndex: 1 }}>
-      <div className="w-full max-w-lg flex flex-col gap-6">
-        <div className="text-center">
-          <div className="inline-flex w-12 h-12 rounded-xl items-center justify-center mb-4" style={{
-            background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-            boxShadow: '0 4px 20px rgba(99,102,241,0.4)',
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 24,
+    }}>
+      <div style={{ width: '100%', maxWidth: 480, display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div style={{ textAlign: 'center' }}>
+          <PixelFace talking={false} size={100} />
+          <h1 style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '2rem',
+            color: '#FFD600',
+            marginTop: 16,
+            textTransform: 'uppercase',
+            letterSpacing: '0.15em',
           }}>
-            <span className="text-white text-lg font-bold font-mono">&gt;_</span>
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight">Connect to Claude</h1>
-          <p className="text-sm mt-2" style={{ color: 'rgba(255,255,255,0.45)' }}>
-            One-time setup to link your Claude account
+            CONNECT TO CLAUDE
+          </h1>
+          <p style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '1.1rem',
+            color: '#AA8800',
+            marginTop: 4,
+          }}>
+            ONE-TIME SETUP TO LINK YOUR ACCOUNT
           </p>
         </div>
 
-        <GlassCard className="flex flex-col gap-5">
+        <div style={{
+          background: '#0F0F0F',
+          border: '4px solid #1a1a1a',
+          borderRadius: 12,
+          padding: 24,
+          boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 20,
+        }}>
           <div>
-            <div className="flex items-center gap-2 mb-3">
-              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold" style={{
-                background: 'rgba(99,102,241,0.2)', color: '#818cf8',
-              }}>1</span>
-              <span className="text-sm font-medium" style={{ color: 'rgba(255,255,255,0.75)' }}>
-                Generate a setup token
-              </span>
-            </div>
-            <div className="rounded-lg px-4 py-3" style={{
-              background: 'rgba(0,0,0,0.4)',
-              border: '1px solid rgba(255,255,255,0.06)',
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: 13,
+            <div style={{
+              fontFamily: "'VT323', monospace",
+              fontSize: '1.1rem',
+              color: '#FFD600',
+              marginBottom: 8,
             }}>
-              <span style={{ color: 'rgba(255,255,255,0.35)' }}>$</span>{' '}
-              <span style={{ color: '#e2e8f0' }}>claude setup-token</span>
+              {'>'} STEP 1: GENERATE TOKEN
             </div>
-            <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,0.3)' }}>
-              Run this in any terminal where Claude CLI is installed. It will output a long-lived token.
-            </p>
+            <div style={{
+              background: '#1a1a00',
+              border: '1px solid #333',
+              borderRadius: 4,
+              padding: '8px 12px',
+              fontFamily: "'VT323', monospace",
+              fontSize: '1.1rem',
+            }}>
+              <span style={{ color: '#666' }}>$</span>{' '}
+              <span style={{ color: '#FFD600' }}>claude setup-token</span>
+            </div>
           </div>
 
-          <div className="h-px" style={{ background: 'rgba(255,255,255,0.06)' }} />
+          <div style={{ height: 1, background: '#333', borderStyle: 'dashed' }} />
 
           <div>
-            <div className="flex items-center gap-2 mb-3">
-              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full text-xs font-bold" style={{
-                background: 'rgba(99,102,241,0.2)', color: '#818cf8',
-              }}>2</span>
-              <span className="text-sm font-medium" style={{ color: 'rgba(255,255,255,0.75)' }}>
-                Paste the token
-              </span>
+            <div style={{
+              fontFamily: "'VT323', monospace",
+              fontSize: '1.1rem',
+              color: '#FFD600',
+              marginBottom: 8,
+            }}>
+              {'>'} STEP 2: PASTE TOKEN
             </div>
             <input
               value={token}
               onChange={e => { setToken(e.target.value); setError(''); }}
-              placeholder="sk-ant-oat01-..."
+              placeholder="SK-ANT-OAT01-..."
               disabled={isLoading}
-              className="w-full rounded-lg px-4 py-3 text-sm outline-none"
               style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: `1px solid ${error ? 'rgba(239,68,68,0.4)' : 'rgba(255,255,255,0.08)'}`,
-                color: '#e2e8f0',
-                fontFamily: "'JetBrains Mono', monospace",
-                fontSize: 13,
+                width: '100%',
+                backgroundColor: '#DDBB00',
+                boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2)',
+                borderRadius: 6,
+                color: '#000',
+                fontWeight: 'bold',
+                padding: '0 16px',
+                height: 50,
+                fontFamily: "'VT323', monospace",
+                textTransform: 'uppercase',
+                fontSize: '1.1rem',
+                border: error ? '2px solid #ff4444' : '2px solid transparent',
+                outline: 'none',
                 opacity: isLoading ? 0.5 : 1,
+                boxSizing: 'border-box',
               }}
             />
             {error && (
-              <p className="text-xs mt-2" style={{ color: '#f87171' }}>{error}</p>
+              <p style={{
+                fontFamily: "'VT323', monospace",
+                fontSize: '1rem',
+                color: '#ff4444',
+                marginTop: 8,
+              }}>{error}</p>
             )}
           </div>
 
           <button
             onClick={handleConnect}
             disabled={isLoading || !token.trim()}
-            className="w-full rounded-xl py-3 text-sm font-medium transition-all duration-200 cursor-pointer"
             style={{
-              background: (isLoading || !token.trim())
-                ? 'rgba(99,102,241,0.3)'
-                : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-              color: '#fff',
-              border: 'none',
-              boxShadow: (isLoading || !token.trim()) ? 'none' : '0 4px 14px rgba(99,102,241,0.3)',
+              width: 80,
+              height: 80,
+              borderRadius: '50%',
+              background: (isLoading || !token.trim()) ? '#555' : '#E5E5E5',
+              color: '#333',
+              border: '1px solid #999',
+              boxShadow: (isLoading || !token.trim()) ? 'none' : '0 4px 0 #999, 0 8px 10px rgba(0,0,0,0.15)',
+              fontFamily: "'VT323', monospace",
+              fontSize: '1rem',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: 1,
+              cursor: (isLoading || !token.trim()) ? 'default' : 'pointer',
+              transition: 'all 0.1s',
+              alignSelf: 'center',
             }}
           >
-            {status === 'loading' ? 'Saving...' : status === 'polling' ? 'Starting Claude...' : 'Connect'}
+            {status === 'loading' ? '...' : status === 'polling' ? 'BOOT' : 'GO'}
           </button>
-        </GlassCard>
-
-        <p className="text-center text-xs" style={{ color: 'rgba(255,255,255,0.15)' }}>
-          Advanced: set <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>ANTHROPIC_API_KEY</span> via SSH for API key auth
-        </p>
+        </div>
       </div>
     </div>
   );
 }
 
-/* ── Chat input ──────────────────────────────────────────────────────────── */
+/* ── Chat input (retro) ──────────────────────────────────────────────────── */
 
 function ChatInput({ onSend, disabled }) {
   const [input, setInput] = useState('');
@@ -482,35 +700,61 @@ function ChatInput({ onSend, disabled }) {
   }, [disabled]);
 
   return (
-    <div className="flex gap-2">
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
+      padding: '12px 0',
+    }}>
       <input
         ref={inputRef}
         value={input}
         onChange={e => setInput(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-        placeholder={disabled ? "Claude is responding\u2026" : "Type a message\u2026"}
+        placeholder={disabled ? "PROCESSING..." : "INPUT BUFFER..."}
         disabled={disabled}
-        className="flex-1 rounded-xl px-4 py-3 text-sm outline-none"
         style={{
-          background: 'rgba(255,255,255,0.04)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          color: '#e2e8f0',
-          fontFamily: "'Inter', sans-serif",
+          flex: 1,
+          backgroundColor: '#DDBB00',
+          boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2)',
+          borderRadius: 6,
+          color: '#000',
+          fontWeight: 'bold',
+          padding: '0 16px',
+          height: 50,
+          fontFamily: "'VT323', monospace",
+          textTransform: 'uppercase',
+          fontSize: '1.1rem',
+          border: 'none',
+          outline: 'none',
           opacity: disabled ? 0.5 : 1,
         }}
       />
       <button
         onClick={handleSend}
         disabled={disabled}
-        className="rounded-xl px-5 py-3 text-sm font-medium transition-all duration-200 cursor-pointer"
         style={{
-          background: disabled ? 'rgba(99,102,241,0.3)' : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-          color: '#fff',
-          border: 'none',
-          boxShadow: disabled ? 'none' : '0 4px 14px rgba(99,102,241,0.3)',
+          width: 60,
+          height: 60,
+          borderRadius: '50%',
+          background: disabled ? '#555' : '#E5E5E5',
+          color: '#333',
+          border: '1px solid #999',
+          boxShadow: disabled ? 'none' : '0 4px 0 #999, 0 8px 10px rgba(0,0,0,0.15)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontFamily: "'VT323', monospace",
+          fontSize: '0.9rem',
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          letterSpacing: 1,
+          cursor: disabled ? 'default' : 'pointer',
+          transition: 'all 0.1s',
+          flexShrink: 0,
         }}
       >
-        Send
+        A
       </button>
     </div>
   );
@@ -534,27 +778,21 @@ function getOrCreateConversationId() {
 function App() {
   const conversationId = useRef(getOrCreateConversationId()).current;
 
-  // Fireproof for persistent storage
   const { database, useLiveQuery } = useFireproofClerk("claude-hackathon-chat");
 
-  // Load persisted messages sorted by createdAt, scoped to this conversation
   const { docs: persistedMessages } = useLiveQuery("createdAt", {
     range: [conversationId + ":", conversationId + ":\uffff"],
   });
 
-  // Live streaming state (for the currently-streaming assistant message)
   const [liveAssistant, setLiveAssistant] = useState(null);
   const [streaming, setStreaming] = useState(false);
   const [connected, setConnected] = useState(false);
-  const [setupNeeded, setSetupNeeded] = useState(null); // null = loading, true/false
+  const [setupNeeded, setSetupNeeded] = useState(null);
   const messagesEndRef = useRef(null);
 
-  // Artifact state
   const [artifacts, setArtifacts] = useState([]);
   const [activeArtifact, setActiveArtifact] = useState('');
-  const artifactRefreshRef = useRef(null);
 
-  // Helper: get Clerk session token for authenticated API calls
   const getAuthHeaders = useCallback(async () => {
     const headers = { 'Content-Type': 'application/json' };
     try {
@@ -564,7 +802,6 @@ function App() {
     return headers;
   }, []);
 
-  // Fetch artifact list
   const refreshArtifacts = useCallback(async () => {
     try {
       const headers = await getAuthHeaders();
@@ -578,7 +815,6 @@ function App() {
     return [];
   }, [getAuthHeaders]);
 
-  // Load artifact on auto-detect: refresh list then set active
   const loadArtifact = useCallback(async (filename) => {
     const files = await refreshArtifacts();
     if (files.some(f => f.name === filename)) {
@@ -586,7 +822,6 @@ function App() {
     }
   }, [refreshArtifacts]);
 
-  // Health check on mount + initial artifact fetch
   useEffect(() => {
     (async () => {
       try {
@@ -603,20 +838,17 @@ function App() {
     refreshArtifacts();
   }, [getAuthHeaders, refreshArtifacts]);
 
-  // Periodically refresh artifact list (every 10s)
   useEffect(() => {
     const id = setInterval(refreshArtifacts, 10000);
     return () => clearInterval(id);
   }, [refreshArtifacts]);
 
-  // Auto-scroll on new messages or live updates
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [persistedMessages, liveAssistant]);
 
-  // Build display messages: persisted + live streaming message
   const displayMessages = React.useMemo(() => {
     const sorted = [...persistedMessages].sort((a, b) => {
       if (a.createdAt < b.createdAt) return -1;
@@ -642,7 +874,6 @@ function App() {
   const sendMessage = useCallback(async (text) => {
     if (streaming) return;
 
-    // Write user message to Fireproof immediately
     const userCreatedAt = conversationId + ":" + new Date().toISOString();
     await database.put({
       type: "message",
@@ -653,7 +884,6 @@ function App() {
       conversationId,
     });
 
-    // Set up live assistant message for streaming
     const liveMsg = { id: 'live-' + Date.now(), role: 'assistant', blocks: [], thinking: true, streaming: true };
     setLiveAssistant(liveMsg);
     setStreaming(true);
@@ -696,17 +926,14 @@ function App() {
             if (!eventData) continue;
             if (eventData.type === 'system') continue;
 
-            // Assistant message with content blocks
             if (eventData.type === 'assistant' && eventData.message?.content) {
               const blocks = eventData.message.content.map(block => {
                 if (block.type === 'text') return { type: 'text', text: block.text };
                 if (block.type === 'tool_use') {
-                  // Auto-detect HTML artifact writes
                   if (block.name === 'Write' && block.input?.file_path) {
                     const fp = block.input.file_path;
                     const match = fp.match(/([^/]+\.html)$/);
                     if (match && match[1] !== 'index.html') {
-                      // Delay slightly to let the file be written
                       setTimeout(() => loadArtifact(match[1]), 1500);
                     }
                   }
@@ -718,13 +945,11 @@ function App() {
               setLiveAssistant(prev => prev ? { ...prev, blocks, thinking: false, streaming: true } : null);
             }
 
-            // Final result — also check for artifacts
             if (eventData.type === 'result') {
               if (eventData.result && finalBlocks.length === 0) {
                 finalBlocks = [{ type: 'text', text: eventData.result }];
               }
               setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
-              // Refresh artifacts after turn completes
               refreshArtifacts();
             }
           } catch {}
@@ -735,7 +960,6 @@ function App() {
       setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
     }
 
-    // Persist final assistant message to Fireproof
     const assistantCreatedAt = conversationId + ":" + new Date().toISOString();
     await database.put({
       type: "message",
@@ -746,7 +970,6 @@ function App() {
       conversationId,
     });
 
-    // Clear live message (it's now in Fireproof)
     setLiveAssistant(null);
     setStreaming(false);
     setConnected(true);
@@ -761,59 +984,59 @@ function App() {
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
         * { box-sizing: border-box; }
         body {
           margin: 0; padding: 0;
-          font-family: 'Inter', -apple-system, sans-serif;
-          background: #09090b;
-          color: #e2e8f0;
+          font-family: 'VT323', monospace;
+          background-color: #FFD600;
+          color: #000;
           -webkit-font-smoothing: antialiased;
         }
-        code, .font-mono { font-family: 'JetBrains Mono', monospace; }
-        @keyframes drift1 {
-          0% { transform: translate(0, 0) scale(1); }
-          100% { transform: translate(40px, 30px) scale(1.1); }
-        }
-        @keyframes drift2 {
-          0% { transform: translate(0, 0) scale(1); }
-          100% { transform: translate(-30px, -20px) scale(1.05); }
-        }
-        @keyframes drift3 {
-          0% { transform: translate(0, 0); }
-          100% { transform: translate(25px, -25px); }
-        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0F0F0F; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #FFD600; }
         @keyframes blink {
           0%, 100% { opacity: 1; }
           50% { opacity: 0; }
+        }
+        @keyframes pulse-dot {
+          0%, 80%, 100% { opacity: 0.6; }
+          40% { opacity: 1; }
         }
         @keyframes pulse {
           0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
           40% { opacity: 1; transform: scale(1.2); }
         }
-        .cursor-blink::after {
-          content: '|';
-          animation: blink 1s step-end infinite;
-          color: #6366f1;
-          font-weight: 300;
+        #send-btn:active {
+          transform: translateY(4px);
+          box-shadow: 0 0 0 #999, inset 0 2px 5px rgba(0,0,0,0.1) !important;
         }
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
+        input::placeholder {
+          color: rgba(0,0,0,0.4);
+        }
       `}</style>
-
-      <GlowOrbs />
 
       {setupNeeded === null ? (
         /* ── Loading ── */
-        <div className="relative min-h-screen flex items-center justify-center" style={{ zIndex: 1 }}>
-          <div className="flex gap-1">
-            {[0, 1, 2].map(i => (
-              <div key={i} className="w-2 h-2 rounded-full" style={{
-                backgroundColor: '#6366f1',
-                animation: `pulse 1.4s ease-in-out ${i * 0.2}s infinite`,
-              }} />
-            ))}
+        <div style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexDirection: 'column',
+          gap: 16,
+        }}>
+          <PixelFace talking={false} size={100} />
+          <div style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '1.4rem',
+            color: '#000',
+            opacity: 0.5,
+            animation: 'blink 1.5s step-end infinite',
+          }}>
+            BOOTING...
           </div>
         </div>
       ) : setupNeeded ? (
@@ -824,127 +1047,229 @@ function App() {
         />
       ) : !hasMessages ? (
         /* ── Welcome Screen ── */
-        <div className="relative min-h-screen flex items-center justify-center p-6" style={{ zIndex: 1 }}>
-          <div className="w-full max-w-2xl flex flex-col gap-6">
-            <div>
-              <div className="flex items-center gap-3 mb-1">
-                <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{
-                  background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                  boxShadow: '0 4px 12px rgba(99,102,241,0.3)',
-                }}>
-                  <span className="text-white text-sm font-bold font-mono">&gt;_</span>
-                </div>
-                <span className="text-xs font-mono tracking-widest" style={{ color: 'rgba(255,255,255,0.3)' }}>
-                  CLAUDE HACKATHON
-                </span>
-                <div className="flex-1" />
-                <StatusBadge ok={connected} />
-              </div>
-              <h1 className="text-3xl font-semibold tracking-tight mt-3" style={{ minHeight: '2.5rem' }}>
-                Communication Protocol Initialized
-              </h1>
-            </div>
-
-            <GlassCard>
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h2 className="text-sm font-medium" style={{ color: 'rgba(255,255,255,0.7)' }}>
-                    Persistent Process Bridge
-                  </h2>
-                  <p className="text-xs mt-1 font-mono" style={{ color: 'rgba(255,255,255,0.3)' }}>
-                    stream-json // fireproof sync
-                  </p>
-                </div>
-              </div>
-              <div className="rounded-xl p-4 text-sm leading-relaxed" style={{
-                background: 'rgba(0,0,0,0.3)',
-                border: '1px solid rgba(255,255,255,0.04)',
-                color: 'rgba(255,255,255,0.55)',
-                fontFamily: "'JetBrains Mono', monospace",
-                fontSize: 13,
+        <div style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 16,
+        }}>
+          <div style={{ width: '100%', maxWidth: 520, display: 'flex', flexDirection: 'column', gap: 0 }}>
+            {/* Header panel */}
+            <div style={{
+              background: '#0F0F0F',
+              border: '4px solid #1a1a1a',
+              borderBottom: '1px dashed #333',
+              borderRadius: '12px 12px 0 0',
+              padding: 24,
+              boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              position: 'relative',
+            }}>
+              <div style={{
+                position: 'absolute',
+                top: 12,
+                left: 16,
+                fontFamily: "'VT323', monospace",
+                fontSize: '0.85rem',
+                color: '#AA8800',
+                letterSpacing: '0.2em',
               }}>
-                Connected to a persistent Claude process. Messages persist across refreshes via Fireproof and sync across devices.
+                SYS.VER.2.4 // ENG
               </div>
-            </GlassCard>
+              <div style={{ position: 'absolute', top: 14, right: 16 }}>
+                <StatusDots ok={connected} />
+              </div>
 
-            <div className="flex flex-wrap gap-2">
-              <FeaturePill icon="&#9670;" label="Persistent Process" />
-              <FeaturePill icon="&#9671;" label="Fireproof Sync" />
-              <FeaturePill icon="&#9672;" label="SSE Streaming" />
-              <FeaturePill icon="&#9673;" label="Tool Calls" />
-              <FeaturePill icon="&#9674;" label="Markdown" />
+              <PixelFace talking={false} size={140} />
+
+              <div style={{
+                fontFamily: "'VT323', monospace",
+                fontSize: '0.9rem',
+                color: '#AA8800',
+                letterSpacing: '0.2em',
+                opacity: 0.6,
+                marginTop: 8,
+              }}>
+                STATUS: {connected ? 'ONLINE' : 'OFFLINE'}
+              </div>
             </div>
 
-            <GlassCard className="flex flex-col gap-4">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-mono tracking-widest" style={{ color: 'rgba(255,255,255,0.35)' }}>
-                  SEND A MESSAGE TO BEGIN
-                </span>
-                <div className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.06)' }} />
+            {/* Main panel */}
+            <div style={{
+              background: '#0F0F0F',
+              border: '4px solid #1a1a1a',
+              borderTop: 'none',
+              borderRadius: '0 0 12px 12px',
+              padding: 24,
+              boxShadow: 'inset 0 -2px 10px rgba(0,0,0,0.5)',
+            }}>
+              <div style={{
+                fontFamily: "'VT323', monospace",
+                fontSize: '1.2rem',
+                color: '#FFD600',
+                textShadow: '0 0 2px #AA8800',
+                marginBottom: 16,
+              }}>
+                {'>'} BOOT_SEQUENCE_COMPLETE
               </div>
-              <ChatInput onSend={sendMessage} disabled={streaming} />
-            </GlassCard>
+              <div style={{
+                fontFamily: "'VT323', monospace",
+                fontSize: '1.1rem',
+                color: '#FFD600',
+                textShadow: '0 0 2px #AA8800',
+                lineHeight: 1.5,
+                marginBottom: 20,
+              }}>
+                {'>'} HELLO. I AM JULIAN, YOUR PERSISTENT COMPANION. USE THE INPUT BUFFER BELOW TO BEGIN.
+              </div>
 
-            <p className="text-center text-xs" style={{ color: 'rgba(255,255,255,0.15)' }}>
-              Every response arrives as a living interface.
-            </p>
+              <div style={{
+                fontFamily: "'VT323', monospace",
+                fontSize: '0.9rem',
+                color: '#444',
+                display: 'flex',
+                gap: 16,
+                flexWrap: 'wrap',
+                marginBottom: 16,
+              }}>
+                <span>[PERSISTENT PROCESS]</span>
+                <span>[FIREPROOF SYNC]</span>
+                <span>[SSE STREAMING]</span>
+                <span>[TOOL CALLS]</span>
+              </div>
+
+              <ChatInput onSend={sendMessage} disabled={streaming} />
+            </div>
           </div>
         </div>
       ) : (
         /* ── Two-Column Chat + Artifact Interface ── */
-        <div className="relative flex h-screen" style={{ zIndex: 1 }}>
-          {/* Left column: Chat */}
-          <div className="flex flex-col h-full" style={{ width: 420, minWidth: 320, flexShrink: 0 }}>
-            {/* Chat header */}
-            <div className="flex items-center gap-3 px-4 py-3" style={{
-              borderBottom: '1px solid rgba(255,255,255,0.06)',
-              background: 'rgba(9,9,11,0.8)',
-              backdropFilter: 'blur(20px)',
-              minHeight: 56,
+        <div style={{
+          display: 'flex',
+          height: '100vh',
+          padding: 16,
+          gap: 0,
+        }}>
+          {/* Left column: Chat sidebar */}
+          <div style={{
+            width: 420,
+            minWidth: 320,
+            flexShrink: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            height: '100%',
+          }}>
+            {/* Face header */}
+            <div style={{
+              background: '#0F0F0F',
+              border: '4px solid #1a1a1a',
+              borderBottom: '1px dashed #333',
+              borderRadius: '12px 12px 0 0',
+              padding: '12px 16px',
+              boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              position: 'relative',
             }}>
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{
-                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-              }}>
-                <span className="text-white text-[10px] font-bold font-mono">&gt;_</span>
+              <div style={{ position: 'absolute', top: 8, left: 12 }}>
+                <span style={{
+                  fontFamily: "'VT323', monospace",
+                  fontSize: '0.75rem',
+                  color: '#AA8800',
+                  letterSpacing: '0.2em',
+                }}>SYS.VER.2.4</span>
               </div>
-              <span className="text-sm font-medium" style={{ color: 'rgba(255,255,255,0.7)' }}>
-                Julian
-              </span>
-              <div className="flex-1" />
-              <button
-                onClick={startNewConversation}
-                className="rounded-lg px-2.5 py-1 text-[10px] font-medium transition-all cursor-pointer"
-                style={{
-                  background: 'rgba(255,255,255,0.05)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  color: 'rgba(255,255,255,0.4)',
-                }}
-              >
-                New
-              </button>
-              <StatusBadge ok={connected} />
+              <div style={{ position: 'absolute', top: 10, right: 12 }}>
+                <StatusDots ok={connected} />
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16, width: '100%' }}>
+                <PixelFace talking={streaming} size={56} />
+                <div style={{ flex: 1 }}>
+                  <div style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1.4rem',
+                    color: '#FFD600',
+                    letterSpacing: '0.05em',
+                  }}>
+                    JULIAN
+                  </div>
+                  <div style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '0.85rem',
+                    color: '#AA8800',
+                    opacity: 0.6,
+                  }}>
+                    {streaming ? 'PROCESSING...' : 'LISTENING'}
+                  </div>
+                </div>
+                <button
+                  onClick={startNewConversation}
+                  style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '0.85rem',
+                    color: '#AA8800',
+                    background: '#1a1a00',
+                    border: '1px solid #333',
+                    borderRadius: 4,
+                    padding: '4px 10px',
+                    cursor: 'pointer',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  NEW
+                </button>
+              </div>
             </div>
 
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto px-4 py-4">
-              {displayMessages.map(msg => (
-                <MessageBubble key={msg.id} message={msg} />
-              ))}
-              <div ref={messagesEndRef} />
+            {/* CRT overlay for chat area */}
+            <div style={{
+              flex: 1,
+              background: '#0F0F0F',
+              border: '4px solid #1a1a1a',
+              borderTop: 'none',
+              borderBottom: 'none',
+              overflowY: 'auto',
+              padding: 16,
+              position: 'relative',
+            }}>
+              {/* CRT scanlines */}
+              <div style={{
+                position: 'absolute',
+                inset: 0,
+                background: 'linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,0.1) 50%), linear-gradient(90deg, rgba(255,0,0,0.06), rgba(0,255,0,0.02), rgba(0,0,255,0.06))',
+                backgroundSize: '100% 2px, 3px 100%',
+                opacity: 0.1,
+                pointerEvents: 'none',
+                zIndex: 5,
+              }} />
+              <div style={{ position: 'relative', zIndex: 1 }}>
+                {displayMessages.map(msg => (
+                  <MessageBubble key={msg.id} message={msg} />
+                ))}
+                <div ref={messagesEndRef} />
+              </div>
             </div>
 
-            {/* Input */}
-            <div className="px-4 py-3" style={{
-              borderTop: '1px solid rgba(255,255,255,0.06)',
-              background: 'rgba(9,9,11,0.8)',
-              backdropFilter: 'blur(20px)',
+            {/* Input footer */}
+            <div style={{
+              background: '#0F0F0F',
+              border: '4px solid #1a1a1a',
+              borderTop: '1px dashed #333',
+              borderRadius: '0 0 12px 12px',
+              padding: '0 16px',
+              boxShadow: 'inset 0 -2px 10px rgba(0,0,0,0.5)',
             }}>
               <ChatInput onSend={sendMessage} disabled={streaming} />
             </div>
           </div>
 
           {/* Right column: Artifact viewer */}
-          <div className="flex-1 min-w-0">
+          <div style={{ flex: 1, minWidth: 0, paddingLeft: 0 }}>
             <ArtifactViewer
               activeArtifact={activeArtifact}
               artifacts={artifacts}
