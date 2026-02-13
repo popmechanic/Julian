@@ -1,4 +1,4 @@
-const CACHE_NAME = 'julian-v1';
+const CACHE_NAME = 'julian-v2';
 const APP_SHELL = [
   '/',
   '/fireproof-clerk-bundle.js',
@@ -31,6 +31,21 @@ self.addEventListener('fetch', (event) => {
   // Never cache API calls (SSE streaming, auth, etc.)
   if (url.pathname.startsWith('/api/')) return;
 
+  // Network-first for navigation requests (HTML) so deploys take effect immediately
+  if (event.request.mode === 'navigate' || event.request.destination === 'document') {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          return response;
+        })
+        .catch(() => caches.match(event.request).then((c) => c || caches.match('/')))
+    );
+    return;
+  }
+
+  // Cache-first for static assets
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;

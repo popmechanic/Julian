@@ -806,7 +806,7 @@ function App() {
       document.head.appendChild(el);
     };
     meta('theme-color', '#FFD600');
-    meta('apple-mobile-web-app-capable', 'yes');
+    meta('mobile-web-app-capable', 'yes');
     meta('apple-mobile-web-app-status-bar-style', 'black-translucent');
     meta('apple-mobile-web-app-title', 'Julian');
   }, []);
@@ -868,7 +868,7 @@ function App() {
   }, [persistedMessages, liveAssistant]);
 
   const displayMessages = React.useMemo(() => {
-    const sorted = [...persistedMessages].sort((a, b) => {
+    const sorted = [...(persistedMessages || [])].sort((a, b) => {
       if (a.createdAt < b.createdAt) return -1;
       if (a.createdAt > b.createdAt) return 1;
       return 0;

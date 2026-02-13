@@ -175,8 +175,8 @@
     <!-- Connect configuration - populated by assemble.js from .env -->
     <script>
       window.__VIBES_CONFIG__ = {
-        tokenApiUri: "https://vibes-studio.exe.xyz:8080/api/",
-        cloudBackendUrl: "fpcloud://vibes-studio.exe.xyz:8080?protocol=wss",
+        tokenApiUri: "https://vibes-share-studio.exe.xyz/api/",
+        cloudBackendUrl: "fpcloud://vibes-share-studio.exe.xyz?protocol=wss",
         clerkPublishableKey: "pk_test_aW50ZXJuYWwtZGluZ28tMjguY2xlcmsuYWNjb3VudHMuZGV2JA"
       };
     </script>
@@ -1472,7 +1472,7 @@ function HiddenMenuWrapper({
       role: "dialog",
       "aria-modal": "true",
       "aria-label": "Hidden menu",
-      "aria-hidden": !menuOpen,
+      inert: !menuOpen || undefined,
       ref: menuRef,
       style: getMenuStyle()
     },
@@ -3055,7 +3055,7 @@ function App() {
       document.head.appendChild(el);
     };
     meta('theme-color', '#FFD600');
-    meta('apple-mobile-web-app-capable', 'yes');
+    meta('mobile-web-app-capable', 'yes');
     meta('apple-mobile-web-app-status-bar-style', 'black-translucent');
     meta('apple-mobile-web-app-title', 'Julian');
   }, []);
@@ -3117,7 +3117,7 @@ function App() {
   }, [persistedMessages, liveAssistant]);
 
   const displayMessages = React.useMemo(() => {
-    const sorted = [...persistedMessages].sort((a, b) => {
+    const sorted = [...(persistedMessages || [])].sort((a, b) => {
       if (a.createdAt < b.createdAt) return -1;
       if (a.createdAt > b.createdAt) return 1;
       return 0;
