@@ -9,7 +9,7 @@ const AUTH_ENV_PATH = join(import.meta.dir, "claude-auth.env");
 
 // ── OAuth constants ────────────────────────────────────────────────────────
 const ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-const ANTHROPIC_AUTHORIZE_URL = "https://console.anthropic.com/oauth/authorize";
+const ANTHROPIC_AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
 const ANTHROPIC_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
 const ANTHROPIC_REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback";
 const OAUTH_SCOPES = "org:create_api_key user:profile user:inference";
@@ -351,8 +351,8 @@ async function refreshAccessToken(): Promise<boolean> {
   try {
     const res = await fetch(ANTHROPIC_TOKEN_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
         grant_type: "refresh_token",
         client_id: ANTHROPIC_CLIENT_ID,
         refresh_token: tokens.refresh_token,
@@ -498,6 +498,7 @@ Bun.serve({
       pendingOAuth.set(state, { verifier, createdAt: Date.now() });
 
       const params = new URLSearchParams({
+        code: "true",
         response_type: "code",
         client_id: ANTHROPIC_CLIENT_ID,
         redirect_uri: ANTHROPIC_REDIRECT_URI,
@@ -531,8 +532,8 @@ Bun.serve({
       try {
         const tokenRes = await fetch(ANTHROPIC_TOKEN_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
             grant_type: "authorization_code",
             client_id: ANTHROPIC_CLIENT_ID,
             code,
