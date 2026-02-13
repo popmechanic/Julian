@@ -2,6 +2,7 @@
 .env
 .env.*
 claude-auth.env
+claude-auth.json
 
 # Dependencies
 node_modules/

@@ -494,24 +494,116 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, getAuthHeaders })
   );
 }
 
-/* ── Setup Screen ────────────────────────────────────────────────────────── */
+/* ── Setup Screen (tabbed: OAuth-first / legacy fallback) ────────────────── */
 
 function SetupScreen({ onComplete, getAuthHeaders }) {
-  const [token, setToken] = useState('');
-  const [status, setStatus] = useState('idle');
-  const [error, setError] = useState('');
+  const [tab, setTab] = useState('oauth'); // 'oauth' | 'legacy'
 
-  const handleConnect = useCallback(async () => {
+  // OAuth state
+  const [oauthStep, setOauthStep] = useState(1); // 1 = click button, 2 = paste code
+  const [oauthState, setOauthState] = useState('');
+  const [oauthCode, setOauthCode] = useState('');
+  const [oauthStatus, setOauthStatus] = useState('idle');
+  const [oauthError, setOauthError] = useState('');
+
+  // Legacy state
+  const [token, setToken] = useState('');
+  const [legacyStatus, setLegacyStatus] = useState('idle');
+  const [legacyError, setLegacyError] = useState('');
+
+  // Poll health until process is alive
+  const pollUntilAlive = useCallback(async () => {
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      try {
+        const h = await getAuthHeaders();
+        const hr = await fetch('/api/health', { headers: h });
+        const hd = await hr.json();
+        if (hd.processAlive && !hd.needsSetup) {
+          onComplete();
+          return true;
+        }
+      } catch {}
+    }
+    return false;
+  }, [getAuthHeaders, onComplete]);
+
+  // OAuth: start flow
+  const handleOAuthStart = useCallback(async () => {
+    setOauthStatus('starting');
+    setOauthError('');
+    try {
+      const headers = await getAuthHeaders();
+      if (!headers) { setOauthError('NOT AUTHENTICATED. RELOAD PAGE.'); setOauthStatus('error'); return; }
+      const res = await fetch('/api/oauth/start', { headers });
+      const data = await res.json();
+      if (!res.ok) {
+        setOauthError(data.error || 'FAILED TO START OAUTH');
+        setOauthStatus('error');
+        return;
+      }
+      setOauthState(data.state);
+      window.open(data.authUrl, '_blank', 'noopener');
+      setOauthStep(2);
+      setOauthStatus('idle');
+    } catch (err) {
+      setOauthError('CONNECTION ERROR: ' + err.message);
+      setOauthStatus('error');
+    }
+  }, [getAuthHeaders]);
+
+  // OAuth: exchange code
+  const handleOAuthExchange = useCallback(async () => {
+    const code = oauthCode.trim();
+    if (!code || !oauthState) return;
+    setOauthStatus('exchanging');
+    setOauthError('');
+    try {
+      const headers = await getAuthHeaders();
+      if (!headers) { setOauthError('NOT AUTHENTICATED. RELOAD PAGE.'); setOauthStatus('error'); return; }
+      const res = await fetch('/api/oauth/exchange', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ code, state: oauthState }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.error?.includes('expired state') || data.error?.includes('Invalid or expired')) {
+          setOauthStep(1);
+          setOauthCode('');
+          setOauthError('SESSION EXPIRED. PLEASE START OVER.');
+          setOauthStatus('idle');
+        } else {
+          setOauthError(data.error || 'TOKEN EXCHANGE FAILED');
+          setOauthStatus('error');
+        }
+        return;
+      }
+      setOauthStatus('polling');
+      const alive = await pollUntilAlive();
+      if (!alive) {
+        setOauthError('CLAUDE PROCESS DID NOT START. CHECK SERVER LOGS.');
+        setOauthStatus('error');
+      }
+    } catch (err) {
+      setOauthError('CONNECTION ERROR: ' + err.message);
+      setOauthStatus('error');
+    }
+  }, [oauthCode, oauthState, getAuthHeaders, pollUntilAlive]);
+
+  // Legacy: paste token
+  const handleLegacyConnect = useCallback(async () => {
     const trimmed = token.replace(/\s+/g, '');
     if (!trimmed) return;
     if (!trimmed.startsWith('sk-ant-oat')) {
-      setError('TOKEN MUST START WITH sk-ant-oat (RUN claude setup-token)');
+      setLegacyError('TOKEN MUST START WITH sk-ant-oat (RUN claude setup-token)');
       return;
     }
-    setStatus('loading');
-    setError('');
+    setLegacyStatus('loading');
+    setLegacyError('');
     try {
       const headers = await getAuthHeaders();
+      if (!headers) { setLegacyError('NOT AUTHENTICATED. RELOAD PAGE.'); setLegacyStatus('error'); return; }
       const res = await fetch('/api/setup', {
         method: 'POST',
         headers,
@@ -519,32 +611,39 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || 'SETUP FAILED');
-        setStatus('error');
+        setLegacyError(data.error || 'SETUP FAILED');
+        setLegacyStatus('error');
         return;
       }
-      setStatus('polling');
-      for (let i = 0; i < 20; i++) {
-        await new Promise(r => setTimeout(r, 1000));
-        try {
-          const h = await getAuthHeaders();
-          const hr = await fetch('/api/health', { headers: h });
-          const hd = await hr.json();
-          if (hd.processAlive && !hd.needsSetup) {
-            onComplete();
-            return;
-          }
-        } catch {}
+      setLegacyStatus('polling');
+      const alive = await pollUntilAlive();
+      if (!alive) {
+        setLegacyError('CLAUDE PROCESS DID NOT START. CHECK SERVER LOGS.');
+        setLegacyStatus('error');
       }
-      setError('CLAUDE PROCESS DID NOT START. CHECK SERVER LOGS.');
-      setStatus('error');
     } catch (err) {
-      setError('CONNECTION ERROR: ' + err.message);
-      setStatus('error');
+      setLegacyError('CONNECTION ERROR: ' + err.message);
+      setLegacyStatus('error');
     }
-  }, [token, getAuthHeaders, onComplete]);
+  }, [token, getAuthHeaders, pollUntilAlive]);
 
-  const isLoading = status === 'loading' || status === 'polling';
+  const oauthLoading = oauthStatus === 'starting' || oauthStatus === 'exchanging' || oauthStatus === 'polling';
+  const legacyLoading = legacyStatus === 'loading' || legacyStatus === 'polling';
+
+  const tabStyle = (active) => ({
+    flex: 1,
+    padding: '10px 0',
+    fontFamily: "'VT323', monospace",
+    fontSize: '1.1rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.1em',
+    cursor: 'pointer',
+    border: 'none',
+    borderBottom: active ? '2px solid #FFD600' : '2px solid transparent',
+    background: 'transparent',
+    color: active ? '#FFD600' : '#666',
+    transition: 'color 0.15s, border-color 0.15s',
+  });
 
   return (
     <div style={{
@@ -561,7 +660,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
           <h1 style={{
             fontFamily: "'VT323', monospace",
             fontSize: '2rem',
-            color: '#FFD600',
+            color: '#000',
             marginTop: 16,
             textTransform: 'uppercase',
             letterSpacing: '0.15em',
@@ -571,7 +670,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
           <p style={{
             fontFamily: "'VT323', monospace",
             fontSize: '1.1rem',
-            color: '#AA8800',
+            color: '#555',
             marginTop: 4,
           }}>
             ONE-TIME SETUP TO LINK YOUR ACCOUNT
@@ -582,101 +681,253 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
           background: '#0F0F0F',
           border: '4px solid #2a2a2a',
           borderRadius: 12,
-          padding: 24,
           boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
           display: 'flex',
           flexDirection: 'column',
-          gap: 20,
         }}>
-          <div>
-            <div style={{
-              fontFamily: "'VT323', monospace",
-              fontSize: '1.1rem',
-              color: '#FFD600',
-              marginBottom: 8,
-            }}>
-              {'>'} STEP 1: GENERATE TOKEN
-            </div>
-            <div style={{
-              background: '#1a1a00',
-              border: '1px solid #333',
-              borderRadius: 4,
-              padding: '8px 12px',
-              fontFamily: "'VT323', monospace",
-              fontSize: '1.1rem',
-            }}>
-              <span style={{ color: '#666' }}>$</span>{' '}
-              <span style={{ color: '#FFD600' }}>claude setup-token</span>
-            </div>
+          {/* Tabs */}
+          <div style={{ display: 'flex', borderBottom: '1px solid #2a2a2a' }}>
+            <button onClick={() => setTab('oauth')} style={tabStyle(tab === 'oauth')}>
+              Sign in with Anthropic
+            </button>
+            <button onClick={() => setTab('legacy')} style={tabStyle(tab === 'legacy')}>
+              Paste Token
+            </button>
           </div>
 
-          <div style={{ height: 1, background: '#333', borderStyle: 'dashed' }} />
+          <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {tab === 'oauth' ? (
+              /* ── OAuth Tab ── */
+              <>
+                {oauthStep === 1 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+                    <div style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1.1rem',
+                      color: '#FFD600',
+                      textAlign: 'center',
+                    }}>
+                      {'>'} STEP 1: AUTHORIZE WITH ANTHROPIC
+                    </div>
+                    <p style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1rem',
+                      color: '#AA8800',
+                      textAlign: 'center',
+                      lineHeight: 1.5,
+                    }}>
+                      OPENS ANTHROPIC IN A NEW TAB. AUTHORIZE, THEN COPY THE SHORT CODE BACK HERE.
+                    </p>
+                    <button
+                      onClick={handleOAuthStart}
+                      disabled={oauthLoading}
+                      style={{
+                        padding: '14px 32px',
+                        borderRadius: 8,
+                        background: oauthLoading ? '#555' : '#FFD600',
+                        color: '#000',
+                        border: 'none',
+                        fontFamily: "'VT323', monospace",
+                        fontSize: '1.3rem',
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.1em',
+                        cursor: oauthLoading ? 'default' : 'pointer',
+                        boxShadow: oauthLoading ? 'none' : '0 4px 0 #AA8800, 0 8px 10px rgba(0,0,0,0.15)',
+                        transition: 'all 0.1s',
+                      }}
+                    >
+                      {oauthStatus === 'starting' ? 'OPENING...' : 'SIGN IN WITH ANTHROPIC'}
+                    </button>
+                    {oauthError && (
+                      <p style={{
+                        fontFamily: "'VT323', monospace",
+                        fontSize: '1rem',
+                        color: '#ff4444',
+                      }}>{oauthError}</p>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    <div style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1.1rem',
+                      color: '#FFD600',
+                    }}>
+                      {'>'} STEP 2: PASTE AUTHORIZATION CODE
+                    </div>
+                    <p style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1rem',
+                      color: '#AA8800',
+                      lineHeight: 1.5,
+                    }}>
+                      COPY THE SHORT CODE FROM THE ANTHROPIC PAGE AND PASTE IT BELOW.
+                    </p>
+                    <input
+                      value={oauthCode}
+                      onChange={e => { setOauthCode(e.target.value); setOauthError(''); }}
+                      placeholder="PASTE CODE HERE..."
+                      disabled={oauthLoading}
+                      style={{
+                        width: '100%',
+                        backgroundColor: '#C8A800',
+                        boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2)',
+                        borderRadius: 6,
+                        color: '#000',
+                        fontWeight: 'bold',
+                        padding: '0 16px',
+                        height: 50,
+                        fontFamily: "'VT323', monospace",
+                        fontSize: '1.1rem',
+                        border: oauthError ? '2px solid #ff4444' : '2px solid transparent',
+                        outline: 'none',
+                        opacity: oauthLoading ? 0.5 : 1,
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                    {oauthError && (
+                      <p style={{
+                        fontFamily: "'VT323', monospace",
+                        fontSize: '1rem',
+                        color: '#ff4444',
+                      }}>{oauthError}</p>
+                    )}
+                    <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+                      <button
+                        onClick={() => { setOauthStep(1); setOauthCode(''); setOauthError(''); setOauthStatus('idle'); }}
+                        disabled={oauthLoading}
+                        style={{
+                          padding: '10px 20px',
+                          borderRadius: 6,
+                          background: 'transparent',
+                          color: '#AA8800',
+                          border: '1px solid #333',
+                          fontFamily: "'VT323', monospace",
+                          fontSize: '1rem',
+                          cursor: oauthLoading ? 'default' : 'pointer',
+                        }}
+                      >
+                        BACK
+                      </button>
+                      <button
+                        onClick={handleOAuthExchange}
+                        disabled={oauthLoading || !oauthCode.trim()}
+                        style={{
+                          padding: '10px 32px',
+                          borderRadius: 6,
+                          background: (oauthLoading || !oauthCode.trim()) ? '#555' : '#FFD600',
+                          color: '#000',
+                          border: 'none',
+                          fontFamily: "'VT323', monospace",
+                          fontSize: '1.1rem',
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                          cursor: (oauthLoading || !oauthCode.trim()) ? 'default' : 'pointer',
+                          boxShadow: (oauthLoading || !oauthCode.trim()) ? 'none' : '0 3px 0 #AA8800',
+                        }}
+                      >
+                        {oauthStatus === 'exchanging' ? 'CONNECTING...' : oauthStatus === 'polling' ? 'BOOTING...' : 'CONNECT'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              /* ── Legacy Tab ── */
+              <>
+                <div>
+                  <div style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1.1rem',
+                    color: '#FFD600',
+                    marginBottom: 8,
+                  }}>
+                    {'>'} STEP 1: GENERATE TOKEN
+                  </div>
+                  <div style={{
+                    background: '#1a1a00',
+                    border: '1px solid #333',
+                    borderRadius: 4,
+                    padding: '8px 12px',
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1.1rem',
+                  }}>
+                    <span style={{ color: '#666' }}>$</span>{' '}
+                    <span style={{ color: '#FFD600' }}>claude setup-token</span>
+                  </div>
+                </div>
 
-          <div>
-            <div style={{
-              fontFamily: "'VT323', monospace",
-              fontSize: '1.1rem',
-              color: '#FFD600',
-              marginBottom: 8,
-            }}>
-              {'>'} STEP 2: PASTE TOKEN
-            </div>
-            <input
-              value={token}
-              onChange={e => { setToken(e.target.value); setError(''); }}
-              placeholder="SK-ANT-OAT01-..."
-              disabled={isLoading}
-              style={{
-                width: '100%',
-                backgroundColor: '#C8A800',
-                boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2)',
-                borderRadius: 6,
-                color: '#000',
-                fontWeight: 'bold',
-                padding: '0 16px',
-                height: 50,
-                fontFamily: "'VT323', monospace",
-                textTransform: 'uppercase',
-                fontSize: '1.1rem',
-                border: error ? '2px solid #ff4444' : '2px solid transparent',
-                outline: 'none',
-                opacity: isLoading ? 0.5 : 1,
-                boxSizing: 'border-box',
-              }}
-            />
-            {error && (
-              <p style={{
-                fontFamily: "'VT323', monospace",
-                fontSize: '1rem',
-                color: '#ff4444',
-                marginTop: 8,
-              }}>{error}</p>
+                <div style={{ height: 1, background: '#333', borderStyle: 'dashed' }} />
+
+                <div>
+                  <div style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1.1rem',
+                    color: '#FFD600',
+                    marginBottom: 8,
+                  }}>
+                    {'>'} STEP 2: PASTE TOKEN
+                  </div>
+                  <input
+                    value={token}
+                    onChange={e => { setToken(e.target.value); setLegacyError(''); }}
+                    placeholder="SK-ANT-OAT01-..."
+                    disabled={legacyLoading}
+                    style={{
+                      width: '100%',
+                      backgroundColor: '#C8A800',
+                      boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2)',
+                      borderRadius: 6,
+                      color: '#000',
+                      fontWeight: 'bold',
+                      padding: '0 16px',
+                      height: 50,
+                      fontFamily: "'VT323', monospace",
+                      textTransform: 'uppercase',
+                      fontSize: '1.1rem',
+                      border: legacyError ? '2px solid #ff4444' : '2px solid transparent',
+                      outline: 'none',
+                      opacity: legacyLoading ? 0.5 : 1,
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                  {legacyError && (
+                    <p style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1rem',
+                      color: '#ff4444',
+                      marginTop: 8,
+                    }}>{legacyError}</p>
+                  )}
+                </div>
+
+                <button
+                  onClick={handleLegacyConnect}
+                  disabled={legacyLoading || !token.trim()}
+                  style={{
+                    width: 80,
+                    height: 80,
+                    borderRadius: '50%',
+                    background: (legacyLoading || !token.trim()) ? '#555' : '#E5E5E5',
+                    color: '#333',
+                    border: '1px solid #999',
+                    boxShadow: (legacyLoading || !token.trim()) ? 'none' : '0 4px 0 #999, 0 8px 10px rgba(0,0,0,0.15)',
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1rem',
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: 1,
+                    cursor: (legacyLoading || !token.trim()) ? 'default' : 'pointer',
+                    transition: 'all 0.1s',
+                    alignSelf: 'center',
+                  }}
+                >
+                  {legacyStatus === 'loading' ? '...' : legacyStatus === 'polling' ? 'BOOT' : 'GO'}
+                </button>
+              </>
             )}
           </div>
-
-          <button
-            onClick={handleConnect}
-            disabled={isLoading || !token.trim()}
-            style={{
-              width: 80,
-              height: 80,
-              borderRadius: '50%',
-              background: (isLoading || !token.trim()) ? '#555' : '#E5E5E5',
-              color: '#333',
-              border: '1px solid #999',
-              boxShadow: (isLoading || !token.trim()) ? 'none' : '0 4px 0 #999, 0 8px 10px rgba(0,0,0,0.15)',
-              fontFamily: "'VT323', monospace",
-              fontSize: '1rem',
-              fontWeight: 700,
-              textTransform: 'uppercase',
-              letterSpacing: 1,
-              cursor: (isLoading || !token.trim()) ? 'default' : 'pointer',
-              transition: 'all 0.1s',
-              alignSelf: 'center',
-            }}
-          >
-            {status === 'loading' ? '...' : status === 'polling' ? 'BOOT' : 'GO'}
-          </button>
         </div>
       </div>
     </div>

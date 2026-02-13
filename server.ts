@@ -7,6 +7,66 @@ const PORT = parseInt(process.env.PORT || "3847");
 const WORKING_DIR = process.env.WORKING_DIR || process.cwd();
 const AUTH_ENV_PATH = join(import.meta.dir, "claude-auth.env");
 
+// ── OAuth constants ────────────────────────────────────────────────────────
+const ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const ANTHROPIC_AUTHORIZE_URL = "https://console.anthropic.com/oauth/authorize";
+const ANTHROPIC_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
+const ANTHROPIC_REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback";
+const OAUTH_SCOPES = "org:create_api_key user:profile user:inference";
+const AUTH_JSON_PATH = join(import.meta.dir, "claude-auth.json");
+
+// In-memory PKCE state (10-min TTL)
+const pendingOAuth = new Map<string, { verifier: string; createdAt: number }>();
+const PKCE_TTL_MS = 10 * 60 * 1000;
+
+// Cleanup expired PKCE entries every 60s
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of pendingOAuth) {
+    if (now - val.createdAt > PKCE_TTL_MS) pendingOAuth.delete(key);
+  }
+}, 60_000);
+
+function generateRandomBase64url(bytes: number): string {
+  const buf = new Uint8Array(bytes);
+  crypto.getRandomValues(buf);
+  return btoa(String.fromCharCode(...buf))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function sha256Base64url(plain: string): Promise<string> {
+  const encoded = new TextEncoder().encode(plain);
+  const hash = await crypto.subtle.digest("SHA-256", encoded);
+  return btoa(String.fromCharCode(...new Uint8Array(hash)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// ── OAuth token storage (JSON) ────────────────────────────────────────────
+interface OAuthTokens {
+  access_token: string;
+  refresh_token: string;
+  expires_at: number; // epoch ms
+}
+
+function loadOAuthTokens(): OAuthTokens | null {
+  if (!existsSync(AUTH_JSON_PATH)) return null;
+  try {
+    const data = JSON.parse(readFileSync(AUTH_JSON_PATH, "utf-8"));
+    if (typeof data?.access_token === "string" && data.access_token.length > 0) {
+      return data as OAuthTokens;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function saveOAuthTokens(tokens: OAuthTokens): void {
+  writeFileSync(AUTH_JSON_PATH, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+}
+
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
+
 // ── Clerk JWT verification ──────────────────────────────────────────────────
 // Decode frontend API domain from the publishable key
 const CLERK_PK = process.env.VITE_CLERK_PUBLISHABLE_KEY || "";
@@ -32,6 +92,12 @@ async function verifyClerkToken(req: Request): Promise<boolean> {
 // ── Auth env file ──────────────────────────────────────────────────────────
 
 function loadAuthEnv(): Record<string, string> {
+  // Check OAuth JSON first — only use if not expired
+  const oauthTokens = loadOAuthTokens();
+  if (oauthTokens?.access_token && oauthTokens.expires_at > Date.now()) {
+    return { CLAUDE_CODE_OAUTH_TOKEN: oauthTokens.access_token };
+  }
+  // Fall back to legacy .env file
   if (!existsSync(AUTH_ENV_PATH)) return {};
   try {
     const content = readFileSync(AUTH_ENV_PATH, "utf-8");
@@ -51,7 +117,15 @@ function loadAuthEnv(): Record<string, string> {
 }
 
 function needsSetup(): boolean {
-  return !existsSync(AUTH_ENV_PATH);
+  if (existsSync(AUTH_JSON_PATH) && loadOAuthTokens()?.access_token) return false;
+  if (existsSync(AUTH_ENV_PATH)) return false;
+  return true;
+}
+
+function getAuthMethod(): "oauth" | "legacy" | "none" {
+  if (existsSync(AUTH_JSON_PATH) && loadOAuthTokens()?.access_token) return "oauth";
+  if (existsSync(AUTH_ENV_PATH)) return "legacy";
+  return "none";
 }
 
 // ── Persistent Claude Process Manager ──────────────────────────────────────
@@ -268,6 +342,80 @@ function writeTurn(message: string): ReadableStream {
   });
 }
 
+// ── OAuth token refresh ────────────────────────────────────────────────────
+
+async function refreshAccessToken(): Promise<boolean> {
+  const tokens = loadOAuthTokens();
+  if (!tokens?.refresh_token) return false;
+  console.log("[OAuth] Refreshing access token...");
+  try {
+    const res = await fetch(ANTHROPIC_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: ANTHROPIC_CLIENT_ID,
+        refresh_token: tokens.refresh_token,
+      }),
+    });
+    if (!res.ok) {
+      console.error("[OAuth] Refresh failed:", res.status, await res.text());
+      return false;
+    }
+    const data = await res.json() as any;
+    const newTokens: OAuthTokens = {
+      access_token: data.access_token,
+      refresh_token: data.refresh_token || tokens.refresh_token,
+      expires_at: Date.now() + (data.expires_in ?? 3600) * 1000,
+    };
+    saveOAuthTokens(newTokens);
+    console.log("[OAuth] Token refreshed, expires at", new Date(newTokens.expires_at).toISOString());
+
+    // Restart Claude process with new token — defer if a turn is active
+    const restart = () => {
+      if (claudeProc && processAlive) {
+        console.log("[OAuth] Restarting Claude with refreshed token...");
+        claudeProc.kill();
+        lastSessionId = null;
+        setTimeout(() => spawnClaude(), 500);
+      }
+    };
+    if (activeListener) {
+      console.log("[OAuth] Turn in progress, deferring restart...");
+      let checks = 0;
+      const checkDone = setInterval(() => {
+        checks++;
+        if (!activeListener || checks > 150) { // 5 min max wait
+          clearInterval(checkDone);
+          restart();
+        }
+      }, 2000);
+    } else {
+      restart();
+    }
+    return true;
+  } catch (err) {
+    console.error("[OAuth] Refresh error:", err);
+    return false;
+  }
+}
+
+let refreshing = false;
+
+function startRefreshTimer(): void {
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(async () => {
+    if (refreshing) return;
+    const tokens = loadOAuthTokens();
+    if (!tokens) return;
+    const remaining = tokens.expires_at - Date.now();
+    if (remaining < 10 * 60 * 1000) { // < 10 min remaining
+      refreshing = true;
+      try { await refreshAccessToken(); } finally { refreshing = false; }
+    }
+  }, 60_000);
+}
+
 // ── Allowed origin for CORS ──────────────────────────────────────────────────
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*";
 
@@ -301,6 +449,7 @@ Bun.serve({
         status: "ok",
         processAlive: processAlive && claudeProc !== null,
         needsSetup: needsSetup(),
+        authMethod: getAuthMethod(),
       }, { headers: corsHeaders() });
     }
 
@@ -335,6 +484,91 @@ Bun.serve({
       } catch (err) {
         console.error("[Setup] Failed:", err);
         return Response.json({ error: "Failed to save token" }, { status: 500, headers: corsHeaders() });
+      }
+    }
+
+    // OAuth start: generate PKCE challenge and return authorization URL (authenticated)
+    if (url.pathname === "/api/oauth/start" && req.method === "GET") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
+      const verifier = generateRandomBase64url(32);
+      const state = generateRandomBase64url(16);
+      const challenge = await sha256Base64url(verifier);
+      pendingOAuth.set(state, { verifier, createdAt: Date.now() });
+
+      const params = new URLSearchParams({
+        response_type: "code",
+        client_id: ANTHROPIC_CLIENT_ID,
+        redirect_uri: ANTHROPIC_REDIRECT_URI,
+        scope: OAUTH_SCOPES,
+        state,
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+      });
+      const authUrl = `${ANTHROPIC_AUTHORIZE_URL}?${params}`;
+      return Response.json({ authUrl, state }, { headers: corsHeaders() });
+    }
+
+    // OAuth exchange: swap authorization code for tokens (authenticated)
+    if (url.pathname === "/api/oauth/exchange" && req.method === "POST") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
+      const body = (await req.json()) as { code?: string; state?: string };
+      if (!body.code || !body.state) {
+        return Response.json({ error: "code and state required" }, { status: 400, headers: corsHeaders() });
+      }
+      const pending = pendingOAuth.get(body.state);
+      if (!pending) {
+        return Response.json({ error: "Invalid or expired state parameter" }, { status: 400, headers: corsHeaders() });
+      }
+      pendingOAuth.delete(body.state);
+
+      // User may copy "code#state" from Anthropic's callback page — take just the code
+      const code = body.code.includes("#") ? body.code.split("#")[0] : body.code;
+
+      try {
+        const tokenRes = await fetch(ANTHROPIC_TOKEN_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            grant_type: "authorization_code",
+            client_id: ANTHROPIC_CLIENT_ID,
+            code,
+            redirect_uri: ANTHROPIC_REDIRECT_URI,
+            code_verifier: pending.verifier,
+          }),
+        });
+        if (!tokenRes.ok) {
+          const errText = await tokenRes.text();
+          console.error("[OAuth] Token exchange failed:", tokenRes.status, errText);
+          return Response.json({ error: "Token exchange failed. Check server logs for details." }, { status: 502, headers: corsHeaders() });
+        }
+        const data = await tokenRes.json() as any;
+        const tokens: OAuthTokens = {
+          access_token: data.access_token,
+          refresh_token: data.refresh_token || "",
+          expires_at: Date.now() + (data.expires_in ?? 3600) * 1000,
+        };
+        saveOAuthTokens(tokens);
+        console.log("[OAuth] Tokens saved, expires at", new Date(tokens.expires_at).toISOString());
+
+        // Start refresh timer
+        startRefreshTimer();
+
+        // Kill and respawn Claude with new creds
+        if (claudeProc && processAlive) {
+          console.log("[OAuth] Killing current Claude process...");
+          claudeProc.kill();
+          await new Promise(r => setTimeout(r, 500));
+        }
+        lastSessionId = null;
+        spawnClaude();
+        return Response.json({ ok: true, pid: claudeProc?.pid ?? null }, { headers: corsHeaders() });
+      } catch (err) {
+        console.error("[OAuth] Exchange error:", err);
+        return Response.json({ error: "Token exchange failed" }, { status: 500, headers: corsHeaders() });
       }
     }
 
@@ -428,6 +662,16 @@ Bun.serve({
 });
 
 // ── Startup ────────────────────────────────────────────────────────────────
+
+// If OAuth tokens exist, start refresh timer and eagerly refresh if expired
+const startupTokens = loadOAuthTokens();
+if (startupTokens) {
+  startRefreshTimer();
+  if (startupTokens.expires_at <= Date.now() && startupTokens.refresh_token) {
+    console.log("[OAuth] Token expired on startup, refreshing before spawn...");
+    await refreshAccessToken();
+  }
+}
 
 spawnClaude();
 
