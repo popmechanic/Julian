@@ -812,17 +812,19 @@ function App() {
   }, []);
 
   const getAuthHeaders = useCallback(async () => {
-    const headers = { 'Content-Type': 'application/json' };
     try {
       const token = await window.Clerk?.session?.getToken();
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-    } catch {}
-    return headers;
+      if (!token) return null;
+      return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+    } catch {
+      return null;
+    }
   }, []);
 
   const refreshArtifacts = useCallback(async () => {
     try {
       const headers = await getAuthHeaders();
+      if (!headers) return [];
       const r = await fetch('/api/artifacts', { headers });
       if (r.ok) {
         const data = await r.json();
@@ -841,19 +843,30 @@ function App() {
   }, [refreshArtifacts]);
 
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    const tryInit = async () => {
+      const headers = await getAuthHeaders();
+      if (!headers) {
+        if (!cancelled) setTimeout(tryInit, 500);
+        return;
+      }
       try {
-        const headers = await getAuthHeaders();
         const r = await fetch('/api/health', { headers });
         const data = await r.json();
-        setConnected(data.processAlive);
-        setSetupNeeded(data.needsSetup ?? false);
+        if (!cancelled) {
+          setConnected(data.processAlive);
+          setSetupNeeded(data.needsSetup ?? false);
+        }
       } catch {
-        setConnected(false);
-        setSetupNeeded(false);
+        if (!cancelled) {
+          setConnected(false);
+          setSetupNeeded(false);
+        }
       }
-    })();
-    refreshArtifacts();
+      refreshArtifacts();
+    };
+    tryInit();
+    return () => { cancelled = true; };
   }, [getAuthHeaders, refreshArtifacts]);
 
   useEffect(() => {
