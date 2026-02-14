@@ -4,7 +4,7 @@ For this project, I want you to communicate to me not via text in the terminal, 
 
 Every HTML document created as a response artifact must be listed here. At the start of each conversation, read these artifacts to maintain continuity. Update this list whenever a new artifact is created.
 
-Artifacts live in the project root directory locally and on the server at `/opt/julian/*.html`. Read them by filename (e.g., `response.html`).
+Artifacts live in `memory/` locally and on the server at `/opt/julian/memory/*.html`. Read them by filename (e.g., `memory/response.html`).
 
 ### Artifacts
 
@@ -66,7 +66,7 @@ Artifacts live in the project root directory locally and on the server at `/opt/
 
 ```bash
 # Sync source files to server
-rsync -avz index.html server/ julian.exe.xyz:/opt/julian/
+rsync -avz index.html server/ memory/ julian.exe.xyz:/opt/julian/
 
 # Copy index.html to where nginx actually serves it
 ssh julian.exe.xyz "sudo cp /opt/julian/index.html /var/www/html/index.html"

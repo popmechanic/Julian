@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { join } from "path";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { createHash, randomBytes } from "crypto";
 
@@ -641,6 +641,46 @@ Bun.serve({
           ...corsHeaders(),
         },
       });
+    }
+
+    // ── Artifact endpoints ──────────────────────────────────────────────────
+
+    // List artifacts (authenticated)
+    if (url.pathname === "/api/artifacts" && req.method === "GET") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
+      const memoryDir = join(WORKING_DIR, "memory");
+      try {
+        const entries = readdirSync(memoryDir)
+          .filter(f => f.endsWith(".html"))
+          .map(name => {
+            const st = statSync(join(memoryDir, name));
+            return { name, modified: st.mtimeMs };
+          })
+          .sort((a, b) => b.modified - a.modified);
+        return Response.json({ files: entries }, { headers: corsHeaders() });
+      } catch (err) {
+        return Response.json({ files: [] }, { headers: corsHeaders() });
+      }
+    }
+
+    // Serve individual artifact (unauthenticated — iframes can't send headers)
+    if (url.pathname.startsWith("/api/artifacts/") && req.method === "GET") {
+      const filename = decodeURIComponent(url.pathname.slice("/api/artifacts/".length));
+      // Validate filename: no slashes, no path traversal
+      if (!filename || filename.includes("/") || filename.includes("\\") || filename.includes("..") || !filename.endsWith(".html")) {
+        return new Response("Bad Request", { status: 400, headers: corsHeaders() });
+      }
+      const filePath = join(WORKING_DIR, "memory", filename);
+      try {
+        const content = readFileSync(filePath, "utf-8");
+        return new Response(content, {
+          headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders() },
+        });
+      } catch {
+        return new Response("Not Found", { status: 404, headers: corsHeaders() });
+      }
     }
 
     return new Response("Not Found", { status: 404 });

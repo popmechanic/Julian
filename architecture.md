@@ -220,7 +220,7 @@ Both tabs poll `/api/health` after setup until `processAlive && !needsSetup`.
 
 | Layer | What | Where | Sync |
 |-------|------|-------|------|
-| Filesystem | HTML artifacts (~37 files) | `/opt/julian/*.html` (prod), `WORKING_DIR` (dev) | None (manual rsync deploy) |
+| Filesystem | HTML artifacts (~44 files) | `/opt/julian/memory/*.html` (prod), `WORKING_DIR/memory` (dev) | None (manual rsync deploy) |
 | Fireproof CRDT | Chat messages | IndexedDB + cloud sync via Clerk auth | Automatic cross-device |
 | Server memory | OAuth tokens (also persisted to JSON/env), PKCE state, turn lock, session ID | Bun process | Lost on restart (except token files) |
 
@@ -240,7 +240,7 @@ User types → ChatInput.handleSend()
 ### Artifact Lifecycle
 
 ```
-Claude executes Write tool → file written to WORKING_DIR
+Claude executes Write tool → file written to WORKING_DIR/memory/
   → Frontend detects Write tool_use in SSE stream
   → setTimeout(loadArtifact, 1500) for the written filename
   → GET /api/artifacts returns updated file list
@@ -266,7 +266,7 @@ Claude executes Write tool → file written to WORKING_DIR
 **Deploy process** (manual):
 
 ```bash
-rsync -avz server/ index.html *.html /opt/julian/ user@julian.exe.xyz:/opt/julian/
+rsync -avz server/ index.html memory/ user@julian.exe.xyz:/opt/julian/
 ssh julian.exe.xyz "cd /opt/julian && bun server/server.ts"
 ```
 
