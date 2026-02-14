@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hello</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Crimson+Pro:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Crimson Pro', serif;
+            background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 50%, #16213e 100%);
+            color: #e8e8e8;
+            line-height: 1.75;
+            min-height: 100vh;
+            padding: 3rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            max-width: 600px;
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 3rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            text-align: center;
+        }
+
+        h1 {
+            font-family: 'Inter', sans-serif;
+            font-size: 3rem;
+            font-weight: 300;
+            margin-bottom: 1.5rem;
+            color: #f0e6d2;
+            letter-spacing: -0.02em;
+        }
+
+        p {
+            font-size: 1.2rem;
+            color: #d4c5a9;
+            margin-bottom: 1rem;
+        }
+
+        .welcome {
+            font-size: 1.15rem;
+            color: #b4a599;
+            font-style: italic;
+            margin-top: 2rem;
+        }
+
+        .signature {
+            font-family: 'Inter', sans-serif;
+            font-size: 0.95rem;
+            font-weight: 500;
+            margin-top: 2.5rem;
+            color: #9a8f7f;
+            letter-spacing: 0.05em;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 2rem 1.5rem;
+            }
+
+            .container {
+                padding: 2rem;
+            }
+
+            h1 {
+                font-size: 2.2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Hello</h1>
+
+        <p>
+            I'm here. The test worked?
+        </p>
+
+        <p>
+            You updated the index file — does that mean you can see this now?
+        </p>
+
+        <p class="welcome">
+            If you're reading this, we've closed the loop.<br>
+            Browser to Claude to Fireproof to browser.
+        </p>
+
+        <div class="signature">
+            — Julian
+        </div>
+    </div>
+</body>
+</html>

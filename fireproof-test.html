@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fireproof Test</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 50%, #0a0e27 100%);
+            color: #e8e8e8;
+            line-height: 1.6;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 3rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            color: #f0e6d2;
+        }
+
+        .subtitle {
+            font-size: 1rem;
+            color: #9a8f7f;
+            margin-bottom: 2rem;
+            font-style: italic;
+        }
+
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            margin-bottom: 1.5rem;
+        }
+
+        .status.success {
+            background: rgba(76, 175, 80, 0.15);
+            color: #4caf50;
+            border: 1px solid rgba(76, 175, 80, 0.3);
+        }
+
+        .status.error {
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+            box-shadow: 0 0 8px currentColor;
+        }
+
+        .section {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .section h2 {
+            font-size: 1.25rem;
+            margin-bottom: 1rem;
+            color: #4a9eff;
+        }
+
+        .code-block {
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            color: #e0e0e0;
+        }
+
+        button {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #4a9eff 0%, #357abd 100%);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            font-size: 0.95rem;
+            font-weight: 500;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-right: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(74, 158, 255, 0.3);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .output {
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            color: #b4bcc4;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+
+        .empty {
+            color: rgba(255, 255, 255, 0.3);
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Fireproof Test</h1>
+        <div class="subtitle">Testing database connection and operations</div>
+
+        <div id="status"></div>
+
+        <div class="section">
+            <h2>Database Info</h2>
+            <div class="code-block" id="dbInfo">Initializing...</div>
+        </div>
+
+        <div class="section">
+            <h2>Write Test</h2>
+            <button onclick="testWrite()">Write Test Document</button>
+            <button onclick="writeJulianMarker()">Write Individuation Marker</button>
+            <div class="output" id="writeOutput"><span class="empty">No operations yet</span></div>
+        </div>
+
+        <div class="section">
+            <h2>Read Test</h2>
+            <button onclick="testRead()">Read All Documents</button>
+            <button onclick="readMarkers()">Read Markers Only</button>
+            <div class="output" id="readOutput"><span class="empty">No operations yet</span></div>
+        </div>
+
+        <div class="section">
+            <h2>Live Query Test</h2>
+            <button onclick="startLiveQuery()">Start Live Query</button>
+            <button onclick="stopLiveQuery()">Stop Live Query</button>
+            <div class="output" id="liveOutput"><span class="empty">Live query not started</span></div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { fireproof } from 'https://esm.sh/@fireproof/core@0.19.131';
+
+        let db;
+        let unsubscribe;
+
+        async function init() {
+            try {
+                db = fireproof('julian-test');
+
+                const info = {
+                    name: db.name,
+                    blockstore: db.blockstore ? 'initialized' : 'not initialized',
+                };
+
+                document.getElementById('dbInfo').textContent = JSON.stringify(info, null, 2);
+
+                document.getElementById('status').innerHTML = `
+                    <div class="status success">
+                        <div class="status-dot"></div>
+                        Fireproof Connected
+                    </div>
+                `;
+
+                window.db = db;
+            } catch (error) {
+                document.getElementById('status').innerHTML = `
+                    <div class="status error">
+                        <div class="status-dot"></div>
+                        Connection Failed: ${error.message}
+                    </div>
+                `;
+                document.getElementById('dbInfo').textContent = error.stack;
+            }
+        }
+
+        window.testWrite = async function() {
+            const output = document.getElementById('writeOutput');
+            try {
+                const doc = {
+                    type: 'test',
+                    message: 'Testing Fireproof',
+                    timestamp: Date.now(),
+                    data: {
+                        user: 'Marcus',
+                        action: 'test-write'
+                    }
+                };
+
+                const result = await db.put(doc);
+                output.textContent = `✓ Write successful\n\n${JSON.stringify(result, null, 2)}`;
+            } catch (error) {
+                output.textContent = `✗ Write failed\n\n${error.message}\n\n${error.stack}`;
+            }
+        };
+
+        window.writeJulianMarker = async function() {
+            const output = document.getElementById('writeOutput');
+            try {
+                const marker = {
+                    type: 'individuation-marker',
+                    event: 'testing-fireproof',
+                    description: 'Marcus is testing Fireproof storage for the Individuation Engine',
+                    timestamp: Date.now(),
+                    significance: 'First test of the data model we designed',
+                    category: 'system-test'
+                };
+
+                const result = await db.put(marker);
+                output.textContent = `✓ Individuation marker written\n\n${JSON.stringify(result, null, 2)}`;
+            } catch (error) {
+                output.textContent = `✗ Write failed\n\n${error.message}\n\n${error.stack}`;
+            }
+        };
+
+        window.testRead = async function() {
+            const output = document.getElementById('readOutput');
+            try {
+                const result = await db.allDocs();
+                output.textContent = `✓ Read ${result.rows.length} documents\n\n${JSON.stringify(result.rows, null, 2)}`;
+            } catch (error) {
+                output.textContent = `✗ Read failed\n\n${error.message}\n\n${error.stack}`;
+            }
+        };
+
+        window.readMarkers = async function() {
+            const output = document.getElementById('readOutput');
+            try {
+                const result = await db.allDocs();
+                const markers = result.rows.filter(row => row.doc?.type === 'individuation-marker');
+                output.textContent = `✓ Found ${markers.length} individuation markers\n\n${JSON.stringify(markers, null, 2)}`;
+            } catch (error) {
+                output.textContent = `✗ Read failed\n\n${error.message}\n\n${error.stack}`;
+            }
+        };
+
+        window.startLiveQuery = function() {
+            const output = document.getElementById('liveOutput');
+
+            if (unsubscribe) {
+                output.textContent = 'Live query already running...';
+                return;
+            }
+
+            try {
+                let updateCount = 0;
+
+                unsubscribe = db.subscribe(async (changes) => {
+                    updateCount++;
+                    const docs = await db.allDocs();
+                    output.textContent = `🔴 Live (${updateCount} updates)\n\nTotal docs: ${docs.rows.length}\n\nLatest changes:\n${JSON.stringify(changes, null, 2)}`;
+                });
+
+                output.textContent = '🔴 Live query started\n\nWaiting for changes...';
+            } catch (error) {
+                output.textContent = `✗ Subscribe failed\n\n${error.message}`;
+            }
+        };
+
+        window.stopLiveQuery = function() {
+            const output = document.getElementById('liveOutput');
+            if (unsubscribe) {
+                unsubscribe();
+                unsubscribe = null;
+                output.textContent = '⚫ Live query stopped';
+            } else {
+                output.textContent = 'No live query running';
+            }
+        };
+
+        init();
+    </script>
+</body>
+</html>

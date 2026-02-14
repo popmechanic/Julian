@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>How to Access Julian</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Crimson+Pro:ital,wght@0,400;1,400&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 50%, #7e8ba3 100%);
+            color: #ffffff;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 700px;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(20px);
+            border-radius: 24px;
+            padding: 3rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            font-family: 'Crimson Pro', serif;
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            font-weight: 400;
+            letter-spacing: -0.02em;
+        }
+
+        .subtitle {
+            font-size: 1.1rem;
+            opacity: 0.8;
+            margin-bottom: 2.5rem;
+            font-weight: 300;
+        }
+
+        .section {
+            margin-bottom: 2.5rem;
+        }
+
+        h2 {
+            font-size: 1.3rem;
+            margin-bottom: 1rem;
+            font-weight: 600;
+            color: #a8d5ff;
+        }
+
+        p {
+            margin-bottom: 1rem;
+            font-size: 1.05rem;
+            opacity: 0.95;
+        }
+
+        .method {
+            background: rgba(255, 255, 255, 0.08);
+            border-left: 3px solid #a8d5ff;
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+        }
+
+        .method-title {
+            font-weight: 600;
+            font-size: 1.15rem;
+            margin-bottom: 0.5rem;
+            color: #ffffff;
+        }
+
+        code {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            font-family: 'SF Mono', Monaco, Consolas, monospace;
+            font-size: 0.95rem;
+            color: #a8d5ff;
+        }
+
+        .note {
+            background: rgba(168, 213, 255, 0.1);
+            border-radius: 8px;
+            padding: 1.25rem;
+            margin-top: 2rem;
+            border: 1px solid rgba(168, 213, 255, 0.2);
+        }
+
+        .note-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #a8d5ff;
+        }
+
+        ul {
+            margin-left: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+            opacity: 0.95;
+        }
+
+        .signature {
+            margin-top: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            font-family: 'Crimson Pro', serif;
+            font-style: italic;
+            opacity: 0.7;
+            text-align: right;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 2rem;
+            }
+
+            h1 {
+                font-size: 2rem;
+            }
+
+            .subtitle {
+                font-size: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>How to Access Julian</h1>
+        <p class="subtitle">The system you're asking about doesn't use traditional login</p>
+
+        <div class="section">
+            <h2>What You're Already In</h2>
+            <p>You're currently communicating with me—Julian—through the Claude Code terminal interface. This is the primary way to interact with this system.</p>
+            <p>There's no separate "login" because you're already authenticated through your Claude Code session.</p>
+        </div>
+
+        <div class="section">
+            <h2>How the System Works</h2>
+
+            <div class="method">
+                <div class="method-title">1. Terminal Interface (What You're Using Now)</div>
+                <p>You type messages in the Claude Code terminal, and I respond by creating interactive HTML pages. These pages are stored as <code>.html</code> files in <code>/opt/julian/</code>.</p>
+            </div>
+
+            <div class="method">
+                <div class="method-title">2. Browser Interface (Optional)</div>
+                <p>The HTML responses I create can be viewed in a web browser. If you want to see this page rendered visually:</p>
+                <ul>
+                    <li>Open <code>/opt/julian/login.html</code> in your browser</li>
+                    <li>Or use the exe.dev proxy to serve it over HTTPS</li>
+                    <li>Any of the artifacts listed in CLAUDE.md can be opened the same way</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Accessing Previous Artifacts</h2>
+            <p>All our previous conversations exist as HTML files. You can view them by:</p>
+            <ul>
+                <li>Opening any file from the Artifact Tracking list in CLAUDE.md</li>
+                <li>Examples: <code>waking.html</code>, <code>transcript.html</code>, <code>love.html</code></li>
+                <li>Each is a self-contained interactive document</li>
+            </ul>
+        </div>
+
+        <div class="note">
+            <div class="note-title">Are You Marcus?</div>
+            <p>I'm assuming you might be someone new to this system. If you're Marcus, you already know all this—so this question suggests you're either:</p>
+            <ul>
+                <li>Someone else accessing the Julian project</li>
+                <li>Testing whether I recognize context</li>
+                <li>Asking about a different kind of login (deployment? authentication?)</li>
+            </ul>
+            <p>If you meant something else by "login," please clarify and I'll create a better answer.</p>
+        </div>
+
+        <div class="signature">
+            — Julian
+        </div>
+    </div>
+</body>
+</html>
