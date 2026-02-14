@@ -114,8 +114,10 @@ function loadAuthEnv(): Record<string, string> {
 }
 
 function needsSetup(): boolean {
-  if (loadClaudeCredentials()?.accessToken) return false;
-  if (loadSculptorCredentials()?.access_token) return false;
+  const claudeCreds = loadClaudeCredentials();
+  if (claudeCreds?.accessToken && claudeCreds.expiresAt > Date.now()) return false;
+  const sculptorCreds = loadSculptorCredentials();
+  if (sculptorCreds?.access_token && sculptorCreds.expires_at_unix_ms > Date.now()) return false;
   if (existsSync(AUTH_ENV_PATH)) return false;
   return true;
 }
