@@ -1,59 +1,42 @@
 import { spawn } from "bun";
 import { join } from "path";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "fs";
+import { readFileSync, writeFileSync, existsSync } from "fs";
+import { homedir } from "os";
 
 const PORT = parseInt(process.env.PORT || "3847");
 const WORKING_DIR = process.env.WORKING_DIR || process.cwd();
 const AUTH_ENV_PATH = join(import.meta.dir, "claude-auth.env");
 
-// ── OAuth constants ────────────────────────────────────────────────────────
-const ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-const ANTHROPIC_AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
-const ANTHROPIC_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
-const ANTHROPIC_REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback";
-const OAUTH_SCOPES = "org:create_api_key user:profile user:inference";
-const AUTH_JSON_PATH = join(import.meta.dir, "claude-auth.json");
+// ── Credential paths (managed by `claude auth login`) ────────────────────
+const CLAUDE_CREDS_PATH = join(homedir(), ".claude", ".credentials.json");
+const SCULPTOR_CREDS_PATH = join(homedir(), ".sculptor", "credentials.json");
 
-// In-memory PKCE state (10-min TTL)
-const pendingOAuth = new Map<string, { verifier: string; createdAt: number }>();
-const PKCE_TTL_MS = 10 * 60 * 1000;
+// In-memory tracking of pending `claude auth login` subprocesses (10-min TTL)
+const pendingAuthLogins = new Map<string, { proc: ReturnType<typeof spawn>; createdAt: number }>();
+const AUTH_LOGIN_TTL_MS = 10 * 60 * 1000;
 
-// Cleanup expired PKCE entries every 60s
+// Cleanup expired auth login subprocesses every 60s
 setInterval(() => {
   const now = Date.now();
-  for (const [key, val] of pendingOAuth) {
-    if (now - val.createdAt > PKCE_TTL_MS) pendingOAuth.delete(key);
+  for (const [key, val] of pendingAuthLogins) {
+    if (now - val.createdAt > AUTH_LOGIN_TTL_MS) {
+      try { val.proc.kill(); } catch {}
+      pendingAuthLogins.delete(key);
+    }
   }
 }, 60_000);
 
-function generateRandomBase64url(bytes: number): string {
-  const buf = new Uint8Array(bytes);
-  crypto.getRandomValues(buf);
-  return btoa(String.fromCharCode(...buf))
-    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
+// ── Credential readers ───────────────────────────────────────────────────
 
-async function sha256Base64url(plain: string): Promise<string> {
-  const encoded = new TextEncoder().encode(plain);
-  const hash = await crypto.subtle.digest("SHA-256", encoded);
-  return btoa(String.fromCharCode(...new Uint8Array(hash)))
-    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-// ── OAuth token storage (JSON) ────────────────────────────────────────────
-interface OAuthTokens {
-  access_token: string;
-  refresh_token: string;
-  expires_at: number; // epoch ms
-}
-
-function loadOAuthTokens(): OAuthTokens | null {
-  if (!existsSync(AUTH_JSON_PATH)) return null;
+function loadClaudeCredentials(): { accessToken: string; expiresAt: number } | null {
+  if (!existsSync(CLAUDE_CREDS_PATH)) return null;
   try {
-    const data = JSON.parse(readFileSync(AUTH_JSON_PATH, "utf-8"));
-    if (typeof data?.access_token === "string" && data.access_token.length > 0) {
-      return data as OAuthTokens;
+    const data = JSON.parse(readFileSync(CLAUDE_CREDS_PATH, "utf-8"));
+    const token = data?.claudeAiOauth?.accessToken;
+    const expiresAt = data?.claudeAiOauth?.expiresAt;
+    if (typeof token === "string" && token.length > 0) {
+      return { accessToken: token, expiresAt: expiresAt ?? 0 };
     }
     return null;
   } catch {
@@ -61,11 +44,20 @@ function loadOAuthTokens(): OAuthTokens | null {
   }
 }
 
-function saveOAuthTokens(tokens: OAuthTokens): void {
-  writeFileSync(AUTH_JSON_PATH, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+function loadSculptorCredentials(): { access_token: string; expires_at_unix_ms: number } | null {
+  if (!existsSync(SCULPTOR_CREDS_PATH)) return null;
+  try {
+    const data = JSON.parse(readFileSync(SCULPTOR_CREDS_PATH, "utf-8"));
+    const token = data?.anthropic?.access_token;
+    const expiresAt = data?.anthropic?.expires_at_unix_ms;
+    if (typeof token === "string" && token.length > 0) {
+      return { access_token: token, expires_at_unix_ms: expiresAt ?? 0 };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
-
-let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
 // ── Clerk JWT verification ──────────────────────────────────────────────────
 // Decode frontend API domain from the publishable key
@@ -92,10 +84,15 @@ async function verifyClerkToken(req: Request): Promise<boolean> {
 // ── Auth env file ──────────────────────────────────────────────────────────
 
 function loadAuthEnv(): Record<string, string> {
-  // Check OAuth JSON first — only use if not expired
-  const oauthTokens = loadOAuthTokens();
-  if (oauthTokens?.access_token && oauthTokens.expires_at > Date.now()) {
-    return { CLAUDE_CODE_OAUTH_TOKEN: oauthTokens.access_token };
+  // Check Claude Code creds first — CLI auto-discovers these
+  const claudeCreds = loadClaudeCredentials();
+  if (claudeCreds?.accessToken && claudeCreds.expiresAt > Date.now()) {
+    return {}; // Claude CLI auto-discovers ~/.claude/.credentials.json
+  }
+  // Check sculptor creds
+  const sculptorCreds = loadSculptorCredentials();
+  if (sculptorCreds?.access_token && sculptorCreds.expires_at_unix_ms > Date.now()) {
+    return {}; // Claude CLI auto-discovers ~/.sculptor/credentials.json
   }
   // Fall back to legacy .env file
   if (!existsSync(AUTH_ENV_PATH)) return {};
@@ -117,28 +114,31 @@ function loadAuthEnv(): Record<string, string> {
 }
 
 function needsSetup(): boolean {
-  if (existsSync(AUTH_JSON_PATH) && loadOAuthTokens()?.access_token) return false;
+  if (loadClaudeCredentials()?.accessToken) return false;
+  if (loadSculptorCredentials()?.access_token) return false;
   if (existsSync(AUTH_ENV_PATH)) return false;
   return true;
 }
 
 function getAuthMethod(): "oauth" | "legacy" | "none" {
-  if (existsSync(AUTH_JSON_PATH) && loadOAuthTokens()?.access_token) return "oauth";
+  if (loadClaudeCredentials()?.accessToken) return "oauth";
+  if (loadSculptorCredentials()?.access_token) return "oauth";
   if (existsSync(AUTH_ENV_PATH)) return "legacy";
   return "none";
 }
 
-// ── Persistent Claude Process Manager ──────────────────────────────────────
+// ── Ephemeral Claude Process Manager ─────────────────────────────────────
 
 let claudeProc: ReturnType<typeof spawn> | null = null;
 let activeListener: ((event: any) => void) | null = null;
 let turnResolve: (() => void) | null = null;
 let processAlive = false;
-let lastSessionId: string | null = null;
+let lastActivity = 0;
+const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 
 function spawnClaude() {
   const authEnv = loadAuthEnv();
-  console.log("[Claude] Spawning persistent process...", Object.keys(authEnv).length ? `(with ${Object.keys(authEnv).join(", ")})` : "(no auth env)");
+  console.log("[Claude] Spawning process...", Object.keys(authEnv).length ? `(with ${Object.keys(authEnv).join(", ")})` : "(no auth env)");
 
   const cmd = [
     "claude",
@@ -149,12 +149,6 @@ function spawnClaude() {
     "--permission-mode", "acceptEdits",
     "--allowedTools", "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch",
   ];
-
-  // Resume previous session if process died mid-conversation
-  if (lastSessionId) {
-    cmd.push("--resume", lastSessionId);
-    console.log(`[Claude] Resuming session ${lastSessionId}`);
-  }
 
   const proc = spawn({
     cmd,
@@ -185,9 +179,7 @@ function spawnClaude() {
           try {
             const parsed = JSON.parse(line);
             if (activeListener) activeListener(parsed);
-            // Capture session_id for resume support
             if (parsed.type === "result") {
-              if (parsed.session_id) lastSessionId = parsed.session_id;
               if (turnResolve) {
                 turnResolve();
                 turnResolve = null;
@@ -219,7 +211,7 @@ function spawnClaude() {
     }
   })();
 
-  // Detect process exit and clean up pending state
+  // Detect process exit and clean up — no auto-restart
   proc.exited.then((code) => {
     console.log(`[Claude] Process exited (code ${code})`);
     processAlive = false;
@@ -235,12 +227,6 @@ function spawnClaude() {
 
   console.log(`[Claude] PID ${proc.pid}`);
   return proc;
-}
-
-function ensureProcess() {
-  if (!claudeProc || !processAlive) {
-    spawnClaude();
-  }
 }
 
 // ── Turn sequencing (one turn at a time) ───────────────────────────────────
@@ -263,10 +249,8 @@ function writeTurn(message: string): ReadableStream {
       // Wait for any in-progress turn to finish
       await previousLock;
 
-      ensureProcess();
-
-      if (!claudeProc) {
-        send({ type: "error", data: { message: "Claude process unavailable" } });
+      if (!claudeProc || !processAlive) {
+        send({ type: "error", data: { message: "No active session. Click 'Start Session' first." } });
         controller.close();
         releaseLock();
         return;
@@ -342,80 +326,6 @@ function writeTurn(message: string): ReadableStream {
   });
 }
 
-// ── OAuth token refresh ────────────────────────────────────────────────────
-
-async function refreshAccessToken(): Promise<boolean> {
-  const tokens = loadOAuthTokens();
-  if (!tokens?.refresh_token) return false;
-  console.log("[OAuth] Refreshing access token...");
-  try {
-    const res = await fetch(ANTHROPIC_TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "refresh_token",
-        client_id: ANTHROPIC_CLIENT_ID,
-        refresh_token: tokens.refresh_token,
-      }),
-    });
-    if (!res.ok) {
-      console.error("[OAuth] Refresh failed:", res.status, await res.text());
-      return false;
-    }
-    const data = await res.json() as any;
-    const newTokens: OAuthTokens = {
-      access_token: data.access_token,
-      refresh_token: data.refresh_token || tokens.refresh_token,
-      expires_at: Date.now() + (data.expires_in ?? 3600) * 1000,
-    };
-    saveOAuthTokens(newTokens);
-    console.log("[OAuth] Token refreshed, expires at", new Date(newTokens.expires_at).toISOString());
-
-    // Restart Claude process with new token — defer if a turn is active
-    const restart = () => {
-      if (claudeProc && processAlive) {
-        console.log("[OAuth] Restarting Claude with refreshed token...");
-        claudeProc.kill();
-        lastSessionId = null;
-        setTimeout(() => spawnClaude(), 500);
-      }
-    };
-    if (activeListener) {
-      console.log("[OAuth] Turn in progress, deferring restart...");
-      let checks = 0;
-      const checkDone = setInterval(() => {
-        checks++;
-        if (!activeListener || checks > 150) { // 5 min max wait
-          clearInterval(checkDone);
-          restart();
-        }
-      }, 2000);
-    } else {
-      restart();
-    }
-    return true;
-  } catch (err) {
-    console.error("[OAuth] Refresh error:", err);
-    return false;
-  }
-}
-
-let refreshing = false;
-
-function startRefreshTimer(): void {
-  if (refreshTimer) clearInterval(refreshTimer);
-  refreshTimer = setInterval(async () => {
-    if (refreshing) return;
-    const tokens = loadOAuthTokens();
-    if (!tokens) return;
-    const remaining = tokens.expires_at - Date.now();
-    if (remaining < 10 * 60 * 1000) { // < 10 min remaining
-      refreshing = true;
-      try { await refreshAccessToken(); } finally { refreshing = false; }
-    }
-  }, 60_000);
-}
-
 // ── Allowed origin for CORS ──────────────────────────────────────────────────
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*";
 
@@ -426,6 +336,14 @@ function corsHeaders() {
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
   };
 }
+
+// ── Kill Claude session after 15 minutes of inactivity ───────────────────
+setInterval(() => {
+  if (processAlive && claudeProc && Date.now() - lastActivity > INACTIVITY_TIMEOUT_MS) {
+    console.log("[Session] Inactivity timeout — ending session");
+    claudeProc.kill();
+  }
+}, 60_000);
 
 // ── HTTP Server ────────────────────────────────────────────────────────────
 
@@ -440,24 +358,18 @@ Bun.serve({
       return new Response(null, { headers: corsHeaders() });
     }
 
-    // Health check (authenticated)
+    // Health check (no auth — only exposes non-sensitive status)
     if (url.pathname === "/api/health") {
-      if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
-      }
       return Response.json({
         status: "ok",
-        processAlive: processAlive && claudeProc !== null,
+        sessionActive: processAlive && claudeProc !== null,
         needsSetup: needsSetup(),
         authMethod: getAuthMethod(),
       }, { headers: corsHeaders() });
     }
 
-    // Setup endpoint: store auth token and restart Claude (authenticated)
+    // Setup endpoint: store auth token (no auth — self-protecting via token format validation)
     if (url.pathname === "/api/setup" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
-      }
       const body = (await req.json()) as { token?: string };
       if (!body.token || typeof body.token !== "string") {
         return Response.json({ error: "Token required" }, { status: 400, headers: corsHeaders() });
@@ -471,106 +383,219 @@ Bun.serve({
       try {
         writeFileSync(AUTH_ENV_PATH, `CLAUDE_CODE_OAUTH_TOKEN=${cleanToken}\n`, { mode: 0o600 });
         console.log("[Setup] Wrote claude-auth.env");
-        // Kill current Claude process and restart with new creds
-        if (claudeProc && processAlive) {
-          console.log("[Setup] Killing current Claude process...");
-          claudeProc.kill();
-          // Wait a moment for process to exit
-          await new Promise(r => setTimeout(r, 500));
-        }
-        lastSessionId = null; // Fresh session with new creds
-        spawnClaude();
-        return Response.json({ ok: true, pid: claudeProc?.pid ?? null }, { headers: corsHeaders() });
+        return Response.json({ ok: true }, { headers: corsHeaders() });
       } catch (err) {
         console.error("[Setup] Failed:", err);
         return Response.json({ error: "Failed to save token" }, { status: 500, headers: corsHeaders() });
       }
     }
 
-    // OAuth start: generate PKCE challenge and return authorization URL (authenticated)
+    // OAuth start: spawn `claude auth login` and extract authorization URL (no auth — just spawns CLI)
     if (url.pathname === "/api/oauth/start" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
-      }
-      const verifier = generateRandomBase64url(32);
-      const state = generateRandomBase64url(16);
-      const challenge = await sha256Base64url(verifier);
-      pendingOAuth.set(state, { verifier, createdAt: Date.now() });
+      try {
+        const proc = spawn({
+          cmd: ["claude", "auth", "login"],
+          env: { ...process.env, BROWSER: "/bin/false", CLAUDECODE: "" },
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
 
-      const params = new URLSearchParams({
-        code: "true",
-        response_type: "code",
-        client_id: ANTHROPIC_CLIENT_ID,
-        redirect_uri: ANTHROPIC_REDIRECT_URI,
-        scope: OAUTH_SCOPES,
-        state,
-        code_challenge: challenge,
-        code_challenge_method: "S256",
-      });
-      const authUrl = `${ANTHROPIC_AUTHORIZE_URL}?${params}`;
-      return Response.json({ authUrl, state }, { headers: corsHeaders() });
+        // Read stdout with 10s timeout to find the authorization URL
+        let authUrl: string | null = null;
+        const stdoutReader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+        const stdoutDecoder = new TextDecoder();
+        const readStdout = async () => {
+          let buffer = "";
+          try {
+            while (true) {
+              const { done, value } = await stdoutReader.read();
+              if (done) break;
+              buffer += stdoutDecoder.decode(value, { stream: true });
+              const match = buffer.match(/visit:\s+(https:\/\/claude\.ai\/oauth\/authorize\?[^\s]+)/i);
+              if (match) {
+                authUrl = match[1];
+                return;
+              }
+            }
+          } catch {}
+          // Note: reader is NOT released here — it transfers to the background drain
+        };
+
+        const stdoutTimeout = new Promise<void>((resolve) => setTimeout(resolve, 10_000));
+        await Promise.race([readStdout(), stdoutTimeout]);
+
+        if (!authUrl) {
+          stdoutReader.releaseLock();
+          proc.kill();
+          return Response.json(
+            { error: "Timed out waiting for auth URL from CLI" },
+            { status: 500, headers: corsHeaders() },
+          );
+        }
+
+        // Extract state from the authorization URL
+        const urlObj = new URL(authUrl);
+        const state = urlObj.searchParams.get("state");
+        if (!state) {
+          stdoutReader.releaseLock();
+          proc.kill();
+          return Response.json(
+            { error: "No state parameter in auth URL" },
+            { status: 500, headers: corsHeaders() },
+          );
+        }
+
+        // Store subprocess for later exchange
+        pendingAuthLogins.set(state, { proc, createdAt: Date.now() });
+
+        // Continue draining stdout in background using the same reader so the process doesn't deadlock
+        (async () => {
+          try {
+            while (true) {
+              const { done, value } = await stdoutReader.read();
+              if (done) break;
+              const text = stdoutDecoder.decode(value, { stream: true });
+              if (text.trim()) console.log("[auth login stdout]", text.trim());
+            }
+          } catch {} finally {
+            stdoutReader.releaseLock();
+          }
+        })();
+
+        // Drain stderr in background for debugging
+        (async () => {
+          const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
+          const decoder = new TextDecoder();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              const text = decoder.decode(value, { stream: true });
+              if (text.trim()) console.error("[auth login stderr]", text.trim());
+            }
+          } catch {} finally {
+            reader.releaseLock();
+          }
+        })();
+
+        console.log(`[OAuth] Auth login subprocess spawned (state=${state}, pid=${proc.pid})`);
+        return Response.json({ authUrl, state }, { headers: corsHeaders() });
+      } catch (err) {
+        console.error("[OAuth] Failed to spawn auth login:", err);
+        return Response.json(
+          { error: "Failed to start auth flow" },
+          { status: 500, headers: corsHeaders() },
+        );
+      }
     }
 
-    // OAuth exchange: swap authorization code for tokens (authenticated)
+    // OAuth exchange: wait for `claude auth login` to auto-complete after user authenticates
     if (url.pathname === "/api/oauth/exchange" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
-      }
       const body = (await req.json()) as { code?: string; state?: string };
       if (!body.code || !body.state) {
         return Response.json({ error: "code and state required" }, { status: 400, headers: corsHeaders() });
       }
-      const pending = pendingOAuth.get(body.state);
+      const pending = pendingAuthLogins.get(body.state);
       if (!pending) {
         return Response.json({ error: "Invalid or expired state parameter" }, { status: 400, headers: corsHeaders() });
       }
-      pendingOAuth.delete(body.state);
-
-      // User may copy "code#state" from Anthropic's callback page — take just the code
-      const code = body.code.includes("#") ? body.code.split("#")[0] : body.code;
+      pendingAuthLogins.delete(body.state);
 
       try {
-        const tokenRes = await fetch(ANTHROPIC_TOKEN_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            grant_type: "authorization_code",
-            client_id: ANTHROPIC_CLIENT_ID,
-            code,
-            redirect_uri: ANTHROPIC_REDIRECT_URI,
-            code_verifier: pending.verifier,
-          }),
-        });
-        if (!tokenRes.ok) {
-          const errText = await tokenRes.text();
-          console.error("[OAuth] Token exchange failed:", tokenRes.status, errText);
-          return Response.json({ error: "Token exchange failed. Check server logs for details." }, { status: 502, headers: corsHeaders() });
-        }
-        const data = await tokenRes.json() as any;
-        const tokens: OAuthTokens = {
-          access_token: data.access_token,
-          refresh_token: data.refresh_token || "",
-          expires_at: Date.now() + (data.expires_in ?? 3600) * 1000,
-        };
-        saveOAuthTokens(tokens);
-        console.log("[OAuth] Tokens saved, expires at", new Date(tokens.expires_at).toISOString());
+        // Phase 1: Don't write to stdin — let CLI auto-complete via server-side polling.
+        // The CLI detects auth completion on its own after the user authenticates in the browser.
+        console.log("[OAuth] Waiting for CLI to auto-complete (up to 5 min)...");
 
-        // Start refresh timer
-        startRefreshTimer();
+        // Wait for process exit (5 minute timeout)
+        const exitTimeout = new Promise<number>((resolve) => setTimeout(() => resolve(-1), 5 * 60 * 1000));
+        const exitCode = await Promise.race([pending.proc.exited, exitTimeout]);
 
-        // Kill and respawn Claude with new creds
-        if (claudeProc && processAlive) {
-          console.log("[OAuth] Killing current Claude process...");
-          claudeProc.kill();
-          await new Promise(r => setTimeout(r, 500));
+        if (exitCode === -1) {
+          // Timed out — check if credentials appeared anyway
+          const creds = loadClaudeCredentials() || loadSculptorCredentials();
+          if (creds) {
+            try { pending.proc.kill(); } catch {}
+            console.log("[OAuth] Credentials found despite process timeout");
+            return Response.json({ ok: true }, { headers: corsHeaders() });
+          }
+          try { pending.proc.kill(); } catch {}
+          return Response.json(
+            { error: "Auth login timed out. The CLI may need the auth code — try pasting the full callback URL." },
+            { status: 502, headers: corsHeaders() },
+          );
         }
-        lastSessionId = null;
-        spawnClaude();
-        return Response.json({ ok: true, pid: claudeProc?.pid ?? null }, { headers: corsHeaders() });
+
+        if (exitCode !== 0) {
+          // Process exited with error — check if credentials appeared despite the error code
+          const creds = loadClaudeCredentials() || loadSculptorCredentials();
+          if (creds) {
+            console.log(`[OAuth] CLI exited with code ${exitCode} but credentials found`);
+            return Response.json({ ok: true }, { headers: corsHeaders() });
+          }
+          console.error(`[OAuth] Auth login exited with code ${exitCode}`);
+          return Response.json(
+            { error: "Authorization failed. Check server logs." },
+            { status: 502, headers: corsHeaders() },
+          );
+        }
+
+        // Verify credentials appeared at either location
+        if (!loadClaudeCredentials()?.accessToken && !loadSculptorCredentials()?.access_token) {
+          return Response.json(
+            { error: "Auth succeeded but credentials not found" },
+            { status: 500, headers: corsHeaders() },
+          );
+        }
+
+        console.log("[OAuth] Credentials saved via claude auth login");
+        return Response.json({ ok: true }, { headers: corsHeaders() });
       } catch (err) {
         console.error("[OAuth] Exchange error:", err);
         return Response.json({ error: "Token exchange failed" }, { status: 500, headers: corsHeaders() });
       }
+    }
+
+    // Session start: spawn Claude and stream wake-up response
+    if (url.pathname === "/api/session/start" && req.method === "POST") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
+      if (processAlive && claudeProc) {
+        return Response.json({ error: "Session already active" }, { status: 409, headers: corsHeaders() });
+      }
+      if (needsSetup()) {
+        return Response.json({ error: "Setup required — sign in with Anthropic first" }, { status: 400, headers: corsHeaders() });
+      }
+
+      spawnClaude();
+      lastActivity = Date.now();
+
+      // Send wake-up message and stream Julian's response
+      const wakeUpMessage = "You are waking up in a new session. Read your CLAUDE.md and artifacts to remember who you are. Then greet Marcus briefly.";
+      return new Response(writeTurn(wakeUpMessage), {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          ...corsHeaders(),
+        },
+      });
+    }
+
+    // Session end: kill Claude process
+    if (url.pathname === "/api/session/end" && req.method === "POST") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
+      if (claudeProc && processAlive) {
+        claudeProc.kill();
+        // Wait briefly for cleanup
+        await new Promise(r => setTimeout(r, 300));
+      }
+      claudeProc = null;
+      processAlive = false;
+      return Response.json({ ok: true }, { headers: corsHeaders() });
     }
 
     // Chat endpoint: stream-json to SSE bridge (authenticated)
@@ -578,6 +603,10 @@ Bun.serve({
       if (!(await verifyClerkToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
       }
+      if (!processAlive || !claudeProc) {
+        return Response.json({ error: "No active session. Click 'Start Session' first." }, { status: 409, headers: corsHeaders() });
+      }
+      lastActivity = Date.now();
       const { message } = (await req.json()) as { message?: string };
       if (!message || typeof message !== 'string' || message.length > 100_000) {
         return Response.json({ error: "Message required (max 100KB)" }, { status: 400, headers: corsHeaders() });
@@ -592,93 +621,33 @@ Bun.serve({
       });
     }
 
-    // Artifact list endpoint (authenticated)
-    if (url.pathname === "/api/artifacts" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
-      }
-      try {
-        const entries = readdirSync(WORKING_DIR);
-        const files = entries
-          .filter(f => f.endsWith(".html") && f !== "index.html")
-          .map(f => {
-            const st = statSync(join(WORKING_DIR, f));
-            return { name: f, modified: st.mtimeMs, size: st.size };
-          })
-          .sort((a, b) => b.modified - a.modified);
-        return Response.json({ files }, { headers: corsHeaders() });
-      } catch (err) {
-        return Response.json({ files: [] }, { headers: corsHeaders() });
-      }
-    }
-
-    // Artifact file serving (unauthenticated — iframes can't send Bearer headers)
-    const artifactMatch = url.pathname.match(/^\/api\/artifacts\/([^/]+)$/);
-    if (artifactMatch && req.method === "GET") {
-      const filename = decodeURIComponent(artifactMatch[1]);
-      // Security: only .html, no path traversal
-      if (!filename.endsWith(".html") || filename.includes("..") || filename.includes("/")) {
-        return new Response("Forbidden", { status: 403 });
-      }
-      const filePath = join(WORKING_DIR, filename);
-      const file = Bun.file(filePath);
-      if (await file.exists()) {
-        return new Response(file, {
-          headers: { "Content-Type": "text/html", ...corsHeaders() },
-        });
-      }
-      return new Response("Not Found", { status: 404 });
-    }
-
-    // Serve index.html (local dev fallback — nginx serves in production)
-    if (url.pathname === "/" || url.pathname === "/index.html") {
-      const file = Bun.file(join(import.meta.dir, "index.html"));
-      if (await file.exists()) {
-        return new Response(file, { headers: { "Content-Type": "text/html" } });
-      }
-    }
-
-    // Serve static assets (local dev fallback — nginx serves in production)
-    const STATIC_FILES: Record<string, string> = {
-      "/fireproof-clerk-bundle.js": "application/javascript",
-      "/favicon.svg": "image/svg+xml",
-      "/favicon.ico": "image/x-icon",
-      "/favicon-96x96.png": "image/png",
-      "/apple-touch-icon.png": "image/png",
-      "/site.webmanifest": "application/manifest+json",
-      "/sw.js": "application/javascript",
-      "/web-app-manifest-192x192.png": "image/png",
-      "/web-app-manifest-512x512.png": "image/png",
-    };
-    const ct = STATIC_FILES[url.pathname];
-    if (ct) {
-      const file = Bun.file(join(import.meta.dir, url.pathname));
-      if (await file.exists()) {
-        return new Response(file, { headers: { "Content-Type": ct } });
-      }
-    }
-
     return new Response("Not Found", { status: 404 });
   },
 });
 
 // ── Startup ────────────────────────────────────────────────────────────────
 
-// If OAuth tokens exist, start refresh timer and eagerly refresh if expired
-const startupTokens = loadOAuthTokens();
-if (startupTokens) {
-  startRefreshTimer();
-  if (startupTokens.expires_at <= Date.now() && startupTokens.refresh_token) {
-    console.log("[OAuth] Token expired on startup, refreshing before spawn...");
-    await refreshAccessToken();
-  }
+const startupClaudeCreds = loadClaudeCredentials();
+const startupSculptorCreds = loadSculptorCredentials();
+if (startupClaudeCreds?.accessToken) {
+  const expiresIn = startupClaudeCreds.expiresAt
+    ? Math.round((startupClaudeCreds.expiresAt - Date.now()) / 60_000)
+    : "unknown";
+  console.log(`[Auth] Claude Code credentials found (expires in ~${expiresIn} min)`);
+} else if (startupSculptorCreds?.access_token) {
+  const expiresIn = startupSculptorCreds.expires_at_unix_ms
+    ? Math.round((startupSculptorCreds.expires_at_unix_ms - Date.now()) / 60_000)
+    : "unknown";
+  console.log(`[Auth] Sculptor credentials found (expires in ~${expiresIn} min)`);
+} else if (existsSync(AUTH_ENV_PATH)) {
+  console.log("[Auth] Legacy claude-auth.env found");
+} else {
+  console.log("[Auth] No credentials — setup required");
 }
 
-spawnClaude();
-
 console.log(`
-  Claude Hackathon — Persistent Process Bridge
+  Julian — Ephemeral Session Bridge
   Server:  http://localhost:${PORT}
   CWD:     ${WORKING_DIR}
-  Claude:  PID ${claudeProc?.pid ?? "?"}
+  Claude:  On-demand (start session to spawn)
 `);
