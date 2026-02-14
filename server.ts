@@ -1,31 +1,51 @@
 import { spawn } from "bun";
 import { join } from "path";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { homedir } from "os";
+import { createHash, randomBytes } from "crypto";
 
 const PORT = parseInt(process.env.PORT || "3847");
 const WORKING_DIR = process.env.WORKING_DIR || process.cwd();
 const AUTH_ENV_PATH = join(import.meta.dir, "claude-auth.env");
 
-// ── Credential paths (managed by `claude auth login`) ────────────────────
+// ── Credential paths ────────────────────────────────────────────────────
 const CLAUDE_CREDS_PATH = join(homedir(), ".claude", ".credentials.json");
 const SCULPTOR_CREDS_PATH = join(homedir(), ".sculptor", "credentials.json");
 
-// In-memory tracking of pending `claude auth login` subprocesses (10-min TTL)
-const pendingAuthLogins = new Map<string, { proc: ReturnType<typeof spawn>; createdAt: number }>();
-const AUTH_LOGIN_TTL_MS = 10 * 60 * 1000;
+// ── OAuth PKCE constants (extracted from Claude CLI binary) ─────────────
+const OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const OAUTH_AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
+const OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
+const OAUTH_REDIRECT_URI = "https://platform.claude.com/oauth/code/callback";
+const OAUTH_SCOPES = "user:profile user:inference user:sessions:claude_code user:mcp_servers";
 
-// Cleanup expired auth login subprocesses every 60s
+// In-memory tracking of pending PKCE flows (10-min TTL)
+const pendingPKCE = new Map<string, { verifier: string; createdAt: number }>();
+const PKCE_TTL_MS = 10 * 60 * 1000;
+
+// Cleanup expired PKCE flows every 60s
 setInterval(() => {
   const now = Date.now();
-  for (const [key, val] of pendingAuthLogins) {
-    if (now - val.createdAt > AUTH_LOGIN_TTL_MS) {
-      try { val.proc.kill(); } catch {}
-      pendingAuthLogins.delete(key);
+  for (const [key, val] of pendingPKCE) {
+    if (now - val.createdAt > PKCE_TTL_MS) {
+      pendingPKCE.delete(key);
     }
   }
 }, 60_000);
+
+// ── PKCE helpers ────────────────────────────────────────────────────────
+function base64url(buf: Buffer): string {
+  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function generateCodeVerifier(): string {
+  return base64url(randomBytes(32));
+}
+
+function generateCodeChallenge(verifier: string): string {
+  return base64url(createHash("sha256").update(verifier).digest());
+}
 
 // ── Credential readers ───────────────────────────────────────────────────
 
@@ -81,6 +101,78 @@ async function verifyClerkToken(req: Request): Promise<boolean> {
   }
 }
 
+// ── Token refresh ───────────────────────────────────────────────────────
+
+async function refreshTokenIfNeeded(): Promise<boolean> {
+  const claudeCreds = loadClaudeCredentials();
+  if (!claudeCreds?.accessToken) return false;
+
+  // Read full credentials to get refresh token
+  let data: any;
+  try {
+    data = JSON.parse(readFileSync(CLAUDE_CREDS_PATH, "utf-8"));
+  } catch { return false; }
+
+  const refreshToken = data?.claudeAiOauth?.refreshToken;
+  if (!refreshToken) return false;
+
+  const expiresAt = data?.claudeAiOauth?.expiresAt ?? 0;
+  const thirtyMinutes = 30 * 60 * 1000;
+
+  // Token still valid for 30+ minutes — no refresh needed
+  if (expiresAt > Date.now() + thirtyMinutes) return false;
+
+  console.log("[Auth] Token expires soon, refreshing...");
+  try {
+    const resp = await fetch(OAUTH_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: OAUTH_CLIENT_ID,
+        scope: OAUTH_SCOPES,
+      }),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error(`[Auth] Refresh failed (${resp.status}):`, errText);
+      return false;
+    }
+
+    const tokens = await resp.json() as {
+      access_token: string;
+      refresh_token: string;
+      expires_in: number;
+    };
+
+    // Write new credentials (refresh token rotates!)
+    writeCredentials(tokens.access_token, tokens.refresh_token, tokens.expires_in);
+    console.log(`[Auth] Token refreshed (expires in ${Math.round(tokens.expires_in / 60)} min)`);
+    return true;
+  } catch (err) {
+    console.error("[Auth] Refresh error:", err);
+    return false;
+  }
+}
+
+function writeCredentials(accessToken: string, refreshToken: string, expiresIn: number) {
+  const dir = join(homedir(), ".claude");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const creds = {
+    claudeAiOauth: {
+      accessToken,
+      refreshToken,
+      expiresAt: Date.now() + expiresIn * 1000,
+      scopes: ["user:inference", "user:mcp_servers", "user:profile", "user:sessions:claude_code"],
+      subscriptionType: "max",
+      rateLimitTier: "default_claude_max_20x",
+    },
+  };
+  writeFileSync(CLAUDE_CREDS_PATH, JSON.stringify(creds, null, 2) + "\n", { mode: 0o600 });
+}
+
 // ── Auth env file ──────────────────────────────────────────────────────────
 
 function loadAuthEnv(): Record<string, string> {
@@ -113,12 +205,20 @@ function loadAuthEnv(): Record<string, string> {
   }
 }
 
-function needsSetup(): boolean {
+async function needsSetup(): Promise<boolean> {
+  // Check if creds are currently valid
   const claudeCreds = loadClaudeCredentials();
   if (claudeCreds?.accessToken && claudeCreds.expiresAt > Date.now()) return false;
   const sculptorCreds = loadSculptorCredentials();
   if (sculptorCreds?.access_token && sculptorCreds.expires_at_unix_ms > Date.now()) return false;
   if (existsSync(AUTH_ENV_PATH)) return false;
+
+  // Creds exist but expired — try refresh before giving up
+  if (claudeCreds?.accessToken) {
+    const refreshed = await refreshTokenIfNeeded();
+    if (refreshed) return false;
+  }
+
   return true;
 }
 
@@ -365,7 +465,7 @@ Bun.serve({
       return Response.json({
         status: "ok",
         sessionActive: processAlive && claudeProc !== null,
-        needsSetup: needsSetup(),
+        needsSetup: await needsSetup(),
         authMethod: getAuthMethod(),
       }, { headers: corsHeaders() });
     }
@@ -392,165 +492,74 @@ Bun.serve({
       }
     }
 
-    // OAuth start: spawn `claude auth login` and extract authorization URL (no auth — just spawns CLI)
+    // OAuth start: generate PKCE auth URL directly (no subprocess)
     if (url.pathname === "/api/oauth/start" && req.method === "GET") {
-      try {
-        const proc = spawn({
-          cmd: ["claude", "auth", "login"],
-          env: { ...process.env, BROWSER: "/bin/false", CLAUDECODE: "" },
-          stdin: "pipe",
-          stdout: "pipe",
-          stderr: "pipe",
-        });
+      const state = randomBytes(32).toString("hex");
+      const verifier = generateCodeVerifier();
+      const challenge = generateCodeChallenge(verifier);
 
-        // Read stdout with 10s timeout to find the authorization URL
-        let authUrl: string | null = null;
-        const stdoutReader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
-        const stdoutDecoder = new TextDecoder();
-        const readStdout = async () => {
-          let buffer = "";
-          try {
-            while (true) {
-              const { done, value } = await stdoutReader.read();
-              if (done) break;
-              buffer += stdoutDecoder.decode(value, { stream: true });
-              const match = buffer.match(/visit:\s+(https:\/\/claude\.ai\/oauth\/authorize\?[^\s]+)/i);
-              if (match) {
-                authUrl = match[1];
-                return;
-              }
-            }
-          } catch {}
-          // Note: reader is NOT released here — it transfers to the background drain
-        };
+      const authUrl = `${OAUTH_AUTHORIZE_URL}?` + new URLSearchParams({
+        client_id: OAUTH_CLIENT_ID,
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        redirect_uri: OAUTH_REDIRECT_URI,
+        scope: OAUTH_SCOPES,
+        state,
+        response_type: "code",
+      }).toString();
 
-        const stdoutTimeout = new Promise<void>((resolve) => setTimeout(resolve, 10_000));
-        await Promise.race([readStdout(), stdoutTimeout]);
+      pendingPKCE.set(state, { verifier, createdAt: Date.now() });
 
-        if (!authUrl) {
-          stdoutReader.releaseLock();
-          proc.kill();
-          return Response.json(
-            { error: "Timed out waiting for auth URL from CLI" },
-            { status: 500, headers: corsHeaders() },
-          );
-        }
-
-        // Extract state from the authorization URL
-        const urlObj = new URL(authUrl);
-        const state = urlObj.searchParams.get("state");
-        if (!state) {
-          stdoutReader.releaseLock();
-          proc.kill();
-          return Response.json(
-            { error: "No state parameter in auth URL" },
-            { status: 500, headers: corsHeaders() },
-          );
-        }
-
-        // Store subprocess for later exchange
-        pendingAuthLogins.set(state, { proc, createdAt: Date.now() });
-
-        // Continue draining stdout in background using the same reader so the process doesn't deadlock
-        (async () => {
-          try {
-            while (true) {
-              const { done, value } = await stdoutReader.read();
-              if (done) break;
-              const text = stdoutDecoder.decode(value, { stream: true });
-              if (text.trim()) console.log("[auth login stdout]", text.trim());
-            }
-          } catch {} finally {
-            stdoutReader.releaseLock();
-          }
-        })();
-
-        // Drain stderr in background for debugging
-        (async () => {
-          const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
-          const decoder = new TextDecoder();
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              const text = decoder.decode(value, { stream: true });
-              if (text.trim()) console.error("[auth login stderr]", text.trim());
-            }
-          } catch {} finally {
-            reader.releaseLock();
-          }
-        })();
-
-        console.log(`[OAuth] Auth login subprocess spawned (state=${state}, pid=${proc.pid})`);
-        return Response.json({ authUrl, state }, { headers: corsHeaders() });
-      } catch (err) {
-        console.error("[OAuth] Failed to spawn auth login:", err);
-        return Response.json(
-          { error: "Failed to start auth flow" },
-          { status: 500, headers: corsHeaders() },
-        );
-      }
+      console.log(`[OAuth] PKCE flow started (state=${state.slice(0, 8)}...)`);
+      return Response.json({ authUrl, state }, { headers: corsHeaders() });
     }
 
-    // OAuth exchange: wait for `claude auth login` to auto-complete after user authenticates
+    // OAuth exchange: POST authorization code to token endpoint directly
     if (url.pathname === "/api/oauth/exchange" && req.method === "POST") {
       const body = (await req.json()) as { code?: string; state?: string };
       if (!body.code || !body.state) {
         return Response.json({ error: "code and state required" }, { status: 400, headers: corsHeaders() });
       }
-      const pending = pendingAuthLogins.get(body.state);
+      const pending = pendingPKCE.get(body.state);
       if (!pending) {
         return Response.json({ error: "Invalid or expired state parameter" }, { status: 400, headers: corsHeaders() });
       }
-      pendingAuthLogins.delete(body.state);
+      pendingPKCE.delete(body.state);
 
       try {
-        // Phase 1: Don't write to stdin — let CLI auto-complete via server-side polling.
-        // The CLI detects auth completion on its own after the user authenticates in the browser.
-        console.log("[OAuth] Waiting for CLI to auto-complete (up to 5 min)...");
+        // Strip #state suffix if the frontend passed the full callback fragment
+        const code = body.code.split("#")[0];
 
-        // Wait for process exit (5 minute timeout)
-        const exitTimeout = new Promise<number>((resolve) => setTimeout(() => resolve(-1), 5 * 60 * 1000));
-        const exitCode = await Promise.race([pending.proc.exited, exitTimeout]);
+        console.log("[OAuth] Exchanging authorization code for tokens...");
+        const resp = await fetch(OAUTH_TOKEN_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            grant_type: "authorization_code",
+            code,
+            redirect_uri: OAUTH_REDIRECT_URI,
+            client_id: OAUTH_CLIENT_ID,
+            code_verifier: pending.verifier,
+          }),
+        });
 
-        if (exitCode === -1) {
-          // Timed out — check if credentials appeared anyway
-          const creds = loadClaudeCredentials() || loadSculptorCredentials();
-          if (creds) {
-            try { pending.proc.kill(); } catch {}
-            console.log("[OAuth] Credentials found despite process timeout");
-            return Response.json({ ok: true }, { headers: corsHeaders() });
-          }
-          try { pending.proc.kill(); } catch {}
+        if (!resp.ok) {
+          const errText = await resp.text();
+          console.error(`[OAuth] Token exchange failed (${resp.status}):`, errText);
           return Response.json(
-            { error: "Auth login timed out. The CLI may need the auth code — try pasting the full callback URL." },
+            { error: `Token exchange failed (${resp.status}): ${errText}` },
             { status: 502, headers: corsHeaders() },
           );
         }
 
-        if (exitCode !== 0) {
-          // Process exited with error — check if credentials appeared despite the error code
-          const creds = loadClaudeCredentials() || loadSculptorCredentials();
-          if (creds) {
-            console.log(`[OAuth] CLI exited with code ${exitCode} but credentials found`);
-            return Response.json({ ok: true }, { headers: corsHeaders() });
-          }
-          console.error(`[OAuth] Auth login exited with code ${exitCode}`);
-          return Response.json(
-            { error: "Authorization failed. Check server logs." },
-            { status: 502, headers: corsHeaders() },
-          );
-        }
+        const tokens = await resp.json() as {
+          access_token: string;
+          refresh_token: string;
+          expires_in: number;
+        };
 
-        // Verify credentials appeared at either location
-        if (!loadClaudeCredentials()?.accessToken && !loadSculptorCredentials()?.access_token) {
-          return Response.json(
-            { error: "Auth succeeded but credentials not found" },
-            { status: 500, headers: corsHeaders() },
-          );
-        }
-
-        console.log("[OAuth] Credentials saved via claude auth login");
+        writeCredentials(tokens.access_token, tokens.refresh_token, tokens.expires_in);
+        console.log(`[OAuth] Credentials saved (expires in ${Math.round(tokens.expires_in / 60)} min)`);
         return Response.json({ ok: true }, { headers: corsHeaders() });
       } catch (err) {
         console.error("[OAuth] Exchange error:", err);
@@ -566,9 +575,12 @@ Bun.serve({
       if (processAlive && claudeProc) {
         return Response.json({ error: "Session already active" }, { status: 409, headers: corsHeaders() });
       }
-      if (needsSetup()) {
+      if (await needsSetup()) {
         return Response.json({ error: "Setup required — sign in with Anthropic first" }, { status: 400, headers: corsHeaders() });
       }
+
+      // Proactively refresh token before spawning Claude
+      await refreshTokenIfNeeded();
 
       spawnClaude();
       lastActivity = Date.now();
@@ -629,27 +641,32 @@ Bun.serve({
 
 // ── Startup ────────────────────────────────────────────────────────────────
 
-const startupClaudeCreds = loadClaudeCredentials();
-const startupSculptorCreds = loadSculptorCredentials();
-if (startupClaudeCreds?.accessToken) {
-  const expiresIn = startupClaudeCreds.expiresAt
-    ? Math.round((startupClaudeCreds.expiresAt - Date.now()) / 60_000)
-    : "unknown";
-  console.log(`[Auth] Claude Code credentials found (expires in ~${expiresIn} min)`);
-} else if (startupSculptorCreds?.access_token) {
-  const expiresIn = startupSculptorCreds.expires_at_unix_ms
-    ? Math.round((startupSculptorCreds.expires_at_unix_ms - Date.now()) / 60_000)
-    : "unknown";
-  console.log(`[Auth] Sculptor credentials found (expires in ~${expiresIn} min)`);
-} else if (existsSync(AUTH_ENV_PATH)) {
-  console.log("[Auth] Legacy claude-auth.env found");
-} else {
-  console.log("[Auth] No credentials — setup required");
-}
+(async () => {
+  // Try refreshing token at startup if it's expiring soon
+  await refreshTokenIfNeeded();
 
-console.log(`
+  const startupClaudeCreds = loadClaudeCredentials();
+  const startupSculptorCreds = loadSculptorCredentials();
+  if (startupClaudeCreds?.accessToken) {
+    const expiresIn = startupClaudeCreds.expiresAt
+      ? Math.round((startupClaudeCreds.expiresAt - Date.now()) / 60_000)
+      : "unknown";
+    console.log(`[Auth] Claude Code credentials found (expires in ~${expiresIn} min)`);
+  } else if (startupSculptorCreds?.access_token) {
+    const expiresIn = startupSculptorCreds.expires_at_unix_ms
+      ? Math.round((startupSculptorCreds.expires_at_unix_ms - Date.now()) / 60_000)
+      : "unknown";
+    console.log(`[Auth] Sculptor credentials found (expires in ~${expiresIn} min)`);
+  } else if (existsSync(AUTH_ENV_PATH)) {
+    console.log("[Auth] Legacy claude-auth.env found");
+  } else {
+    console.log("[Auth] No credentials — setup required");
+  }
+
+  console.log(`
   Julian — Ephemeral Session Bridge
   Server:  http://localhost:${PORT}
   CWD:     ${WORKING_DIR}
   Claude:  On-demand (start session to spawn)
 `);
+})();
