@@ -7,7 +7,7 @@ import { createHash, randomBytes } from "crypto";
 
 const PORT = parseInt(process.env.PORT || "3847");
 const WORKING_DIR = process.env.WORKING_DIR || process.cwd();
-const AUTH_ENV_PATH = join(import.meta.dir, "claude-auth.env");
+const AUTH_ENV_PATH = join(import.meta.dir, "..", "claude-auth.env");
 
 // ── Credential paths ────────────────────────────────────────────────────
 const CLAUDE_CREDS_PATH = join(homedir(), ".claude", ".credentials.json");

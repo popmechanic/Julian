@@ -11,7 +11,7 @@ Browser (index.html)
 nginx (julian.exe.xyz:443)
   │  proxy_pass
   ▼
-Bun server (server.ts, port 3847)
+Bun server (server/server.ts, port 3847)
   │  stream-json on stdin
   ▼
 claude CLI subprocess (persistent, --print mode)
@@ -31,7 +31,7 @@ Browser (React state → Fireproof put)
 | Layer | Technology | Notes |
 |-------|-----------|-------|
 | Runtime | Bun | Server + process spawning |
-| Server | `server.ts` (684 lines) | HTTP, SSE, process management |
+| Server | `server/server.ts` (684 lines) | HTTP, SSE, process management |
 | Frontend | `index.html` (3952 lines) | Single-file SPA, no build step |
 | Framework | React 19 via CDN | ESM import maps, esm.sh |
 | Transpiler | Babel Standalone 7.26 | In-browser JSX compilation |
@@ -42,7 +42,7 @@ Browser (React state → Fireproof put)
 | Font | VT323 (Google Fonts) | Monospace, retro terminal aesthetic |
 | Design system | Vibes DIY (25 components) | BrutalistCard, VibesButton, HiddenMenuWrapper, etc. |
 
-## Server (`server.ts`)
+## Server (`server/server.ts`)
 
 ### Process Management
 
@@ -67,7 +67,7 @@ The server maintains a single persistent Claude CLI subprocess:
 | `GET` | `/` or `/index.html` | None | Serves `index.html` (dev fallback; nginx serves in production) |
 | `OPTIONS` | `*` | None | CORS preflight |
 
-Static file whitelist (dev fallback): `fireproof-clerk-bundle.js`, `favicon.svg`, `favicon.ico`, `favicon-96x96.png`, `apple-touch-icon.png`, `site.webmanifest`, `sw.js`, PWA manifest icons.
+Static file whitelist (dev fallback): `fireproof-clerk-bundle.js`, `assets/icons/favicon.svg`, `assets/icons/favicon.ico`, `assets/icons/favicon-96x96.png`, `assets/icons/apple-touch-icon.png`, `assets/icons/site.webmanifest`, `sw.js`, PWA manifest icons.
 
 ### SSE Streaming
 
@@ -266,8 +266,8 @@ Claude executes Write tool → file written to WORKING_DIR
 **Deploy process** (manual):
 
 ```bash
-rsync server.ts index.html *.html /opt/julian/ user@julian.exe.xyz:/opt/julian/
-ssh julian.exe.xyz "cd /opt/julian && bun server.ts"
+rsync -avz server/ index.html *.html /opt/julian/ user@julian.exe.xyz:/opt/julian/
+ssh julian.exe.xyz "cd /opt/julian && bun server/server.ts"
 ```
 
 No CI/CD pipeline. No automated tests.
@@ -304,7 +304,7 @@ Set in `window.__VIBES_CONFIG__` (hardcoded in index.html):
 
 ## Known Issues & Debt
 
-- **OAuth flow working**: Direct PKCE flow (no subprocess) implemented in server.ts. Legacy `sk-ant-oat` token paste also supported as fallback.
+- **OAuth flow working**: Direct PKCE flow (no subprocess) implemented in `server/server.ts`. Legacy `sk-ant-oat` token paste also supported as fallback.
 - **Monolithic `index.html`**: 3952 lines with no build step means no code splitting, tree shaking, or minification. The Vibes design system alone is ~1500 lines of pre-compiled React components.
 - **Manual SSE parsing**: The frontend manually reads the response body stream and parses `data: ` lines. Could use the native `EventSource` API (though POST support would require a wrapper).
 - **Artifact polling**: 10-second interval poll to `/api/artifacts`. Could use filesystem watch + WebSocket push for instant updates.

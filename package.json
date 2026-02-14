@@ -2,7 +2,7 @@
   "name": "claude-hackathon",
   "private": true,
   "scripts": {
-    "start": "bun run server.ts"
+    "start": "bun run server/server.ts"
   },
   "dependencies": {
     "jose": "^6.1.3"
