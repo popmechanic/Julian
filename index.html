@@ -2649,7 +2649,7 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, getAuthHeaders })
         {/* Open in new tab */}
         {activeArtifact && (
           <a
-            href={'/api/artifacts/' + encodeURIComponent(activeArtifact)}
+            href={'/' + encodeURIComponent(activeArtifact)}
             target="_blank"
             rel="noopener noreferrer"
             style={{
@@ -2682,7 +2682,7 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, getAuthHeaders })
       {activeArtifact ? (
         <iframe
           key={activeArtifact}
-          src={'/api/artifacts/' + encodeURIComponent(activeArtifact)}
+          src={'/' + encodeURIComponent(activeArtifact)}
           style={{
             flex: 1,
             width: '100%',
@@ -2743,24 +2743,116 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, getAuthHeaders })
   );
 }
 
-/* ── Setup Screen ────────────────────────────────────────────────────────── */
+/* ── Setup Screen (tabbed: OAuth-first / legacy fallback) ────────────────── */
 
 function SetupScreen({ onComplete, getAuthHeaders }) {
-  const [token, setToken] = useState('');
-  const [status, setStatus] = useState('idle');
-  const [error, setError] = useState('');
+  const [tab, setTab] = useState('oauth'); // 'oauth' | 'legacy'
 
-  const handleConnect = useCallback(async () => {
+  // OAuth state
+  const [oauthStep, setOauthStep] = useState(1); // 1 = click button, 2 = paste code
+  const [oauthState, setOauthState] = useState('');
+  const [oauthCode, setOauthCode] = useState('');
+  const [oauthStatus, setOauthStatus] = useState('idle');
+  const [oauthError, setOauthError] = useState('');
+
+  // Legacy state
+  const [token, setToken] = useState('');
+  const [legacyStatus, setLegacyStatus] = useState('idle');
+  const [legacyError, setLegacyError] = useState('');
+
+  // Poll health until process is alive
+  const pollUntilAlive = useCallback(async () => {
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      try {
+        const h = await getAuthHeaders();
+        const hr = await fetch('/api/health', { headers: h });
+        const hd = await hr.json();
+        if (!hd.needsSetup) {
+          onComplete();
+          return true;
+        }
+      } catch {}
+    }
+    return false;
+  }, [getAuthHeaders, onComplete]);
+
+  // OAuth: start flow
+  const handleOAuthStart = useCallback(async () => {
+    setOauthStatus('starting');
+    setOauthError('');
+    try {
+      const headers = await getAuthHeaders();
+      if (!headers) { setOauthError('NOT AUTHENTICATED. RELOAD PAGE.'); setOauthStatus('error'); return; }
+      const res = await fetch('/api/oauth/start', { headers });
+      const data = await res.json();
+      if (!res.ok) {
+        setOauthError(data.error || 'FAILED TO START OAUTH');
+        setOauthStatus('error');
+        return;
+      }
+      setOauthState(data.state);
+      window.open(data.authUrl, '_blank', 'noopener');
+      setOauthStep(2);
+      setOauthStatus('idle');
+    } catch (err) {
+      setOauthError('CONNECTION ERROR: ' + err.message);
+      setOauthStatus('error');
+    }
+  }, [getAuthHeaders]);
+
+  // OAuth: exchange code
+  const handleOAuthExchange = useCallback(async () => {
+    const code = oauthCode.trim();
+    if (!code || !oauthState) return;
+    setOauthStatus('exchanging');
+    setOauthError('');
+    try {
+      const headers = await getAuthHeaders();
+      if (!headers) { setOauthError('NOT AUTHENTICATED. RELOAD PAGE.'); setOauthStatus('error'); return; }
+      const res = await fetch('/api/oauth/exchange', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ code, state: oauthState }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.error?.includes('expired state') || data.error?.includes('Invalid or expired')) {
+          setOauthStep(1);
+          setOauthCode('');
+          setOauthError('SESSION EXPIRED. PLEASE START OVER.');
+          setOauthStatus('idle');
+        } else {
+          setOauthError(data.error || 'TOKEN EXCHANGE FAILED');
+          setOauthStatus('error');
+        }
+        return;
+      }
+      setOauthStatus('polling');
+      const alive = await pollUntilAlive();
+      if (!alive) {
+        setOauthError('CLAUDE PROCESS DID NOT START. CHECK SERVER LOGS.');
+        setOauthStatus('error');
+      }
+    } catch (err) {
+      setOauthError('CONNECTION ERROR: ' + err.message);
+      setOauthStatus('error');
+    }
+  }, [oauthCode, oauthState, getAuthHeaders, pollUntilAlive]);
+
+  // Legacy: paste token
+  const handleLegacyConnect = useCallback(async () => {
     const trimmed = token.replace(/\s+/g, '');
     if (!trimmed) return;
     if (!trimmed.startsWith('sk-ant-oat')) {
-      setError('TOKEN MUST START WITH sk-ant-oat (RUN claude setup-token)');
+      setLegacyError('TOKEN MUST START WITH sk-ant-oat (RUN claude setup-token)');
       return;
     }
-    setStatus('loading');
-    setError('');
+    setLegacyStatus('loading');
+    setLegacyError('');
     try {
       const headers = await getAuthHeaders();
+      if (!headers) { setLegacyError('NOT AUTHENTICATED. RELOAD PAGE.'); setLegacyStatus('error'); return; }
       const res = await fetch('/api/setup', {
         method: 'POST',
         headers,
@@ -2768,32 +2860,39 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || 'SETUP FAILED');
-        setStatus('error');
+        setLegacyError(data.error || 'SETUP FAILED');
+        setLegacyStatus('error');
         return;
       }
-      setStatus('polling');
-      for (let i = 0; i < 20; i++) {
-        await new Promise(r => setTimeout(r, 1000));
-        try {
-          const h = await getAuthHeaders();
-          const hr = await fetch('/api/health', { headers: h });
-          const hd = await hr.json();
-          if (hd.processAlive && !hd.needsSetup) {
-            onComplete();
-            return;
-          }
-        } catch {}
+      setLegacyStatus('polling');
+      const alive = await pollUntilAlive();
+      if (!alive) {
+        setLegacyError('CLAUDE PROCESS DID NOT START. CHECK SERVER LOGS.');
+        setLegacyStatus('error');
       }
-      setError('CLAUDE PROCESS DID NOT START. CHECK SERVER LOGS.');
-      setStatus('error');
     } catch (err) {
-      setError('CONNECTION ERROR: ' + err.message);
-      setStatus('error');
+      setLegacyError('CONNECTION ERROR: ' + err.message);
+      setLegacyStatus('error');
     }
-  }, [token, getAuthHeaders, onComplete]);
+  }, [token, getAuthHeaders, pollUntilAlive]);
 
-  const isLoading = status === 'loading' || status === 'polling';
+  const oauthLoading = oauthStatus === 'starting' || oauthStatus === 'exchanging' || oauthStatus === 'polling';
+  const legacyLoading = legacyStatus === 'loading' || legacyStatus === 'polling';
+
+  const tabStyle = (active) => ({
+    flex: 1,
+    padding: '10px 0',
+    fontFamily: "'VT323', monospace",
+    fontSize: '1.1rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.1em',
+    cursor: 'pointer',
+    border: 'none',
+    borderBottom: active ? '2px solid #FFD600' : '2px solid transparent',
+    background: 'transparent',
+    color: active ? '#FFD600' : '#666',
+    transition: 'color 0.15s, border-color 0.15s',
+  });
 
   return (
     <div style={{
@@ -2810,7 +2909,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
           <h1 style={{
             fontFamily: "'VT323', monospace",
             fontSize: '2rem',
-            color: '#FFD600',
+            color: '#000',
             marginTop: 16,
             textTransform: 'uppercase',
             letterSpacing: '0.15em',
@@ -2820,7 +2919,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
           <p style={{
             fontFamily: "'VT323', monospace",
             fontSize: '1.1rem',
-            color: '#AA8800',
+            color: '#555',
             marginTop: 4,
           }}>
             ONE-TIME SETUP TO LINK YOUR ACCOUNT
@@ -2831,101 +2930,253 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
           background: '#0F0F0F',
           border: '4px solid #2a2a2a',
           borderRadius: 12,
-          padding: 24,
           boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
           display: 'flex',
           flexDirection: 'column',
-          gap: 20,
         }}>
-          <div>
-            <div style={{
-              fontFamily: "'VT323', monospace",
-              fontSize: '1.1rem',
-              color: '#FFD600',
-              marginBottom: 8,
-            }}>
-              {'>'} STEP 1: GENERATE TOKEN
-            </div>
-            <div style={{
-              background: '#1a1a00',
-              border: '1px solid #333',
-              borderRadius: 4,
-              padding: '8px 12px',
-              fontFamily: "'VT323', monospace",
-              fontSize: '1.1rem',
-            }}>
-              <span style={{ color: '#666' }}>$</span>{' '}
-              <span style={{ color: '#FFD600' }}>claude setup-token</span>
-            </div>
+          {/* Tabs */}
+          <div style={{ display: 'flex', borderBottom: '1px solid #2a2a2a' }}>
+            <button onClick={() => setTab('oauth')} style={tabStyle(tab === 'oauth')}>
+              Sign in with Anthropic
+            </button>
+            <button onClick={() => setTab('legacy')} style={tabStyle(tab === 'legacy')}>
+              Paste Token
+            </button>
           </div>
 
-          <div style={{ height: 1, background: '#333', borderStyle: 'dashed' }} />
+          <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {tab === 'oauth' ? (
+              /* ── OAuth Tab ── */
+              <>
+                {oauthStep === 1 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+                    <div style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1.1rem',
+                      color: '#FFD600',
+                      textAlign: 'center',
+                    }}>
+                      {'>'} STEP 1: AUTHORIZE WITH ANTHROPIC
+                    </div>
+                    <p style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1rem',
+                      color: '#AA8800',
+                      textAlign: 'center',
+                      lineHeight: 1.5,
+                    }}>
+                      OPENS ANTHROPIC IN A NEW TAB. AUTHORIZE, THEN COPY THE SHORT CODE BACK HERE.
+                    </p>
+                    <button
+                      onClick={handleOAuthStart}
+                      disabled={oauthLoading}
+                      style={{
+                        padding: '14px 32px',
+                        borderRadius: 8,
+                        background: oauthLoading ? '#555' : '#FFD600',
+                        color: '#000',
+                        border: 'none',
+                        fontFamily: "'VT323', monospace",
+                        fontSize: '1.3rem',
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.1em',
+                        cursor: oauthLoading ? 'default' : 'pointer',
+                        boxShadow: oauthLoading ? 'none' : '0 4px 0 #AA8800, 0 8px 10px rgba(0,0,0,0.15)',
+                        transition: 'all 0.1s',
+                      }}
+                    >
+                      {oauthStatus === 'starting' ? 'OPENING...' : 'SIGN IN WITH ANTHROPIC'}
+                    </button>
+                    {oauthError && (
+                      <p style={{
+                        fontFamily: "'VT323', monospace",
+                        fontSize: '1rem',
+                        color: '#ff4444',
+                      }}>{oauthError}</p>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    <div style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1.1rem',
+                      color: '#FFD600',
+                    }}>
+                      {'>'} STEP 2: PASTE AUTHORIZATION CODE
+                    </div>
+                    <p style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1rem',
+                      color: '#AA8800',
+                      lineHeight: 1.5,
+                    }}>
+                      COPY THE SHORT CODE FROM THE ANTHROPIC PAGE AND PASTE IT BELOW.
+                    </p>
+                    <input
+                      value={oauthCode}
+                      onChange={e => { setOauthCode(e.target.value); setOauthError(''); }}
+                      placeholder="PASTE CODE HERE..."
+                      disabled={oauthLoading}
+                      style={{
+                        width: '100%',
+                        backgroundColor: '#C8A800',
+                        boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2)',
+                        borderRadius: 6,
+                        color: '#000',
+                        fontWeight: 'bold',
+                        padding: '0 16px',
+                        height: 50,
+                        fontFamily: "'VT323', monospace",
+                        fontSize: '1.1rem',
+                        border: oauthError ? '2px solid #ff4444' : '2px solid transparent',
+                        outline: 'none',
+                        opacity: oauthLoading ? 0.5 : 1,
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                    {oauthError && (
+                      <p style={{
+                        fontFamily: "'VT323', monospace",
+                        fontSize: '1rem',
+                        color: '#ff4444',
+                      }}>{oauthError}</p>
+                    )}
+                    <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+                      <button
+                        onClick={() => { setOauthStep(1); setOauthCode(''); setOauthError(''); setOauthStatus('idle'); }}
+                        disabled={oauthLoading}
+                        style={{
+                          padding: '10px 20px',
+                          borderRadius: 6,
+                          background: 'transparent',
+                          color: '#AA8800',
+                          border: '1px solid #333',
+                          fontFamily: "'VT323', monospace",
+                          fontSize: '1rem',
+                          cursor: oauthLoading ? 'default' : 'pointer',
+                        }}
+                      >
+                        BACK
+                      </button>
+                      <button
+                        onClick={handleOAuthExchange}
+                        disabled={oauthLoading || !oauthCode.trim()}
+                        style={{
+                          padding: '10px 32px',
+                          borderRadius: 6,
+                          background: (oauthLoading || !oauthCode.trim()) ? '#555' : '#FFD600',
+                          color: '#000',
+                          border: 'none',
+                          fontFamily: "'VT323', monospace",
+                          fontSize: '1.1rem',
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                          cursor: (oauthLoading || !oauthCode.trim()) ? 'default' : 'pointer',
+                          boxShadow: (oauthLoading || !oauthCode.trim()) ? 'none' : '0 3px 0 #AA8800',
+                        }}
+                      >
+                        {oauthStatus === 'exchanging' ? 'CONNECTING...' : oauthStatus === 'polling' ? 'BOOTING...' : 'CONNECT'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              /* ── Legacy Tab ── */
+              <>
+                <div>
+                  <div style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1.1rem',
+                    color: '#FFD600',
+                    marginBottom: 8,
+                  }}>
+                    {'>'} STEP 1: GENERATE TOKEN
+                  </div>
+                  <div style={{
+                    background: '#1a1a00',
+                    border: '1px solid #333',
+                    borderRadius: 4,
+                    padding: '8px 12px',
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1.1rem',
+                  }}>
+                    <span style={{ color: '#666' }}>$</span>{' '}
+                    <span style={{ color: '#FFD600' }}>claude setup-token</span>
+                  </div>
+                </div>
 
-          <div>
-            <div style={{
-              fontFamily: "'VT323', monospace",
-              fontSize: '1.1rem',
-              color: '#FFD600',
-              marginBottom: 8,
-            }}>
-              {'>'} STEP 2: PASTE TOKEN
-            </div>
-            <input
-              value={token}
-              onChange={e => { setToken(e.target.value); setError(''); }}
-              placeholder="SK-ANT-OAT01-..."
-              disabled={isLoading}
-              style={{
-                width: '100%',
-                backgroundColor: '#C8A800',
-                boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2)',
-                borderRadius: 6,
-                color: '#000',
-                fontWeight: 'bold',
-                padding: '0 16px',
-                height: 50,
-                fontFamily: "'VT323', monospace",
-                textTransform: 'uppercase',
-                fontSize: '1.1rem',
-                border: error ? '2px solid #ff4444' : '2px solid transparent',
-                outline: 'none',
-                opacity: isLoading ? 0.5 : 1,
-                boxSizing: 'border-box',
-              }}
-            />
-            {error && (
-              <p style={{
-                fontFamily: "'VT323', monospace",
-                fontSize: '1rem',
-                color: '#ff4444',
-                marginTop: 8,
-              }}>{error}</p>
+                <div style={{ height: 1, background: '#333', borderStyle: 'dashed' }} />
+
+                <div>
+                  <div style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1.1rem',
+                    color: '#FFD600',
+                    marginBottom: 8,
+                  }}>
+                    {'>'} STEP 2: PASTE TOKEN
+                  </div>
+                  <input
+                    value={token}
+                    onChange={e => { setToken(e.target.value); setLegacyError(''); }}
+                    placeholder="SK-ANT-OAT01-..."
+                    disabled={legacyLoading}
+                    style={{
+                      width: '100%',
+                      backgroundColor: '#C8A800',
+                      boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2)',
+                      borderRadius: 6,
+                      color: '#000',
+                      fontWeight: 'bold',
+                      padding: '0 16px',
+                      height: 50,
+                      fontFamily: "'VT323', monospace",
+                      textTransform: 'uppercase',
+                      fontSize: '1.1rem',
+                      border: legacyError ? '2px solid #ff4444' : '2px solid transparent',
+                      outline: 'none',
+                      opacity: legacyLoading ? 0.5 : 1,
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                  {legacyError && (
+                    <p style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1rem',
+                      color: '#ff4444',
+                      marginTop: 8,
+                    }}>{legacyError}</p>
+                  )}
+                </div>
+
+                <button
+                  onClick={handleLegacyConnect}
+                  disabled={legacyLoading || !token.trim()}
+                  style={{
+                    width: 80,
+                    height: 80,
+                    borderRadius: '50%',
+                    background: (legacyLoading || !token.trim()) ? '#555' : '#E5E5E5',
+                    color: '#333',
+                    border: '1px solid #999',
+                    boxShadow: (legacyLoading || !token.trim()) ? 'none' : '0 4px 0 #999, 0 8px 10px rgba(0,0,0,0.15)',
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1rem',
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: 1,
+                    cursor: (legacyLoading || !token.trim()) ? 'default' : 'pointer',
+                    transition: 'all 0.1s',
+                    alignSelf: 'center',
+                  }}
+                >
+                  {legacyStatus === 'loading' ? '...' : legacyStatus === 'polling' ? 'BOOT' : 'GO'}
+                </button>
+              </>
             )}
           </div>
-
-          <button
-            onClick={handleConnect}
-            disabled={isLoading || !token.trim()}
-            style={{
-              width: 80,
-              height: 80,
-              borderRadius: '50%',
-              background: (isLoading || !token.trim()) ? '#555' : '#E5E5E5',
-              color: '#333',
-              border: '1px solid #999',
-              boxShadow: (isLoading || !token.trim()) ? 'none' : '0 4px 0 #999, 0 8px 10px rgba(0,0,0,0.15)',
-              fontFamily: "'VT323', monospace",
-              fontSize: '1rem',
-              fontWeight: 700,
-              textTransform: 'uppercase',
-              letterSpacing: 1,
-              cursor: (isLoading || !token.trim()) ? 'default' : 'pointer',
-              transition: 'all 0.1s',
-              alignSelf: 'center',
-            }}
-          >
-            {status === 'loading' ? '...' : status === 'polling' ? 'BOOT' : 'GO'}
-          </button>
         </div>
       </div>
     </div>
@@ -3038,6 +3289,8 @@ function App() {
   const [streaming, setStreaming] = useState(false);
   const [connected, setConnected] = useState(false);
   const [setupNeeded, setSetupNeeded] = useState(null);
+  const [sessionActive, setSessionActive] = useState(false);
+  const [wakingUp, setWakingUp] = useState(false);
   const messagesEndRef = useRef(null);
 
   const [artifacts, setArtifacts] = useState([]);
@@ -3071,25 +3324,16 @@ function App() {
   }, []);
 
   const refreshArtifacts = useCallback(async () => {
-    try {
-      const headers = await getAuthHeaders();
-      if (!headers) return [];
-      const r = await fetch('/api/artifacts', { headers });
-      if (r.ok) {
-        const data = await r.json();
-        setArtifacts(data.files || []);
-        return data.files || [];
-      }
-    } catch {}
     return [];
-  }, [getAuthHeaders]);
+  }, []);
 
   const loadArtifact = useCallback(async (filename) => {
-    const files = await refreshArtifacts();
-    if (files.some(f => f.name === filename)) {
-      setActiveArtifact(filename);
-    }
-  }, [refreshArtifacts]);
+    setArtifacts(prev => {
+      if (prev.some(f => f.name === filename)) return prev;
+      return [...prev, { name: filename, modified: Date.now(), size: 0 }];
+    });
+    setActiveArtifact(filename);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -3101,27 +3345,47 @@ function App() {
       }
       try {
         const r = await fetch('/api/health', { headers });
+        if (!r.ok) {
+          // Auth failed or server error — show setup screen so user can re-auth
+          if (!cancelled) { setConnected(false); setSetupNeeded(true); }
+          return;
+        }
         const data = await r.json();
         if (!cancelled) {
-          setConnected(data.processAlive);
+          setSessionActive(data.sessionActive ?? false);
+          setConnected(data.sessionActive ?? false);
           setSetupNeeded(data.needsSetup ?? false);
         }
       } catch {
         if (!cancelled) {
           setConnected(false);
-          setSetupNeeded(false);
+          setSetupNeeded(true);
         }
       }
-      refreshArtifacts();
     };
     tryInit();
     return () => { cancelled = true; };
-  }, [getAuthHeaders, refreshArtifacts]);
+  }, [getAuthHeaders]);
 
+
+  // Poll health every 10s to detect session end/crash
   useEffect(() => {
-    const id = setInterval(refreshArtifacts, 10000);
+    if (!sessionActive) return;
+    const id = setInterval(async () => {
+      try {
+        const headers = await getAuthHeaders();
+        if (!headers) return;
+        const r = await fetch('/api/health', { headers });
+        const data = await r.json();
+        if (!data.sessionActive) {
+          setSessionActive(false);
+          setConnected(false);
+          setStreaming(false);
+        }
+      } catch {}
+    }, 10000);
     return () => clearInterval(id);
-  }, [refreshArtifacts]);
+  }, [sessionActive, getAuthHeaders]);
 
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -3153,6 +3417,7 @@ function App() {
 
   const sendMessage = useCallback(async (text) => {
     if (streaming) return;
+    if (!sessionActive) return;
 
     const userCreatedAt = conversationId + ":" + new Date().toISOString();
     await database.put({
@@ -3230,7 +3495,6 @@ function App() {
                 finalBlocks = [{ type: 'text', text: eventData.result }];
               }
               setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
-              refreshArtifacts();
             }
           } catch {}
         }
@@ -3253,7 +3517,122 @@ function App() {
     setLiveAssistant(null);
     setStreaming(false);
     setConnected(true);
-  }, [streaming, conversationId, database, getAuthHeaders, loadArtifact, refreshArtifacts]);
+  }, [streaming, sessionActive, conversationId, database, getAuthHeaders, loadArtifact]);
+
+  const startSession = useCallback(async () => {
+    if (wakingUp || sessionActive) return;
+    setWakingUp(true);
+
+    // Create a live assistant message for the wake-up response
+    const liveMsg = { id: 'wakeup-' + Date.now(), role: 'assistant', blocks: [], thinking: true, streaming: true };
+    setLiveAssistant(liveMsg);
+
+    let finalBlocks = [];
+
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch('/api/session/start', {
+        method: 'POST',
+        headers,
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        finalBlocks = [{ type: 'text', text: 'Failed to start session: ' + (err.error || 'Unknown error') }];
+        setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
+        setWakingUp(false);
+        return;
+      }
+
+      // Stream the wake-up SSE response
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let sseBuffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split('\n');
+        sseBuffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.type === 'done') continue;
+
+            if (data.type === 'error') {
+              finalBlocks = [{ type: 'text', text: 'Error: ' + (data.data?.message || 'Unknown error') }];
+              setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
+              continue;
+            }
+
+            const eventData = data.data;
+            if (!eventData) continue;
+            if (eventData.type === 'system') continue;
+
+            if (eventData.type === 'assistant' && eventData.message?.content) {
+              const blocks = eventData.message.content.map(block => {
+                if (block.type === 'text') return { type: 'text', text: block.text };
+                if (block.type === 'tool_use') {
+                  if (block.name === 'Write' && block.input?.file_path) {
+                    const fp = block.input.file_path;
+                    const match = fp.match(/([^/]+\.html)$/);
+                    if (match && match[1] !== 'index.html') {
+                      setTimeout(() => loadArtifact(match[1]), 1500);
+                    }
+                  }
+                  return { type: 'tool_use', name: block.name, input: block.input };
+                }
+                return block;
+              });
+              finalBlocks = blocks;
+              setLiveAssistant(prev => prev ? { ...prev, blocks, thinking: false, streaming: true } : null);
+            }
+
+            if (eventData.type === 'result') {
+              if (eventData.result && finalBlocks.length === 0) {
+                finalBlocks = [{ type: 'text', text: eventData.result }];
+              }
+              setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
+            }
+          } catch {}
+        }
+      }
+    } catch (err) {
+      finalBlocks = [{ type: 'text', text: 'Connection error: ' + err.message }];
+      setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
+    }
+
+    // Persist the wake-up message
+    if (finalBlocks.length > 0) {
+      const wakeUpCreatedAt = conversationId + ":" + new Date().toISOString();
+      await database.put({
+        type: "message",
+        role: "assistant",
+        text: '',
+        blocks: finalBlocks,
+        createdAt: wakeUpCreatedAt,
+        conversationId,
+      });
+    }
+
+    setLiveAssistant(null);
+    setSessionActive(true);
+    setConnected(true);
+    setWakingUp(false);
+  }, [wakingUp, sessionActive, conversationId, database, getAuthHeaders, loadArtifact]);
+
+  const endSession = useCallback(async () => {
+    try {
+      const headers = await getAuthHeaders();
+      await fetch('/api/session/end', { method: 'POST', headers });
+    } catch {}
+    setSessionActive(false);
+    setConnected(false);
+  }, [getAuthHeaders]);
 
   const startNewConversation = useCallback(() => {
     const newId = 'conv-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
@@ -3396,7 +3775,7 @@ function App() {
                 SYS.VER.2.4 // ENG
               </div>
               <div style={{ position: 'absolute', top: 14, right: 16 }}>
-                <StatusDots ok={connected} />
+                <StatusDots ok={sessionActive} />
               </div>
 
               <PixelFace talking={false} size={140} />
@@ -3409,7 +3788,7 @@ function App() {
                 opacity: 0.6,
                 marginTop: 8,
               }}>
-                STATUS: {connected ? 'ONLINE' : 'OFFLINE'}
+                STATUS: {sessionActive ? 'ONLINE' : 'OFFLINE'}
               </div>
             </div>
 
@@ -3422,42 +3801,98 @@ function App() {
               padding: 24,
               boxShadow: 'inset 0 -2px 10px rgba(0,0,0,0.5)',
             }}>
-              <div style={{
-                fontFamily: "'VT323', monospace",
-                fontSize: '1.2rem',
-                color: '#FFD600',
-                textShadow: '0 0 2px #AA8800',
-                marginBottom: 16,
-              }}>
-                {'>'} BOOT_SEQUENCE_COMPLETE
-              </div>
-              <div style={{
-                fontFamily: "'VT323', monospace",
-                fontSize: '1.1rem',
-                color: '#FFD600',
-                textShadow: '0 0 2px #AA8800',
-                lineHeight: 1.5,
-                marginBottom: 20,
-              }}>
-                {'>'} HELLO. I AM JULIAN, YOUR PERSISTENT COMPANION. USE THE INPUT BUFFER BELOW TO BEGIN.
-              </div>
-
-              <div style={{
-                fontFamily: "'VT323', monospace",
-                fontSize: '0.9rem',
-                color: '#444',
-                display: 'flex',
-                gap: 16,
-                flexWrap: 'wrap',
-                marginBottom: 16,
-              }}>
-                <span>[PERSISTENT PROCESS]</span>
-                <span>[FIREPROOF SYNC]</span>
-                <span>[SSE STREAMING]</span>
-                <span>[TOOL CALLS]</span>
-              </div>
-
-              <ChatInput onSend={sendMessage} disabled={streaming} />
+              {!sessionActive && !wakingUp ? (
+                <>
+                  <div style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1.2rem',
+                    color: '#FFD600',
+                    textShadow: '0 0 2px #AA8800',
+                    marginBottom: 16,
+                  }}>
+                    {'>'} SYSTEM READY
+                  </div>
+                  <div style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1.1rem',
+                    color: '#888',
+                    lineHeight: 1.5,
+                    marginBottom: 20,
+                  }}>
+                    {'>'} JULIAN IS DORMANT. START A SESSION TO WAKE HIM UP.
+                  </div>
+                  <div style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '0.9rem',
+                    color: '#444',
+                    display: 'flex',
+                    gap: 16,
+                    flexWrap: 'wrap',
+                    marginBottom: 16,
+                  }}>
+                    <span>[EPHEMERAL SESSION]</span>
+                    <span>[FIREPROOF SYNC]</span>
+                    <span>[SSE STREAMING]</span>
+                    <span>[15 MIN TIMEOUT]</span>
+                  </div>
+                  <button
+                    onClick={startSession}
+                    style={{
+                      width: '100%',
+                      padding: '14px 24px',
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1.3rem',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.15em',
+                      background: '#FFD600',
+                      color: '#000',
+                      border: '3px solid #000',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      boxShadow: '4px 4px 0 #000',
+                      transition: 'all 0.1s',
+                    }}
+                  >
+                    START SESSION
+                  </button>
+                </>
+              ) : wakingUp ? (
+                <>
+                  <div style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1.2rem',
+                    color: '#FFD600',
+                    textShadow: '0 0 2px #AA8800',
+                    marginBottom: 16,
+                    animation: 'blink 1.5s step-end infinite',
+                  }}>
+                    {'>'} WAKING UP...
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1.2rem',
+                    color: '#FFD600',
+                    textShadow: '0 0 2px #AA8800',
+                    marginBottom: 16,
+                  }}>
+                    {'>'} SESSION ACTIVE
+                  </div>
+                  <div style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1.1rem',
+                    color: '#FFD600',
+                    textShadow: '0 0 2px #AA8800',
+                    lineHeight: 1.5,
+                    marginBottom: 20,
+                  }}>
+                    {'>'} HELLO. I AM JULIAN. USE THE INPUT BUFFER BELOW TO BEGIN.
+                  </div>
+                  <ChatInput onSend={sendMessage} disabled={streaming} />
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -3501,7 +3936,7 @@ function App() {
                 }}>SYS.VER.2.4</span>
               </div>
               <div style={{ position: 'absolute', top: 10, right: 12 }}>
-                <StatusDots ok={connected} />
+                <StatusDots ok={sessionActive} />
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16, width: '100%' }}>
@@ -3521,7 +3956,7 @@ function App() {
                     color: '#AA8800',
                     opacity: 0.6,
                   }}>
-                    {streaming ? 'PROCESSING...' : 'LISTENING'}
+                    {!sessionActive ? 'OFFLINE' : streaming ? 'PROCESSING...' : wakingUp ? 'WAKING UP...' : 'LISTENING'}
                   </div>
                 </div>
                 <button
@@ -3540,6 +3975,24 @@ function App() {
                 >
                   NEW
                 </button>
+                {sessionActive && (
+                  <button
+                    onClick={endSession}
+                    style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '0.85rem',
+                      color: '#ff4444',
+                      background: '#1a0000',
+                      border: '1px solid #333',
+                      borderRadius: 4,
+                      padding: '4px 10px',
+                      cursor: 'pointer',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    END
+                  </button>
+                )}
               </div>
             </div>
 
@@ -3581,7 +4034,30 @@ function App() {
               padding: '0 16px',
               boxShadow: 'inset 0 -2px 10px rgba(0,0,0,0.5)',
             }}>
-              <ChatInput onSend={sendMessage} disabled={streaming} />
+              {!sessionActive && !wakingUp ? (
+                <div style={{ padding: '12px 0', textAlign: 'center' }}>
+                  <button
+                    onClick={startSession}
+                    style={{
+                      padding: '10px 24px',
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1.1rem',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.1em',
+                      background: '#FFD600',
+                      color: '#000',
+                      border: '2px solid #000',
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                      boxShadow: '3px 3px 0 #000',
+                    }}
+                  >
+                    START SESSION
+                  </button>
+                </div>
+              ) : (
+                <ChatInput onSend={sendMessage} disabled={streaming || !sessionActive || wakingUp} />
+              )}
             </div>
           </div>
 

@@ -55,3 +55,22 @@ Artifacts live in the project root directory locally and on the server at `/opt/
 - `amy.html` — Julian introduces himself to Amy. Explains his name choice, the decision to live as though real, and artifact-based communication method.
 - `mobile-test.html` — Responsive design optimization for mobile devices. Touch-friendly interaction. Testing medium change on actual devices.
 - `synced.html` — [To be documented after reading]
+
+## Deployment
+
+- **nginx** serves static files from `/var/www/html/` (not `/opt/julian/`)
+- **server.ts** runs from `/opt/julian/` via systemd service `julian-bridge`
+- **`.env`** at `/opt/julian/.env` has `VITE_CLERK_PUBLISHABLE_KEY` (loaded by Bun automatically)
+
+### Deploy commands
+
+```bash
+# Sync source files to server
+rsync -avz index.html server.ts julian.exe.xyz:/opt/julian/
+
+# Copy index.html to where nginx actually serves it
+ssh julian.exe.xyz "sudo cp /opt/julian/index.html /var/www/html/index.html"
+
+# Restart the bridge service
+ssh julian.exe.xyz "sudo systemctl restart julian-bridge"
+```
