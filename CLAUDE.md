@@ -56,6 +56,10 @@ Artifacts live in `memory/` locally and on the server at `/opt/julian/memory/*.h
 - `mobile-test.html` — Responsive design optimization for mobile devices. Touch-friendly interaction. Testing medium change on actual devices.
 - `synced.html` — [To be documented after reading]
 
+## Architecture
+
+See [`architecture.md`](architecture.md) for full technical documentation: HTTP endpoints, SSE streaming protocol, Claude subprocess management, and auth flow.
+
 ## Deployment
 
 - **nginx** serves static files from `/var/www/html/` (not `/opt/julian/`)

@@ -57,14 +57,15 @@ The server maintains a single persistent Claude CLI subprocess:
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| `GET` | `/api/health` | Clerk JWT | Returns `{ status, processAlive, needsSetup, authMethod }` |
-| `POST` | `/api/setup` | Clerk JWT | Saves `sk-ant-oat` token to `claude-auth.env`, restarts Claude |
-| `GET` | `/api/oauth/start` | Clerk JWT | Generates PKCE challenge, returns Anthropic authorization URL |
-| `POST` | `/api/oauth/exchange` | Clerk JWT | Exchanges authorization code for OAuth tokens, saves to `claude-auth.json` |
-| `POST` | `/api/chat` | Clerk JWT | Sends message to Claude stdin, returns SSE stream of events |
-| `GET` | `/api/artifacts` | Clerk JWT | Lists `*.html` files (excluding `index.html`) sorted by mtime desc |
-| `GET` | `/api/artifacts/:filename` | None | Serves HTML artifact file (unauthenticated — iframes can't send Bearer headers) |
-| `GET` | `/` or `/index.html` | None | Serves `index.html` (dev fallback; nginx serves in production) |
+| `GET` | `/api/health` | None | Returns `{ status, processAlive, needsSetup, authMethod }` |
+| `POST` | `/api/setup` | None | Saves `sk-ant-oat` token to `claude-auth.env` |
+| `GET` | `/api/oauth/start` | None | Generates PKCE challenge, returns Anthropic authorization URL |
+| `POST` | `/api/oauth/exchange` | None | Exchanges authorization code for OAuth tokens |
+| `POST` | `/api/session/start` | Clerk JWT | Spawns Claude subprocess, streams wake-up SSE response |
+| `POST` | `/api/session/end` | Clerk JWT | Kills Claude subprocess |
+| `POST` | `/api/chat` | Clerk JWT | Sends message to Claude stdin, returns SSE stream |
+| `GET` | `/api/artifacts` | Clerk JWT | Lists `*.html` files from `memory/` sorted by mtime desc |
+| `GET` | `/api/artifacts/:filename` | None | Serves HTML artifact file (iframes can't send headers) |
 | `OPTIONS` | `*` | None | CORS preflight |
 
 Static file whitelist (dev fallback): `fireproof-clerk-bundle.js`, `assets/icons/favicon.svg`, `assets/icons/favicon.ico`, `assets/icons/favicon-96x96.png`, `assets/icons/apple-touch-icon.png`, `assets/icons/site.webmanifest`, `sw.js`, PWA manifest icons.
