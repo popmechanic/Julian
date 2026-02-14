@@ -81,23 +81,49 @@ The `writeTurn()` function returns a `ReadableStream` that bridges Claude's stdo
 - **Bun `idleTimeout`**: Set to 255 seconds (Bun maximum) to prevent premature SSE disconnection.
 - **Completion**: Stream sends `{"type": "done"}` and closes after the `result` event.
 
-### Authentication
+### Authentication — Dual Auth System
 
-**Claude API auth** — three-tier priority:
-1. **OAuth JSON** (`claude-auth.json`): If `access_token` exists and `expires_at > Date.now()`, set as `CLAUDE_CODE_OAUTH_TOKEN` env var.
-2. **Legacy .env** (`claude-auth.env`): Parsed as key=value pairs, injected into Claude subprocess env.
-3. **None**: Claude starts without auth env (will fail on API calls).
+Julian has two independent auth layers serving different purposes:
 
-**Clerk JWT verification**:
-- Publishable key (`VITE_CLERK_PUBLISHABLE_KEY`) is base64-decoded to extract the Clerk frontend API domain.
-- JWKS endpoint: `https://<clerk-domain>/.well-known/jwks.json`
-- Verified via `jose.jwtVerify()`. If no Clerk config, auth is skipped (local dev mode).
+#### Clerk (Application Layer)
 
-**OAuth token refresh**:
-- Timer checks every 60 seconds. If < 10 minutes remaining on token, refreshes via `POST /v1/oauth/token` with `grant_type: refresh_token`.
-- On startup, if token is already expired, refresh runs before spawning Claude.
+Controls **who can access Julian's web UI**. Part of the Vibes framework.
 
-**PKCE state**: In-memory `Map<string, { verifier, createdAt }>` with 10-minute TTL, cleaned every 60 seconds.
+- `ClerkFireproofProvider` wraps the app; `<SignedIn>` / `<SignedOut>` gates content.
+- Frontend calls `window.Clerk.session.getToken()` to get a short-lived JWT.
+- All protected endpoints (`/api/session/start`, `/api/session/end`, `/api/chat`) require `Authorization: Bearer <clerk-jwt>`.
+- Server verifies JWTs via JWKS (`jose.jwtVerify()`) with 10s clock tolerance.
+- JWKS URL derived from publishable key: base64-decode `pk_test_...` → Clerk frontend API domain → `https://<domain>/.well-known/jwks.json`.
+- If no `VITE_CLERK_PUBLISHABLE_KEY`, auth is skipped (local dev mode).
+- Health and OAuth endpoints are public (no Clerk auth required).
+
+#### Anthropic OAuth (API Layer)
+
+Provides **Claude Code API credentials**. Direct PKCE flow — no subprocess.
+
+- **Credential priority**: (1) `~/.claude/.credentials.json` with valid `claudeAiOauth.accessToken`, (2) `~/.sculptor/credentials.json`, (3) legacy `claude-auth.env` with `sk-ant-oat` token.
+- **PKCE flow**: Server generates verifier/challenge, stores in-memory `pendingPKCE` map. User authorizes at `claude.ai/oauth/authorize`, pastes code back. Server exchanges code + verifier for tokens.
+- **Token refresh**: Proactive — if token expires within 30 minutes, auto-refreshes via `POST /v1/oauth/token` with `grant_type: refresh_token`. Checked at startup and before spawning Claude.
+- **Token lifetime**: ~8 hours. Refresh tokens rotate on each refresh (old refresh token invalidated).
+- **Credentials written** to `~/.claude/.credentials.json` with `mode: 0o600`.
+
+#### Auth Flow (End to End)
+
+```
+User visits julian.exe.xyz
+  → Clerk sign-in (application access)
+  → If needsSetup: Anthropic OAuth PKCE flow (API credentials)
+  → "Start Session" → Clerk JWT verified → Claude Code spawned with OAuth token
+```
+
+#### Gotchas
+
+1. **Token endpoint requires JSON**: `Content-Type: application/json` only — `application/x-www-form-urlencoded` returns "Invalid request format".
+2. **`state` required in token exchange body**: Non-standard — most OAuth providers only use `state` for CSRF validation on the redirect, but Anthropic's endpoint requires it in the exchange POST body.
+3. **In-memory PKCE state**: `pendingPKCE` map lives in server memory — a server restart during an in-progress auth flow will invalidate the flow.
+4. **8-hour token expiry**: Tokens expire after ~8 hours. Refresh happens proactively at 30 min before expiry.
+5. **Refresh token rotation**: Each refresh invalidates the previous refresh token. If a refresh fails mid-way (network error after server accepts but before response), the old refresh token is gone.
+6. **No auth during restart**: Don't restart the server while a user is in the middle of the OAuth flow — the `pendingPKCE` map will be lost.
 
 ### OAuth Constants
 
@@ -105,9 +131,9 @@ The `writeTurn()` function returns a `ReadableStream` that bridges Claude's stdo
 |----------|-------|
 | Client ID | `9d1c250a-e61b-44d9-88ed-5944d1962f5e` |
 | Authorize URL | `https://claude.ai/oauth/authorize` |
-| Token URL | `https://console.anthropic.com/v1/oauth/token` |
-| Redirect URI | `https://console.anthropic.com/oauth/code/callback` |
-| Scopes | `org:create_api_key user:profile user:inference` |
+| Token URL | `https://platform.claude.com/v1/oauth/token` |
+| Redirect URI | `https://platform.claude.com/oauth/code/callback` |
+| Scopes | `user:profile user:inference user:sessions:claude_code user:mcp_servers` |
 
 ## Frontend (`index.html`)
 
@@ -278,7 +304,7 @@ Set in `window.__VIBES_CONFIG__` (hardcoded in index.html):
 
 ## Known Issues & Debt
 
-- **OAuth flow broken**: Anthropic blocks third-party OAuth apps since Jan 2026. Only the legacy `sk-ant-oat` token paste works.
+- **OAuth flow working**: Direct PKCE flow (no subprocess) implemented in server.ts. Legacy `sk-ant-oat` token paste also supported as fallback.
 - **Monolithic `index.html`**: 3952 lines with no build step means no code splitting, tree shaking, or minification. The Vibes design system alone is ~1500 lines of pre-compiled React components.
 - **Manual SSE parsing**: The frontend manually reads the response body stream and parses `data: ` lines. Could use the native `EventSource` API (though POST support would require a wrapper).
 - **Artifact polling**: 10-second interval poll to `/api/artifacts`. Could use filesystem watch + WebSocket push for instant updates.

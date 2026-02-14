@@ -3316,9 +3316,13 @@ function App() {
   const getAuthHeaders = useCallback(async () => {
     try {
       const token = await window.Clerk?.session?.getToken();
-      if (!token) return null;
+      if (!token) {
+        console.warn('[Auth] Clerk token unavailable. session exists:', !!window.Clerk?.session);
+        return null;
+      }
       return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
-    } catch {
+    } catch (err) {
+      console.error('[Auth] Clerk getToken() error:', err);
       return null;
     }
   }, []);

@@ -92,11 +92,15 @@ const JWKS = CLERK_FRONTEND_API
 async function verifyClerkToken(req: Request): Promise<boolean> {
   if (!JWKS) return true; // No Clerk config = skip auth (local dev)
   const auth = req.headers.get("Authorization");
-  if (!auth?.startsWith("Bearer ")) return false;
+  if (!auth?.startsWith("Bearer ")) {
+    console.warn("[Clerk] No Authorization header in request");
+    return false;
+  }
   try {
-    await jwtVerify(auth.slice(7), JWKS);
+    await jwtVerify(auth.slice(7), JWKS, { clockTolerance: 10 });
     return true;
-  } catch {
+  } catch (err) {
+    console.error("[Clerk] JWT verification failed:", (err as Error).message);
     return false;
   }
 }
@@ -530,17 +534,20 @@ Bun.serve({
         // Strip #state suffix if the frontend passed the full callback fragment
         const code = body.code.split("#")[0];
 
-        console.log("[OAuth] Exchanging authorization code for tokens...");
-        const resp = await fetch(OAUTH_TOKEN_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        const exchangeBody = {
             grant_type: "authorization_code",
             code,
             redirect_uri: OAUTH_REDIRECT_URI,
             client_id: OAUTH_CLIENT_ID,
             code_verifier: pending.verifier,
-          }),
+            state: body.state,
+          };
+        console.log("[OAuth] Exchanging authorization code for tokens...");
+        console.log("[OAuth] Request body:", JSON.stringify({ ...exchangeBody, code: code.slice(0, 10) + '...', code_verifier: exchangeBody.code_verifier.slice(0, 10) + '...' }));
+        const resp = await fetch(OAUTH_TOKEN_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(exchangeBody),
         });
 
         if (!resp.ok) {
