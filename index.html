@@ -3317,7 +3317,7 @@ function App() {
     try {
       const token = await window.Clerk?.session?.getToken();
       if (!token) {
-        console.warn('[Auth] Clerk token unavailable. session exists:', !!window.Clerk?.session);
+        console.warn('[Auth] Clerk token unavailable. Clerk loaded:', !!window.Clerk, 'session:', !!window.Clerk?.session);
         return null;
       }
       return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
@@ -3541,8 +3541,9 @@ function App() {
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        finalBlocks = [{ type: 'text', text: 'Failed to start session: ' + (err.error || 'Unknown error') }];
+        let errMsg = `HTTP ${response.status}`;
+        try { errMsg = (await response.json()).error || errMsg; } catch {}
+        finalBlocks = [{ type: 'text', text: 'Failed to start session: ' + errMsg }];
         setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
         setWakingUp(false);
         return;
@@ -4110,7 +4111,6 @@ export default App;
         const VibesButton = window.VibesButton;
         const RED = window.RED;
 
-        // AuthGate shown when user is not signed in
         const AuthGate = () => (
           <AuthScreen
             title="Sign in to continue"
