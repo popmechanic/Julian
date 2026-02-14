@@ -2767,6 +2767,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
       try {
         const h = await getAuthHeaders();
         const hr = await fetch('/api/health', { headers: h });
+        if (!hr.ok) continue;
         const hd = await hr.json();
         if (!hd.needsSetup) {
           onComplete();
@@ -3314,13 +3315,18 @@ function App() {
   }, []);
 
   const getAuthHeaders = useCallback(async () => {
+    // Wait for Clerk session to be ready (up to 5s)
+    for (let i = 0; i < 10; i++) {
+      if (window.Clerk?.session) break;
+      await new Promise(r => setTimeout(r, 500));
+    }
     try {
       const token = await window.Clerk?.session?.getToken();
       if (!token) {
         console.warn('[Auth] Clerk token unavailable. Clerk loaded:', !!window.Clerk, 'session:', !!window.Clerk?.session);
         return null;
       }
-      return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+      return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, 'X-Authorization': `Bearer ${token}` };
     } catch (err) {
       console.error('[Auth] Clerk getToken() error:', err);
       return null;
@@ -3380,6 +3386,7 @@ function App() {
         const headers = await getAuthHeaders();
         if (!headers) return;
         const r = await fetch('/api/health', { headers });
+        if (!r.ok) return;
         const data = await r.json();
         if (!data.sessionActive) {
           setSessionActive(false);
@@ -3535,6 +3542,12 @@ function App() {
 
     try {
       const headers = await getAuthHeaders();
+      if (!headers) {
+        finalBlocks = [{ type: 'text', text: 'Not signed in. Please sign in with Clerk first.' }];
+        setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
+        setWakingUp(false);
+        return;
+      }
       const response = await fetch('/api/session/start', {
         method: 'POST',
         headers,

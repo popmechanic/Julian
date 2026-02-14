@@ -91,7 +91,8 @@ const JWKS = CLERK_FRONTEND_API
 
 async function verifyClerkToken(req: Request): Promise<boolean> {
   if (!JWKS) return true; // No Clerk config = skip auth (local dev)
-  const auth = req.headers.get("Authorization");
+  // Check Authorization header, fall back to X-Authorization (exe.dev edge proxy strips Authorization)
+  const auth = req.headers.get("Authorization") || req.headers.get("X-Authorization");
   if (!auth?.startsWith("Bearer ")) {
     console.warn("[Clerk] No Authorization header in request");
     return false;
@@ -439,7 +440,7 @@ function corsHeaders() {
   return {
     "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
     "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Authorization",
   };
 }
 
