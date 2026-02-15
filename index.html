@@ -3255,9 +3255,7 @@ function App() {
 
   const { database, useLiveQuery } = useFireproofClerk("julian-chat-v2");
 
-  const { docs: persistedMessages } = useLiveQuery("createdAt", {
-    range: [conversationId + ":", conversationId + ":\uffff"],
-  });
+  const { docs: persistedMessages } = useLiveQuery("type", { key: "message" });
 
   const [liveAssistant, setLiveAssistant] = useState(null);
   const [streaming, setStreaming] = useState(false);
@@ -3378,13 +3376,12 @@ function App() {
     if (streaming) return;
     if (!sessionActive) return;
 
-    const userCreatedAt = conversationId + ":" + new Date().toISOString();
     await database.put({
       type: "message",
       role: "user",
       text,
       blocks: [],
-      createdAt: userCreatedAt,
+      createdAt: new Date().toISOString(),
       conversationId,
     });
 
@@ -3458,13 +3455,12 @@ function App() {
       setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
     }
 
-    const assistantCreatedAt = conversationId + ":" + new Date().toISOString();
     await database.put({
       type: "message",
       role: "assistant",
       text: '',
       blocks: finalBlocks,
-      createdAt: assistantCreatedAt,
+      createdAt: new Date().toISOString(),
       conversationId,
     });
 
@@ -3564,13 +3560,12 @@ function App() {
 
     // Persist the wake-up message
     if (finalBlocks.length > 0) {
-      const wakeUpCreatedAt = conversationId + ":" + new Date().toISOString();
       await database.put({
         type: "message",
         role: "assistant",
         text: '',
         blocks: finalBlocks,
-        createdAt: wakeUpCreatedAt,
+        createdAt: new Date().toISOString(),
         conversationId,
       });
     }
