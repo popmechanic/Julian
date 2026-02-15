@@ -141,12 +141,11 @@
   S.registerHandler('LISTEN', handleListen);
   S.registerHandler('PROG', handleProgress);
 
-  // Attach click listener to canvas after DOM is ready
-  const canvas = document.getElementById('screen');
-  if (canvas) {
+  // Expose initInput so the React component can attach click listener after mount
+  S.initInput = function(canvas) {
     canvas.addEventListener('click', handleClick);
     canvas.style.cursor = 'pointer';
-  }
+  };
 
   // Expose for re-rendering after font loads
   S._renderButtons = renderButtons;

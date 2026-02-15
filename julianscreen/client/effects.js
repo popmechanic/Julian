@@ -2,7 +2,7 @@
 
 (function() {
   const S = window.JScreen;
-  const canvas = document.getElementById('screen');
+  function getCanvas() { return window.JScreen._canvas; }
 
   // Active effects
   const activeEffects = [];
@@ -63,6 +63,7 @@
 
   // Shake: canvas translate oscillation
   function applyShake(progress) {
+    const canvas = getCanvas();
     if (!canvas) return;
     const intensity = (1 - progress) * 4;
     const x = Math.round(Math.sin(progress * Math.PI * 8) * intensity);
@@ -99,7 +100,7 @@
   function renderGlitch(ctx, progress) {
     if (progress > 0.8) return; // only active first 80%
     // Displace a few horizontal bands
-    const mainCanvas = document.getElementById('screen');
+    const mainCanvas = getCanvas();
     const mainCtx = mainCanvas?.getContext('2d');
     if (!mainCtx) return;
 
@@ -154,8 +155,8 @@
       if (progress >= 1) {
         activeEffects.splice(i, 1);
         // Reset shake transform
-        if (fx.type === 'shake' && canvas) {
-          canvas.style.transform = '';
+        if (fx.type === 'shake' && getCanvas()) {
+          getCanvas().style.transform = '';
         }
       }
     }

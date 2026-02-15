@@ -178,8 +178,12 @@ function setColor(cmd) {
 }
 
 // Init
+let initialized = false;
 function init(canvas) {
+  if (initialized) return;
+  initialized = true;
   mainCanvas = canvas;
+  window.JScreen._canvas = canvas;
   mainCtx = canvas.getContext('2d');
   mainCtx.imageSmoothingEnabled = false;
 
@@ -210,4 +214,5 @@ window.JScreen = {
   ROWS,
   PALETTE,
   tickAnimations: null,
+  _canvas: null,
 };

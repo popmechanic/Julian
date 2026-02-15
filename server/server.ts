@@ -456,11 +456,18 @@ setInterval(() => {
 
 // ── HTTP Server ────────────────────────────────────────────────────────────
 
-Bun.serve({
+const server = Bun.serve({
   port: PORT,
   idleTimeout: 255, // max Bun allows — prevents SSE kill during long Claude thinking
   async fetch(req) {
     const url = new URL(req.url);
+
+    // WebSocket upgrade for JulianScreen proxy
+    if (url.pathname === '/screen/ws') {
+      const upgraded = server.upgrade(req, { data: {} });
+      if (upgraded) return undefined;
+      return new Response('WebSocket upgrade failed', { status: 400 });
+    }
 
     // CORS preflight
     if (req.method === "OPTIONS") {
@@ -689,6 +696,16 @@ Bun.serve({
     }
 
     // ── Static file serving ──────────────────────────────────────────────
+
+    // Sprite path rewrite for JulianScreen
+    if (url.pathname.startsWith('/sprites/')) {
+      const spritePath = resolve(WORKING_DIR, 'julianscreen', url.pathname.slice(1));
+      const spriteFile = Bun.file(spritePath);
+      if (await spriteFile.exists()) {
+        return new Response(spriteFile);
+      }
+    }
+
     // Serve files from WORKING_DIR (replaces nginx static serving)
     const requestedPath = decodeURIComponent(url.pathname);
     const safePath = resolve(WORKING_DIR, requestedPath.slice(1)); // strip leading /
@@ -711,6 +728,39 @@ Bun.serve({
     }
 
     return new Response("Not Found", { status: 404 });
+  },
+  websocket: {
+    open(ws) {
+      // Connect to upstream JulianScreen server
+      const upstream = new WebSocket('ws://localhost:3848/ws');
+      (ws.data as any).upstream = upstream;
+      (ws.data as any).ready = false;
+
+      upstream.addEventListener('open', () => {
+        (ws.data as any).ready = true;
+      });
+      upstream.addEventListener('message', (event) => {
+        try { ws.send(typeof event.data === 'string' ? event.data : new Uint8Array(event.data as ArrayBuffer)); } catch {}
+      });
+      upstream.addEventListener('close', () => {
+        try { ws.close(); } catch {}
+      });
+      upstream.addEventListener('error', () => {
+        try { ws.close(); } catch {}
+      });
+    },
+    message(ws, message) {
+      const upstream = (ws.data as any).upstream as WebSocket;
+      if (upstream && (ws.data as any).ready) {
+        upstream.send(message);
+      }
+    },
+    close(ws) {
+      const upstream = (ws.data as any).upstream as WebSocket;
+      if (upstream) {
+        try { upstream.close(); } catch {}
+      }
+    },
   },
 });
 
