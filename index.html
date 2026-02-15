@@ -3353,8 +3353,8 @@ function App() {
   const displayMessages = React.useMemo(() => {
     console.log('[chat] displayMessages recalc — persistedMessages:', persistedMessages?.length ?? 0, 'liveAssistant:', !!liveAssistant);
     const sorted = [...(persistedMessages || [])].sort((a, b) => {
-      if (a.createdAt < b.createdAt) return -1;
-      if (a.createdAt > b.createdAt) return 1;
+      if (a._id < b._id) return -1;
+      if (a._id > b._id) return 1;
       return 0;
     });
     const msgs = sorted.map(doc => ({
