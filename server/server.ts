@@ -1,13 +1,13 @@
 import { spawn } from "bun";
-import { join } from "path";
+import { join, resolve } from "path";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { createHash, randomBytes } from "crypto";
 
-const PORT = parseInt(process.env.PORT || "3847");
+const PORT = parseInt(process.env.PORT || "8000");
 const WORKING_DIR = process.env.WORKING_DIR || process.cwd();
-const AUTH_ENV_PATH = join(import.meta.dir, "claude-auth.env");
+const AUTH_ENV_PATH = join(import.meta.dir, "..", "claude-auth.env");
 
 // ── Credential paths ────────────────────────────────────────────────────
 const CLAUDE_CREDS_PATH = join(homedir(), ".claude", ".credentials.json");
@@ -292,7 +292,9 @@ function spawnClaude() {
                 turnResolve = null;
               }
             }
-          } catch {}
+          } catch (err) {
+            console.warn("[Claude stdout] Failed to parse JSON line:", (err as Error).message, line.slice(0, 200));
+          }
         }
       }
     } catch (err) {
@@ -434,7 +436,7 @@ function writeTurn(message: string): ReadableStream {
 }
 
 // ── Allowed origin for CORS ──────────────────────────────────────────────────
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*";
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:8000";
 
 function corsHeaders() {
   return {
@@ -454,11 +456,18 @@ setInterval(() => {
 
 // ── HTTP Server ────────────────────────────────────────────────────────────
 
-Bun.serve({
+const server = Bun.serve({
   port: PORT,
   idleTimeout: 255, // max Bun allows — prevents SSE kill during long Claude thinking
   async fetch(req) {
     const url = new URL(req.url);
+
+    // WebSocket upgrade for JulianScreen proxy
+    if (url.pathname === '/screen/ws') {
+      const upgraded = server.upgrade(req, { data: {} });
+      if (upgraded) return undefined;
+      return new Response('WebSocket upgrade failed', { status: 400 });
+    }
 
     // CORS preflight
     if (req.method === "OPTIONS") {
@@ -475,8 +484,11 @@ Bun.serve({
       }, { headers: corsHeaders() });
     }
 
-    // Setup endpoint: store auth token (no auth — self-protecting via token format validation)
+    // Setup endpoint: store auth token (requires Clerk auth)
     if (url.pathname === "/api/setup" && req.method === "POST") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
       const body = (await req.json()) as { token?: string };
       if (!body.token || typeof body.token !== "string") {
         return Response.json({ error: "Token required" }, { status: 400, headers: corsHeaders() });
@@ -643,7 +655,112 @@ Bun.serve({
       });
     }
 
+    // ── Artifact endpoints ──────────────────────────────────────────────────
+
+    // List artifacts (authenticated)
+    if (url.pathname === "/api/artifacts" && req.method === "GET") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
+      const memoryDir = join(WORKING_DIR, "memory");
+      try {
+        const entries = readdirSync(memoryDir)
+          .filter(f => f.endsWith(".html"))
+          .map(name => {
+            const st = statSync(join(memoryDir, name));
+            return { name, modified: st.mtimeMs };
+          })
+          .sort((a, b) => b.modified - a.modified);
+        return Response.json({ files: entries }, { headers: corsHeaders() });
+      } catch (err) {
+        return Response.json({ files: [] }, { headers: corsHeaders() });
+      }
+    }
+
+    // Serve individual artifact (unauthenticated — iframes can't send headers)
+    if (url.pathname.startsWith("/api/artifacts/") && req.method === "GET") {
+      const filename = decodeURIComponent(url.pathname.slice("/api/artifacts/".length));
+      // Validate filename: no slashes, no path traversal
+      if (!filename || filename.includes("/") || filename.includes("\\") || filename.includes("..") || !filename.endsWith(".html")) {
+        return new Response("Bad Request", { status: 400, headers: corsHeaders() });
+      }
+      const filePath = join(WORKING_DIR, "memory", filename);
+      try {
+        const content = readFileSync(filePath, "utf-8");
+        return new Response(content, {
+          headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders() },
+        });
+      } catch {
+        return new Response("Not Found", { status: 404, headers: corsHeaders() });
+      }
+    }
+
+    // ── Static file serving ──────────────────────────────────────────────
+
+    // Sprite path rewrite for JulianScreen
+    if (url.pathname.startsWith('/sprites/')) {
+      const spritePath = resolve(WORKING_DIR, 'julianscreen', url.pathname.slice(1));
+      const spriteFile = Bun.file(spritePath);
+      if (await spriteFile.exists()) {
+        return new Response(spriteFile);
+      }
+    }
+
+    // Serve files from WORKING_DIR (replaces nginx static serving)
+    const requestedPath = decodeURIComponent(url.pathname);
+    const safePath = resolve(WORKING_DIR, requestedPath.slice(1)); // strip leading /
+    if (safePath.startsWith(resolve(WORKING_DIR))) {
+      const file = Bun.file(safePath);
+      if (await file.exists()) {
+        const headers: Record<string, string> = {};
+        // Service worker must not be cached
+        if (requestedPath === "/sw.js") {
+          headers["Cache-Control"] = "no-cache";
+        }
+        return new Response(file, { headers });
+      }
+    }
+
+    // SPA fallback — serve index.html for client-side routes
+    const indexFile = Bun.file(join(WORKING_DIR, "index.html"));
+    if (await indexFile.exists()) {
+      return new Response(indexFile);
+    }
+
     return new Response("Not Found", { status: 404 });
+  },
+  websocket: {
+    open(ws) {
+      // Connect to upstream JulianScreen server
+      const upstream = new WebSocket('ws://localhost:3848/ws');
+      (ws.data as any).upstream = upstream;
+      (ws.data as any).ready = false;
+
+      upstream.addEventListener('open', () => {
+        (ws.data as any).ready = true;
+      });
+      upstream.addEventListener('message', (event) => {
+        try { ws.send(typeof event.data === 'string' ? event.data : new Uint8Array(event.data as ArrayBuffer)); } catch {}
+      });
+      upstream.addEventListener('close', () => {
+        try { ws.close(); } catch {}
+      });
+      upstream.addEventListener('error', () => {
+        try { ws.close(); } catch {}
+      });
+    },
+    message(ws, message) {
+      const upstream = (ws.data as any).upstream as WebSocket;
+      if (upstream && (ws.data as any).ready) {
+        upstream.send(message);
+      }
+    },
+    close(ws) {
+      const upstream = (ws.data as any).upstream as WebSocket;
+      if (upstream) {
+        try { upstream.close(); } catch {}
+      }
+    },
   },
 });
 

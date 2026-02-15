@@ -7,9 +7,8 @@ Type=simple
 User=exedev
 Environment=PATH=/home/exedev/.bun/bin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=/opt/julian
-Environment=ALLOWED_ORIGIN=https://julian.exe.xyz
-Environment=VITE_CLERK_PUBLISHABLE_KEY=pk_test_aW50ZXJuYWwtZGluZ28tMjguY2xlcmsuYWNjb3VudHMuZGV2JA
-ExecStart=/home/exedev/.bun/bin/bun run /opt/julian/server.ts
+EnvironmentFile=/opt/julian/.env
+ExecStart=/home/exedev/.bun/bin/bun run /opt/julian/server/server.ts
 Restart=always
 RestartSec=5
 

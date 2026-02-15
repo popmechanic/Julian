@@ -15,7 +15,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
-const ARTIFACTS_DIR = PROJECT_ROOT;
+const ARTIFACTS_DIR = path.join(PROJECT_ROOT, 'memory');
 const CLAUDE_MD_PATH = path.join(PROJECT_ROOT, 'CLAUDE.md');
 const OUTPUT_PATH = path.join(PROJECT_ROOT, '.claude', 'artifacts', 'metadata.json');
 

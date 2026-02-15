@@ -4,14 +4,59 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Made on Vibes DIY</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png" />
-    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-    <link rel="manifest" href="/site.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/assets/icons/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="96x96" href="/assets/icons/favicon-96x96.png" />
+    <link rel="icon" type="image/x-icon" href="/assets/icons/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/assets/icons/site.webmanifest" />
+    <meta name="theme-color" content="#FFD600" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Julian" />
     <script>globalThis.process = { env: { NODE_ENV: "production" } };</script>
+    <script>
+      // One-time IndexedDB migration: clear corrupted Fireproof CRDT state
+      // caused by failed auth syncs (401 on /tokens/with-email).
+      // Bump DB_VERSION to re-trigger if corruption recurs.
+      (function() {
+        var DB_VERSION = 1;
+        var KEY = 'fp_migration_v' + DB_VERSION;
+        if (localStorage.getItem(KEY)) return;
+        var dbs = indexedDB.databases ? indexedDB.databases() : Promise.resolve([]);
+        dbs.then(function(databases) {
+          var fpDbs = databases.filter(function(db) {
+            return db.name && db.name.indexOf('fireproof') !== -1;
+          });
+          if (fpDbs.length === 0) {
+            localStorage.setItem(KEY, Date.now());
+            return;
+          }
+          var deleted = 0;
+          fpDbs.forEach(function(db) {
+            var req = indexedDB.deleteDatabase(db.name);
+            req.onsuccess = req.onerror = function() {
+              deleted++;
+              if (deleted === fpDbs.length) {
+                localStorage.setItem(KEY, Date.now());
+                location.reload();
+              }
+            };
+          });
+        }).catch(function() {
+          localStorage.setItem(KEY, Date.now());
+        });
+      })();
+    </script>
     <script src="https://unpkg.com/@babel/standalone@7.26.0/babel.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <!-- JulianScreen client modules (must load in order: renderer creates window.JScreen, others attach to it) -->
+    <script src="/julianscreen/client/renderer.js"></script>
+    <script src="/julianscreen/client/sprites.js"></script>
+    <script src="/julianscreen/client/tiles.js"></script>
+    <script src="/julianscreen/client/text.js"></script>
+    <script src="/julianscreen/client/input.js"></script>
+    <script src="/julianscreen/client/effects.js"></script>
     <style>
       :root {
         /* Core colors */
@@ -167,8 +212,8 @@
           "@ipld/dag-cbor": "https://esm.sh/stable/@ipld/dag-cbor@9.2.2?external=multiformats",
           "@ipld/dag-json": "https://esm.sh/stable/@ipld/dag-json@10.2.3?external=multiformats",
           "@clerk/clerk-react": "https://esm.sh/stable/@clerk/clerk-react@5.59.2?external=react,react-dom",
-          "use-fireproof": "/fireproof-clerk-bundle.js",
-          "@fireproof/clerk": "/fireproof-clerk-bundle.js"
+          "use-fireproof": "/bundles/fireproof-vibes-bridge.js",
+          "@fireproof/clerk": "/bundles/fireproof-vibes-bridge.js"
         }
       }
     </script>
@@ -177,6 +222,7 @@
       window.__VIBES_CONFIG__ = {
         tokenApiUri: "https://vibes-share-studio.exe.xyz/api/",
         cloudBackendUrl: "fpcloud://vibes-share-studio.exe.xyz?protocol=wss",
+        // Must match VITE_CLERK_PUBLISHABLE_KEY in server/julian-bridge.service
         clerkPublishableKey: "pk_test_aW50ZXJuYWwtZGluZ28tMjguY2xlcmsuYWNjb3VudHMuZGV2JA"
       };
     </script>
@@ -206,18 +252,9 @@ function useMobile() {
 }
 
 
-// === useIsMobile ===
+// === useIsMobile === (alias for useMobile)
 function useIsMobile() {
-  const [isMobile, setIsMobile] = React.useState(false);
-  React.useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-    checkMobile();
-    window.addEventListener("resize", checkMobile);
-    return () => window.removeEventListener("resize", checkMobile);
-  }, []);
-  return isMobile;
+  return useMobile();
 }
 
 
@@ -938,12 +975,7 @@ const getAnimationStyles = () => `
 
 
 // === AuthScreen ===
-const CARD_URLS = [
-  "/cards/card-1.png",
-  "/cards/card-2.png",
-  "/cards/card-3.png",
-  "/cards/card-4.png"
-];
+const CARD_URLS = [];
 const AuthScreen = ({
   children,
   title,
@@ -2369,11 +2401,12 @@ function PixelFace({ talking, size = 120 }) {
 
     draw();
 
+    let blinkTimeout;
     function scheduleBlink() {
       const delay = Math.random() * 3000 + 2000;
-      setTimeout(() => {
+      blinkTimeout = setTimeout(() => {
         stateRef.current.blinking = true;
-        setTimeout(() => {
+        blinkTimeout = setTimeout(() => {
           stateRef.current.blinking = false;
           scheduleBlink();
         }, 150);
@@ -2383,6 +2416,7 @@ function PixelFace({ talking, size = 120 }) {
 
     return () => {
       if (animRef.current) cancelAnimationFrame(animRef.current);
+      clearTimeout(blinkTimeout);
     };
   }, []);
 
@@ -2413,6 +2447,174 @@ function StatusDots({ ok }) {
       }} />
       <div style={{ width: 8, height: 8, backgroundColor: '#333' }} />
       <div style={{ width: 8, height: 8, backgroundColor: '#333' }} />
+    </div>
+  );
+}
+
+/* ── JulianScreen Embed ──────────────────────────────────────────────────── */
+
+function JulianScreenEmbed({ sessionActive, compact }) {
+  const containerRef = useRef(null);
+  const canvasRef = useRef(null);
+  const wsRef = useRef(null);
+  const reconnectRef = useRef(null);
+  const [connected, setConnected] = useState(false);
+  const [scale, setScale] = useState(1);
+
+  // Initialize JulianScreen on canvas mount
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !window.JScreen) return;
+    window.JScreen.init(canvas);
+    if (window.JScreen.initInput) {
+      window.JScreen.initInput(canvas);
+    }
+  }, []);
+
+  // WebSocket connection
+  useEffect(() => {
+    function connect() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = location.hostname === 'localhost'
+        ? 'ws://localhost:3848/ws'
+        : `${proto}//${location.host}/screen/ws`;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setConnected(true);
+        if (reconnectRef.current) {
+          clearInterval(reconnectRef.current);
+          reconnectRef.current = null;
+        }
+      };
+
+      ws.onmessage = (event) => {
+        if (!window.JScreen) return;
+        try {
+          const data = JSON.parse(event.data);
+          if (Array.isArray(data)) {
+            window.JScreen.enqueueCommands(data);
+          } else if (data.type) {
+            window.JScreen.enqueueCommands([data]);
+          }
+        } catch {}
+      };
+
+      ws.onclose = () => {
+        setConnected(false);
+        wsRef.current = null;
+        if (!reconnectRef.current) {
+          reconnectRef.current = setInterval(() => connect(), 2000);
+        }
+      };
+
+      ws.onerror = () => {
+        ws.close();
+      };
+    }
+
+    connect();
+    return () => {
+      if (reconnectRef.current) {
+        clearInterval(reconnectRef.current);
+        reconnectRef.current = null;
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+  }, []);
+
+  // Send sleeping avatar when connected but no session
+  useEffect(() => {
+    if (connected && !sessionActive && window.JScreen) {
+      const timer = setTimeout(() => {
+        window.JScreen.enqueueCommands([
+          { type: 'SCENE', scene: 'home' },
+          { type: 'POS', tx: 4, ty: 3 },
+          { type: 'STATE', state: 'sleeping' },
+        ]);
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [connected, sessionActive]);
+
+  // Resize handler: integer-scale the canvas
+  useEffect(() => {
+    const container = containerRef.current;
+    const canvas = canvasRef.current;
+    if (!container || !canvas) return;
+
+    function updateScale() {
+      const rect = container.getBoundingClientRect();
+      const sx = Math.floor(rect.width / 128);
+      const sy = Math.floor(rect.height / 96);
+      const s = Math.max(1, Math.min(sx, sy));
+      setScale(s);
+      canvas.style.width = (128 * s) + 'px';
+      canvas.style.height = (96 * s) + 'px';
+      if (window.JScreen) window.JScreen._scale = s;
+    }
+
+    updateScale();
+    const observer = new ResizeObserver(updateScale);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div style={{
+      position: 'relative',
+      aspectRatio: '4/3',
+      maxWidth: '100%',
+      maxHeight: '100%',
+      width: '100%',
+      background: '#0a0a0a',
+      border: '4px solid #2a2a2a',
+      borderRadius: 12,
+      overflow: 'hidden',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    }} ref={containerRef}>
+      {/* CRT scanline overlay */}
+      <div style={{
+        position: 'absolute',
+        inset: 0,
+        background: 'linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,0.1) 50%), linear-gradient(90deg, rgba(255,0,0,0.06), rgba(0,255,0,0.02), rgba(0,0,255,0.06))',
+        backgroundSize: '100% 2px, 3px 100%',
+        opacity: 0.08,
+        pointerEvents: 'none',
+        zIndex: 10,
+        borderRadius: 12,
+      }} />
+
+      {/* Connection status dot */}
+      <div style={{
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        width: 8,
+        height: 8,
+        borderRadius: '50%',
+        backgroundColor: connected ? '#FFD600' : '#444',
+        boxShadow: connected ? '0 0 6px #FFD600' : 'none',
+        zIndex: 20,
+      }} />
+
+      <canvas
+        ref={canvasRef}
+        id="screen"
+        width={128}
+        height={96}
+        style={{
+          imageRendering: 'pixelated',
+          width: 128 * scale,
+          height: 96 * scale,
+        }}
+      />
     </div>
   );
 }
@@ -2508,236 +2710,6 @@ function MessageBubble({ message }) {
           fontFamily: "'VT323', monospace",
           fontSize: '1.1rem',
         }}>_</span>
-      )}
-    </div>
-  );
-}
-
-/* ── Artifact Viewer (retro themed) ──────────────────────────────────────── */
-
-function ArtifactViewer({ activeArtifact, artifacts, onSelect, getAuthHeaders }) {
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const dropdownRef = useRef(null);
-
-  useEffect(() => {
-    function handleClick(e) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
-        setDropdownOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
-
-  return (
-    <div className="flex flex-col h-full" style={{
-      background: '#0F0F0F',
-      border: '4px solid #2a2a2a',
-      borderRadius: 12,
-      margin: 0,
-      overflow: 'hidden',
-      boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
-      position: 'relative',
-    }}>
-      {/* CRT overlay on artifact panel */}
-      <div style={{
-        position: 'absolute',
-        inset: 0,
-        background: 'linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,0.1) 50%), linear-gradient(90deg, rgba(255,0,0,0.06), rgba(0,255,0,0.02), rgba(0,0,255,0.06))',
-        backgroundSize: '100% 2px, 3px 100%',
-        opacity: 0.08,
-        pointerEvents: 'none',
-        zIndex: 20,
-        borderRadius: 12,
-      }} />
-
-      {/* Artifact header */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        padding: '10px 16px',
-        borderBottom: '1px dashed #333',
-        background: '#0F0F0F',
-        minHeight: 50,
-        position: 'relative',
-        zIndex: 10,
-      }}>
-        <span style={{
-          color: '#AA8800',
-          fontSize: '0.85rem',
-          fontFamily: "'VT323', monospace",
-          letterSpacing: '0.15em',
-        }}>
-          DISPLAY://
-        </span>
-
-        {/* Dropdown selector */}
-        <div style={{ position: 'relative', flex: 1 }} ref={dropdownRef}>
-          <button
-            onClick={() => setDropdownOpen(!dropdownOpen)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              width: '100%',
-              padding: '6px 12px',
-              background: '#1a1a00',
-              border: '2px solid #333',
-              borderRadius: 4,
-              color: activeArtifact ? '#FFD600' : '#666',
-              fontFamily: "'VT323', monospace",
-              fontSize: '1rem',
-              textAlign: 'left',
-              cursor: 'pointer',
-              textTransform: 'uppercase',
-            }}
-          >
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {activeArtifact || 'SELECT FILE...'}
-            </span>
-            <span style={{ color: '#666', fontSize: 10 }}>
-              {dropdownOpen ? '\u25B2' : '\u25BC'}
-            </span>
-          </button>
-
-          {dropdownOpen && artifacts.length > 0 && (
-            <div style={{
-              position: 'absolute',
-              top: '100%',
-              left: 0,
-              right: 0,
-              marginTop: 4,
-              background: '#0F0F0F',
-              border: '2px solid #333',
-              borderRadius: 4,
-              zIndex: 50,
-              maxHeight: 300,
-              overflowY: 'auto',
-            }}>
-              {artifacts.map(f => (
-                <button
-                  key={f.name}
-                  onClick={() => { onSelect(f.name); setDropdownOpen(false); }}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    textAlign: 'left',
-                    padding: '6px 12px',
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '1rem',
-                    color: f.name === activeArtifact ? '#FFD600' : '#AA8800',
-                    background: f.name === activeArtifact ? '#1a1a00' : 'transparent',
-                    border: 'none',
-                    borderBottom: '1px solid #1a1a1a',
-                    cursor: 'pointer',
-                    textTransform: 'uppercase',
-                  }}
-                  onMouseEnter={e => e.target.style.background = '#1a1a00'}
-                  onMouseLeave={e => e.target.style.background = f.name === activeArtifact ? '#1a1a00' : 'transparent'}
-                >
-                  {f.name}
-                  <span style={{ marginLeft: 8, color: '#444' }}>
-                    {new Date(f.modified).toLocaleDateString()}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Open in new tab */}
-        {activeArtifact && (
-          <a
-            href={'/' + encodeURIComponent(activeArtifact)}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 36,
-              height: 36,
-              borderRadius: '50%',
-              background: '#E5E5E5',
-              color: '#333',
-              border: '1px solid #999',
-              boxShadow: '0 3px 0 #999, 0 6px 8px rgba(0,0,0,0.15)',
-              textDecoration: 'none',
-              fontFamily: "'VT323', monospace",
-              fontSize: '1rem',
-              fontWeight: 700,
-              cursor: 'pointer',
-              flexShrink: 0,
-              transition: 'all 0.1s',
-            }}
-            title="OPEN IN NEW TAB"
-          >
-            &#8599;
-          </a>
-        )}
-      </div>
-
-      {/* iframe or empty state */}
-      {activeArtifact ? (
-        <iframe
-          key={activeArtifact}
-          src={'/' + encodeURIComponent(activeArtifact)}
-          style={{
-            flex: 1,
-            width: '100%',
-            border: 'none',
-            background: '#fff',
-            borderRadius: '0 0 8px 8px',
-          }}
-          title={activeArtifact}
-          sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
-        />
-      ) : (
-        <div style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 16,
-        }}>
-          {/* Decorative pixel grid pattern */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(8, 1fr)',
-            gap: 3,
-            opacity: 0.15,
-          }}>
-            {Array.from({ length: 64 }, (_, i) => (
-              <div key={i} style={{
-                width: 6,
-                height: 6,
-                backgroundColor: (i % 7 === 0 || i % 11 === 0) ? '#FFD600' : '#333',
-              }} />
-            ))}
-          </div>
-          <div style={{
-            fontFamily: "'VT323', monospace",
-            fontSize: '1.2rem',
-            color: '#444',
-            textAlign: 'center',
-            textTransform: 'uppercase',
-            letterSpacing: '0.1em',
-          }}>
-            {artifacts.length > 0
-              ? '> SELECT ARTIFACT TO DISPLAY'
-              : '> AWAITING ARTIFACT GENERATION'}
-          </div>
-          <div style={{
-            fontFamily: "'VT323', monospace",
-            fontSize: '0.9rem',
-            color: '#333',
-            textAlign: 'center',
-          }}>
-            JULIAN WILL CREATE ARTIFACTS HERE
-          </div>
-        </div>
       )}
     </div>
   );
@@ -3294,24 +3266,11 @@ function App() {
   const [wakingUp, setWakingUp] = useState(false);
   const messagesEndRef = useRef(null);
 
-  const [artifacts, setArtifacts] = useState([]);
-  const [activeArtifact, setActiveArtifact] = useState('');
-
-  // Register service worker + inject PWA meta tags
+  // Register service worker
   useEffect(() => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
-    const meta = (name, content) => {
-      const el = document.createElement('meta');
-      el.setAttribute('name', name);
-      el.setAttribute('content', content);
-      document.head.appendChild(el);
-    };
-    meta('theme-color', '#FFD600');
-    meta('mobile-web-app-capable', 'yes');
-    meta('apple-mobile-web-app-status-bar-style', 'black-translucent');
-    meta('apple-mobile-web-app-title', 'Julian');
   }, []);
 
   const getAuthHeaders = useCallback(async () => {
@@ -3331,18 +3290,6 @@ function App() {
       console.error('[Auth] Clerk getToken() error:', err);
       return null;
     }
-  }, []);
-
-  const refreshArtifacts = useCallback(async () => {
-    return [];
-  }, []);
-
-  const loadArtifact = useCallback(async (filename) => {
-    setArtifacts(prev => {
-      if (prev.some(f => f.name === filename)) return prev;
-      return [...prev, { name: filename, modified: Date.now(), size: 0 }];
-    });
-    setActiveArtifact(filename);
   }, []);
 
   useEffect(() => {
@@ -3424,7 +3371,7 @@ function App() {
     return msgs;
   }, [persistedMessages, liveAssistant]);
 
-  const hasMessages = displayMessages.length > 0;
+  const isMobile = useMobile();
 
   const sendMessage = useCallback(async (text) => {
     if (streaming) return;
@@ -3486,13 +3433,6 @@ function App() {
               const blocks = eventData.message.content.map(block => {
                 if (block.type === 'text') return { type: 'text', text: block.text };
                 if (block.type === 'tool_use') {
-                  if (block.name === 'Write' && block.input?.file_path) {
-                    const fp = block.input.file_path;
-                    const match = fp.match(/([^/]+\.html)$/);
-                    if (match && match[1] !== 'index.html') {
-                      setTimeout(() => loadArtifact(match[1]), 1500);
-                    }
-                  }
                   return { type: 'tool_use', name: block.name, input: block.input };
                 }
                 return block;
@@ -3507,7 +3447,9 @@ function App() {
               }
               setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
             }
-          } catch {}
+          } catch (parseErr) {
+            console.warn('[SSE] Failed to parse event:', parseErr, line);
+          }
         }
       }
     } catch (err) {
@@ -3528,7 +3470,7 @@ function App() {
     setLiveAssistant(null);
     setStreaming(false);
     setConnected(true);
-  }, [streaming, sessionActive, conversationId, database, getAuthHeaders, loadArtifact]);
+  }, [streaming, sessionActive, conversationId, database, getAuthHeaders]);
 
   const startSession = useCallback(async () => {
     if (wakingUp || sessionActive) return;
@@ -3595,13 +3537,6 @@ function App() {
               const blocks = eventData.message.content.map(block => {
                 if (block.type === 'text') return { type: 'text', text: block.text };
                 if (block.type === 'tool_use') {
-                  if (block.name === 'Write' && block.input?.file_path) {
-                    const fp = block.input.file_path;
-                    const match = fp.match(/([^/]+\.html)$/);
-                    if (match && match[1] !== 'index.html') {
-                      setTimeout(() => loadArtifact(match[1]), 1500);
-                    }
-                  }
                   return { type: 'tool_use', name: block.name, input: block.input };
                 }
                 return block;
@@ -3616,7 +3551,9 @@ function App() {
               }
               setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
             }
-          } catch {}
+          } catch (parseErr) {
+            console.warn('[SSE] Failed to parse wake-up event:', parseErr, line);
+          }
         }
       }
     } catch (err) {
@@ -3641,7 +3578,7 @@ function App() {
     setSessionActive(true);
     setConnected(true);
     setWakingUp(false);
-  }, [wakingUp, sessionActive, conversationId, database, getAuthHeaders, loadArtifact]);
+  }, [wakingUp, sessionActive, conversationId, database, getAuthHeaders]);
 
   const endSession = useCallback(async () => {
     try {
@@ -3757,165 +3694,139 @@ function App() {
           getAuthHeaders={getAuthHeaders}
           onComplete={() => { setSetupNeeded(false); setConnected(true); }}
         />
-      ) : !hasMessages ? (
-        /* ── Welcome Screen ── */
+      ) : isMobile ? (
+        /* ── Mobile: Three-section vertical stack ── */
         <div style={{
-          minHeight: '100vh',
           display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 16,
+          flexDirection: 'column',
+          height: '100vh',
           backgroundColor: '#FFD600',
+          overflow: 'hidden',
         }}>
-          <div style={{ width: '100%', maxWidth: 520, display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {/* Header panel */}
+          {/* Mobile header: PixelFace full-width */}
+          <div style={{
+            background: '#0F0F0F',
+            padding: '8px 12px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            borderBottom: '2px solid #2a2a2a',
+            flexShrink: 0,
+          }}>
+            <PixelFace talking={streaming} size={Math.min(window.innerWidth * 0.12, 48)} />
+            <div style={{ flex: 1 }}>
+              <div style={{
+                fontFamily: "'VT323', monospace",
+                fontSize: '1.2rem',
+                color: '#FFD600',
+                letterSpacing: '0.05em',
+              }}>JULIAN</div>
+              <div style={{
+                fontFamily: "'VT323', monospace",
+                fontSize: '0.75rem',
+                color: '#AA8800',
+                opacity: 0.6,
+              }}>
+                {!sessionActive ? 'OFFLINE' : streaming ? 'PROCESSING...' : wakingUp ? 'WAKING UP...' : 'LISTENING'}
+              </div>
+            </div>
+            <StatusDots ok={sessionActive} />
+            <button
+              onClick={startNewConversation}
+              style={{
+                fontFamily: "'VT323', monospace",
+                fontSize: '0.75rem',
+                color: '#AA8800',
+                background: '#1a1a00',
+                border: '1px solid #333',
+                borderRadius: 4,
+                padding: '3px 8px',
+                cursor: 'pointer',
+              }}
+            >NEW</button>
+            {sessionActive && (
+              <button
+                onClick={endSession}
+                style={{
+                  fontFamily: "'VT323', monospace",
+                  fontSize: '0.75rem',
+                  color: '#ff4444',
+                  background: '#1a0000',
+                  border: '1px solid #333',
+                  borderRadius: 4,
+                  padding: '3px 8px',
+                  cursor: 'pointer',
+                }}
+              >END</button>
+            )}
+          </div>
+
+          {/* Mobile screen: JulianScreen in 4:3 */}
+          <div style={{
+            padding: 8,
+            flexShrink: 0,
+          }}>
+            <JulianScreenEmbed sessionActive={sessionActive} compact />
+          </div>
+
+          {/* Mobile chat: messages + input */}
+          <div style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+            padding: '0 8px 8px',
+          }}>
             <div style={{
+              flex: 1,
               background: '#0F0F0F',
               border: '4px solid #2a2a2a',
-              borderBottom: '1px dashed #333',
               borderRadius: '12px 12px 0 0',
-              padding: 24,
-              boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
+              overflowY: 'auto',
+              padding: 12,
               position: 'relative',
             }}>
               <div style={{
-                position: 'absolute',
-                top: 12,
-                left: 16,
-                fontFamily: "'VT323', monospace",
-                fontSize: '0.85rem',
-                color: '#AA8800',
-                letterSpacing: '0.2em',
-              }}>
-                SYS.VER.2.4 // ENG
-              </div>
-              <div style={{ position: 'absolute', top: 14, right: 16 }}>
-                <StatusDots ok={sessionActive} />
-              </div>
-
-              <PixelFace talking={false} size={140} />
-
-              <div style={{
-                fontFamily: "'VT323', monospace",
-                fontSize: '0.9rem',
-                color: '#AA8800',
-                letterSpacing: '0.2em',
-                opacity: 0.6,
-                marginTop: 8,
-              }}>
-                STATUS: {sessionActive ? 'ONLINE' : 'OFFLINE'}
+                position: 'absolute', inset: 0,
+                background: 'linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,0.1) 50%), linear-gradient(90deg, rgba(255,0,0,0.06), rgba(0,255,0,0.02), rgba(0,0,255,0.06))',
+                backgroundSize: '100% 2px, 3px 100%',
+                opacity: 0.1, pointerEvents: 'none', zIndex: 5,
+              }} />
+              <div style={{ position: 'relative', zIndex: 1 }}>
+                {displayMessages.map(msg => (
+                  <MessageBubble key={msg.id} message={msg} />
+                ))}
+                <div ref={messagesEndRef} />
               </div>
             </div>
-
-            {/* Main panel */}
             <div style={{
               background: '#0F0F0F',
               border: '4px solid #2a2a2a',
-              borderTop: 'none',
+              borderTop: '1px dashed #333',
               borderRadius: '0 0 12px 12px',
-              padding: 24,
-              boxShadow: 'inset 0 -2px 10px rgba(0,0,0,0.5)',
+              padding: '0 12px',
+              flexShrink: 0,
             }}>
               {!sessionActive && !wakingUp ? (
-                <>
-                  <div style={{
+                <div style={{ padding: '10px 0', textAlign: 'center' }}>
+                  <button onClick={startSession} style={{
+                    padding: '8px 20px',
                     fontFamily: "'VT323', monospace",
-                    fontSize: '1.2rem',
-                    color: '#FFD600',
-                    textShadow: '0 0 2px #AA8800',
-                    marginBottom: 16,
-                  }}>
-                    {'>'} SYSTEM READY
-                  </div>
-                  <div style={{
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '1.1rem',
-                    color: '#888',
-                    lineHeight: 1.5,
-                    marginBottom: 20,
-                  }}>
-                    {'>'} JULIAN IS DORMANT. START A SESSION TO WAKE HIM UP.
-                  </div>
-                  <div style={{
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '0.9rem',
-                    color: '#444',
-                    display: 'flex',
-                    gap: 16,
-                    flexWrap: 'wrap',
-                    marginBottom: 16,
-                  }}>
-                    <span>[EPHEMERAL SESSION]</span>
-                    <span>[FIREPROOF SYNC]</span>
-                    <span>[SSE STREAMING]</span>
-                    <span>[15 MIN TIMEOUT]</span>
-                  </div>
-                  <button
-                    onClick={startSession}
-                    style={{
-                      width: '100%',
-                      padding: '14px 24px',
-                      fontFamily: "'VT323', monospace",
-                      fontSize: '1.3rem',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.15em',
-                      background: '#FFD600',
-                      color: '#000',
-                      border: '3px solid #000',
-                      borderRadius: 6,
-                      cursor: 'pointer',
-                      boxShadow: '4px 4px 0 #000',
-                      transition: 'all 0.1s',
-                    }}
-                  >
-                    START SESSION
-                  </button>
-                </>
-              ) : wakingUp ? (
-                <>
-                  <div style={{
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '1.2rem',
-                    color: '#FFD600',
-                    textShadow: '0 0 2px #AA8800',
-                    marginBottom: 16,
-                    animation: 'blink 1.5s step-end infinite',
-                  }}>
-                    {'>'} WAKING UP...
-                  </div>
-                </>
+                    fontSize: '1rem',
+                    textTransform: 'uppercase',
+                    background: '#FFD600', color: '#000',
+                    border: '2px solid #000', borderRadius: 4,
+                    cursor: 'pointer', boxShadow: '3px 3px 0 #000',
+                  }}>START SESSION</button>
+                </div>
               ) : (
-                <>
-                  <div style={{
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '1.2rem',
-                    color: '#FFD600',
-                    textShadow: '0 0 2px #AA8800',
-                    marginBottom: 16,
-                  }}>
-                    {'>'} SESSION ACTIVE
-                  </div>
-                  <div style={{
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '1.1rem',
-                    color: '#FFD600',
-                    textShadow: '0 0 2px #AA8800',
-                    lineHeight: 1.5,
-                    marginBottom: 20,
-                  }}>
-                    {'>'} HELLO. I AM JULIAN. USE THE INPUT BUFFER BELOW TO BEGIN.
-                  </div>
-                  <ChatInput onSend={sendMessage} disabled={streaming} />
-                </>
+                <ChatInput onSend={sendMessage} disabled={streaming || !sessionActive || wakingUp} />
               )}
             </div>
           </div>
         </div>
       ) : (
-        /* ── Two-Column Chat + Artifact Interface ── */
+        /* ── Desktop: Chat sidebar + JulianScreen ── */
         <div style={{
           display: 'flex',
           height: '100vh',
@@ -3965,9 +3876,7 @@ function App() {
                     fontSize: '1.4rem',
                     color: '#FFD600',
                     letterSpacing: '0.05em',
-                  }}>
-                    JULIAN
-                  </div>
+                  }}>JULIAN</div>
                   <div style={{
                     fontFamily: "'VT323', monospace",
                     fontSize: '0.85rem',
@@ -3990,9 +3899,7 @@ function App() {
                     cursor: 'pointer',
                     textTransform: 'uppercase',
                   }}
-                >
-                  NEW
-                </button>
+                >NEW</button>
                 {sessionActive && (
                   <button
                     onClick={endSession}
@@ -4007,14 +3914,12 @@ function App() {
                       cursor: 'pointer',
                       textTransform: 'uppercase',
                     }}
-                  >
-                    END
-                  </button>
+                  >END</button>
                 )}
               </div>
             </div>
 
-            {/* CRT overlay for chat area */}
+            {/* Chat messages area */}
             <div style={{
               flex: 1,
               background: '#0F0F0F',
@@ -4069,9 +3974,7 @@ function App() {
                       cursor: 'pointer',
                       boxShadow: '3px 3px 0 #000',
                     }}
-                  >
-                    START SESSION
-                  </button>
+                  >START SESSION</button>
                 </div>
               ) : (
                 <ChatInput onSend={sendMessage} disabled={streaming || !sessionActive || wakingUp} />
@@ -4079,14 +3982,15 @@ function App() {
             </div>
           </div>
 
-          {/* Right column: Artifact viewer */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <ArtifactViewer
-              activeArtifact={activeArtifact}
-              artifacts={artifacts}
-              onSelect={setActiveArtifact}
-              getAuthHeaders={getAuthHeaders}
-            />
+          {/* Right column: JulianScreen */}
+          <div style={{
+            flex: 1,
+            minWidth: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <JulianScreenEmbed sessionActive={sessionActive} />
           </div>
         </div>
       )}

@@ -1,1605 +1,929 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
-import { useFireproofClerk } from "use-fireproof";
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
-/* ── Utilities ───────────────────────────────────────────────────────────── */
+// ─── Fake JWT parts (base64url encoded) ───
+const FAKE_JWT_HEADER = btoa(JSON.stringify({ alg: "RS256", typ: "JWT", kid: "clerk-key-abc123" })).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+const FAKE_JWT_PAYLOAD = btoa(JSON.stringify({
+  sub: "user_2xK9mL",
+  iss: "https://internal-dingo-28.clerk.accounts.dev",
+  iat: Math.floor(Date.now() / 1000) - 300,
+  exp: Math.floor(Date.now() / 1000) + 3300,
+  name: "Marcus Estes",
+  email: "marcus@example.com",
+  azp: "julian.exe.xyz"
+})).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+const FAKE_JWT_SIGNATURE = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk_thcuN0eY-CxoRHvBJ8sMrnGsPYhp7PHecyOF9E_b2w";
+const FAKE_JWT = `${FAKE_JWT_HEADER}.${FAKE_JWT_PAYLOAD}.${FAKE_JWT_SIGNATURE}`;
 
-function escapeHtml(str) {
-  if (typeof str !== 'string') return '';
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-}
+// ─── Section IDs and titles ───
+const SECTIONS = [
+  { id: "tokens", title: "Tokens", num: 1 },
+  { id: "jwt", title: "JWT", num: 2 },
+  { id: "headers", title: "Headers", num: 3 },
+  { id: "bearer", title: "Bearer", num: 4 },
+  { id: "flow", title: "Auth Flow", num: 5 },
+  { id: "verify", title: "Verification", num: 6 },
+  { id: "ssl", title: "SSL", num: 7 },
+  { id: "workaround", title: "X-Auth", num: 8 },
+];
 
-function truncate(str, maxLen) {
-  if (typeof str !== 'string') return '';
-  return str.length <= maxLen ? str : str.slice(0, maxLen) + '\u2026';
-}
-
-function renderMarkdown(text) {
-  if (!text) return '';
-  let html = escapeHtml(text);
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
-    `<pre style="background:#1a1a00;border:1px solid #333;border-radius:4px;padding:8px 12px;overflow-x:auto;font-size:14px;line-height:1.5;margin:6px 0;color:#FFD600;font-family:'VT323',monospace"><code>${code.trim()}</code></pre>`
-  );
-  html = html.replace(/`([^`]+)`/g,
-    '<code style="background:#1a1a00;padding:1px 4px;border-radius:2px;font-size:0.95em;color:#FFD600">$1</code>');
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  html = html.replace(/\n/g, '<br>');
-  return html;
-}
-
-function formatToolInput(toolName, input) {
-  if (!input) return '';
-  if (typeof input === 'string') return escapeHtml(truncate(input, 300));
-  if (toolName === 'Read' && input.file_path) return escapeHtml(input.file_path);
-  if (toolName === 'Write' && input.file_path) return escapeHtml(input.file_path);
-  if (toolName === 'Edit' && input.file_path) return escapeHtml(input.file_path);
-  if (toolName === 'Bash' && input.command) return '$ ' + escapeHtml(truncate(input.command, 200));
-  if (toolName === 'Glob' && input.pattern) return escapeHtml(input.pattern);
-  if (toolName === 'Grep' && input.pattern) return escapeHtml(input.pattern);
-  try { return escapeHtml(truncate(JSON.stringify(input, null, 2), 300)); } catch { return ''; }
-}
-
-/* ── Pixel Face Canvas ───────────────────────────────────────────────────── */
-
-function PixelFace({ talking, size = 120 }) {
-  const canvasRef = useRef(null);
-  const stateRef = useRef({ talking: false, blinking: false });
-  const animRef = useRef(null);
-
-  useEffect(() => {
-    stateRef.current.talking = talking;
-  }, [talking]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-
-    const ON = '#FFD600';
-    const OFF = '#0F0F0F';
-
-    const eyeLeft = [
-      [8,10],[9,10],[10,10],
-      [7,11],[11,11],
-      [7,12],[11,12],[12,12],
-      [7,13],[8,13],[12,13],
-      [7,14],[12,14],
-      [8,15],[9,15],[10,15],[11,15]
-    ];
-    const eyeRight = [
-      [20,9],[21,9],[22,9],
-      [19,10],[23,10],
-      [19,11],[23,11],
-      [19,12],[23,12],
-      [19,13],[23,13],
-      [20,14],[21,14],[22,14]
-    ];
-    const mouthIdle = [
-      [6,20],
-      [6,21],[7,21],
-      [7,22],[8,22],
-      [8,23],[9,23],[10,23],[11,23],[12,23],[13,23],[14,23],[15,23],[16,23],[17,23],
-      [18,22],[19,22],
-      [20,21],[21,21],
-      [22,20],[23,20],[24,19]
-    ];
-    const mouthTalk1 = [
-      [10,20],[11,20],[12,20],[13,20],[14,20],
-      [9,21],[15,21],
-      [9,22],[15,22],
-      [9,23],[15,23],
-      [10,24],[11,24],[12,24],[13,24],[14,24]
-    ];
-    const mouthTalk2 = [
-      [11,22],[12,22],[13,22]
-    ];
-
-    function drawPixels(pixels) {
-      ctx.fillStyle = ON;
-      pixels.forEach(([x, y]) => ctx.fillRect(x, y, 1, 1));
-    }
-
-    function draw() {
-      ctx.fillStyle = OFF;
-      ctx.fillRect(0, 0, 32, 32);
-      if (!stateRef.current.blinking) {
-        drawPixels(eyeLeft);
-        drawPixels(eyeRight);
-      }
-      if (stateRef.current.talking) {
-        if (Math.floor(Date.now() / 150) % 2 === 0) {
-          drawPixels(mouthTalk1);
-        } else {
-          drawPixels(mouthTalk2);
-        }
-      } else {
-        drawPixels(mouthIdle);
-      }
-      animRef.current = requestAnimationFrame(draw);
-    }
-
-    draw();
-
-    function scheduleBlink() {
-      const delay = Math.random() * 3000 + 2000;
-      setTimeout(() => {
-        stateRef.current.blinking = true;
-        setTimeout(() => {
-          stateRef.current.blinking = false;
-          scheduleBlink();
-        }, 150);
-      }, delay);
-    }
-    scheduleBlink();
-
-    return () => {
-      if (animRef.current) cancelAnimationFrame(animRef.current);
-    };
-  }, []);
-
+// ─── Progress indicator ───
+function ProgressNav({ active }) {
   return (
-    <canvas
-      ref={canvasRef}
-      width={32}
-      height={32}
-      style={{
-        width: size,
-        height: size,
-        imageRendering: 'pixelated',
-      }}
-    />
-  );
-}
-
-/* ── Status indicator (retro) ─────────────────────────────────────────── */
-
-function StatusDots({ ok }) {
-  return (
-    <div className="flex gap-1 items-center">
-      <div style={{
-        width: 8, height: 8,
-        backgroundColor: ok ? '#FFD600' : '#333',
-        boxShadow: ok ? '0 0 5px #FFD600' : 'none',
-        animation: ok ? 'pulse-dot 2s ease-in-out infinite' : 'none',
-      }} />
-      <div style={{ width: 8, height: 8, backgroundColor: '#333' }} />
-      <div style={{ width: 8, height: 8, backgroundColor: '#333' }} />
-    </div>
-  );
-}
-
-/* ── Chat components ─────────────────────────────────────────────────────── */
-
-function ThinkingDots() {
-  return (
-    <div className="flex items-center gap-2" style={{ padding: '4px 0' }}>
-      <span style={{ color: '#FFD600', fontSize: '1.1rem', fontFamily: "'VT323', monospace" }}>
-        {'>'} PROCESSING
-      </span>
-      <span style={{
-        color: '#FFD600',
-        animation: 'blink 1s step-end infinite',
-        fontFamily: "'VT323', monospace",
-        fontSize: '1.1rem',
-      }}>_</span>
-    </div>
-  );
-}
-
-function ToolCallBlock({ name, input }) {
-  return (
-    <div style={{
-      margin: '4px 0',
-      padding: '4px 0',
-      borderLeft: '2px solid #AA8800',
-      paddingLeft: 8,
+    <nav style={{
+      position: "fixed", right: 24, top: "50%", transform: "translateY(-50%)",
+      display: "flex", flexDirection: "column", gap: 8, zIndex: 100,
     }}>
-      <div style={{
-        color: '#AA8800',
-        fontSize: '0.95rem',
-        fontFamily: "'VT323', monospace",
-        textTransform: 'uppercase',
-      }}>
-        [{name}]
-      </div>
-      <div style={{
-        color: '#666',
-        fontSize: '0.9rem',
-        fontFamily: "'VT323', monospace",
-      }}>
-        {formatToolInput(name, input)}
-      </div>
-    </div>
-  );
-}
-
-function MessageBubble({ message }) {
-  if (message.role === 'user') {
-    return (
-      <div style={{
-        padding: '4px 0',
-        fontSize: '1.1rem',
-        fontFamily: "'VT323', monospace",
-        color: '#fff',
-        opacity: 0.8,
-      }}>
-        <span style={{ color: '#666' }}>{'// '}</span>
-        {message.text}
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ padding: '4px 0' }}>
-      {message.thinking && <ThinkingDots />}
-      {message.blocks && message.blocks.map((block, i) => {
-        if (block.type === 'text') {
-          return (
-            <div key={i} style={{
-              fontSize: '1.1rem',
-              fontFamily: "'VT323', monospace",
-              color: '#FFD600',
-              textShadow: '0 0 2px #AA8800',
-              lineHeight: 1.4,
-            }}>
-              <span style={{ color: '#FFD600' }}>{'> '}</span>
-              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(block.text) }} />
-            </div>
-          );
-        }
-        if (block.type === 'tool_use') {
-          return <ToolCallBlock key={i} name={block.name} input={block.input} />;
-        }
-        return null;
-      })}
-      {message.streaming && !message.thinking && (
-        <span style={{
-          color: '#FFD600',
-          animation: 'blink 1s step-end infinite',
-          fontFamily: "'VT323', monospace",
-          fontSize: '1.1rem',
-        }}>_</span>
-      )}
-    </div>
-  );
-}
-
-/* ── Artifact Viewer (retro themed) ──────────────────────────────────────── */
-
-function ArtifactViewer({ activeArtifact, artifacts, onSelect, getAuthHeaders }) {
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const dropdownRef = useRef(null);
-
-  useEffect(() => {
-    function handleClick(e) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
-        setDropdownOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
-
-  return (
-    <div className="flex flex-col h-full" style={{
-      background: '#0F0F0F',
-      border: '4px solid #2a2a2a',
-      borderRadius: 12,
-      margin: 0,
-      overflow: 'hidden',
-      boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
-      position: 'relative',
-    }}>
-      {/* CRT overlay on artifact panel */}
-      <div style={{
-        position: 'absolute',
-        inset: 0,
-        background: 'linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,0.1) 50%), linear-gradient(90deg, rgba(255,0,0,0.06), rgba(0,255,0,0.02), rgba(0,0,255,0.06))',
-        backgroundSize: '100% 2px, 3px 100%',
-        opacity: 0.08,
-        pointerEvents: 'none',
-        zIndex: 20,
-        borderRadius: 12,
-      }} />
-
-      {/* Artifact header */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        padding: '10px 16px',
-        borderBottom: '1px dashed #333',
-        background: '#0F0F0F',
-        minHeight: 50,
-        position: 'relative',
-        zIndex: 10,
-      }}>
-        <span style={{
-          color: '#AA8800',
-          fontSize: '0.85rem',
-          fontFamily: "'VT323', monospace",
-          letterSpacing: '0.15em',
-        }}>
-          DISPLAY://
-        </span>
-
-        {/* Dropdown selector */}
-        <div style={{ position: 'relative', flex: 1 }} ref={dropdownRef}>
-          <button
-            onClick={() => setDropdownOpen(!dropdownOpen)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              width: '100%',
-              padding: '6px 12px',
-              background: '#1a1a00',
-              border: '2px solid #333',
-              borderRadius: 4,
-              color: activeArtifact ? '#FFD600' : '#666',
-              fontFamily: "'VT323', monospace",
-              fontSize: '1rem',
-              textAlign: 'left',
-              cursor: 'pointer',
-              textTransform: 'uppercase',
-            }}
-          >
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {activeArtifact || 'SELECT FILE...'}
-            </span>
-            <span style={{ color: '#666', fontSize: 10 }}>
-              {dropdownOpen ? '\u25B2' : '\u25BC'}
-            </span>
-          </button>
-
-          {dropdownOpen && artifacts.length > 0 && (
-            <div style={{
-              position: 'absolute',
-              top: '100%',
-              left: 0,
-              right: 0,
-              marginTop: 4,
-              background: '#0F0F0F',
-              border: '2px solid #333',
-              borderRadius: 4,
-              zIndex: 50,
-              maxHeight: 300,
-              overflowY: 'auto',
-            }}>
-              {artifacts.map(f => (
-                <button
-                  key={f.name}
-                  onClick={() => { onSelect(f.name); setDropdownOpen(false); }}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    textAlign: 'left',
-                    padding: '6px 12px',
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '1rem',
-                    color: f.name === activeArtifact ? '#FFD600' : '#AA8800',
-                    background: f.name === activeArtifact ? '#1a1a00' : 'transparent',
-                    border: 'none',
-                    borderBottom: '1px solid #1a1a1a',
-                    cursor: 'pointer',
-                    textTransform: 'uppercase',
-                  }}
-                  onMouseEnter={e => e.target.style.background = '#1a1a00'}
-                  onMouseLeave={e => e.target.style.background = f.name === activeArtifact ? '#1a1a00' : 'transparent'}
-                >
-                  {f.name}
-                  <span style={{ marginLeft: 8, color: '#444' }}>
-                    {new Date(f.modified).toLocaleDateString()}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Open in new tab */}
-        {activeArtifact && (
-          <a
-            href={'/api/artifacts/' + encodeURIComponent(activeArtifact)}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 36,
-              height: 36,
-              borderRadius: '50%',
-              background: '#E5E5E5',
-              color: '#333',
-              border: '1px solid #999',
-              boxShadow: '0 3px 0 #999, 0 6px 8px rgba(0,0,0,0.15)',
-              textDecoration: 'none',
-              fontFamily: "'VT323', monospace",
-              fontSize: '1rem',
-              fontWeight: 700,
-              cursor: 'pointer',
-              flexShrink: 0,
-              transition: 'all 0.1s',
-            }}
-            title="OPEN IN NEW TAB"
-          >
-            &#8599;
-          </a>
-        )}
-      </div>
-
-      {/* iframe or empty state */}
-      {activeArtifact ? (
-        <iframe
-          key={activeArtifact}
-          src={'/api/artifacts/' + encodeURIComponent(activeArtifact)}
+      {SECTIONS.map((s) => (
+        <a
+          key={s.id}
+          href={`#${s.id}`}
+          title={s.title}
           style={{
-            flex: 1,
-            width: '100%',
-            border: 'none',
-            background: '#fff',
-            borderRadius: '0 0 8px 8px',
+            width: 10, height: 10, borderRadius: "50%",
+            background: active === s.id ? "#f97316" : "rgba(255,255,255,0.15)",
+            border: active === s.id ? "2px solid #fb923c" : "2px solid rgba(255,255,255,0.08)",
+            transition: "all 0.3s",
+            display: "block",
           }}
-          title={activeArtifact}
-          sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
         />
-      ) : (
-        <div style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 16,
-        }}>
-          {/* Decorative pixel grid pattern */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(8, 1fr)',
-            gap: 3,
-            opacity: 0.15,
-          }}>
-            {Array.from({ length: 64 }, (_, i) => (
-              <div key={i} style={{
-                width: 6,
-                height: 6,
-                backgroundColor: (i % 7 === 0 || i % 11 === 0) ? '#FFD600' : '#333',
-              }} />
-            ))}
-          </div>
-          <div style={{
-            fontFamily: "'VT323', monospace",
-            fontSize: '1.2rem',
-            color: '#444',
-            textAlign: 'center',
-            textTransform: 'uppercase',
-            letterSpacing: '0.1em',
-          }}>
-            {artifacts.length > 0
-              ? '> SELECT ARTIFACT TO DISPLAY'
-              : '> AWAITING ARTIFACT GENERATION'}
-          </div>
-          <div style={{
-            fontFamily: "'VT323', monospace",
-            fontSize: '0.9rem',
-            color: '#333',
-            textAlign: 'center',
-          }}>
-            JULIAN WILL CREATE ARTIFACTS HERE
-          </div>
-        </div>
+      ))}
+    </nav>
+  );
+}
+
+// ─── Reusable section wrapper ───
+function Section({ id, num, title, subtitle, children }) {
+  return (
+    <section
+      id={id}
+      style={{
+        minHeight: "100vh",
+        display: "flex", flexDirection: "column", justifyContent: "center",
+        padding: "80px 24px",
+        maxWidth: 780, margin: "0 auto",
+      }}
+    >
+      <div style={{ marginBottom: 12, color: "#f97316", fontFamily: "JetBrains Mono, monospace", fontSize: 13, letterSpacing: 2 }}>
+        PART {num}
+      </div>
+      <h2 style={{ fontSize: "clamp(28px, 5vw, 42px)", fontWeight: 700, margin: "0 0 8px", lineHeight: 1.15 }}>
+        {title}
+      </h2>
+      {subtitle && (
+        <p style={{ fontSize: 17, color: "#94a3b8", margin: "0 0 40px", lineHeight: 1.6 }}>{subtitle}</p>
       )}
+      <div style={{ fontSize: 16, lineHeight: 1.75, color: "#cbd5e1" }}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+// ─── Code block helper ───
+function Code({ children, style }) {
+  return (
+    <pre style={{
+      background: "#0f172a", border: "1px solid rgba(255,255,255,0.06)",
+      borderRadius: 10, padding: "20px 24px", overflowX: "auto",
+      fontFamily: "JetBrains Mono, monospace", fontSize: 13.5, lineHeight: 1.7,
+      margin: "20px 0", color: "#e2e8f0", ...style,
+    }}>
+      {children}
+    </pre>
+  );
+}
+
+// ─── Callout box ───
+function Callout({ emoji, children }) {
+  return (
+    <div style={{
+      background: "rgba(249,115,22,0.06)", border: "1px solid rgba(249,115,22,0.15)",
+      borderRadius: 10, padding: "16px 20px", margin: "20px 0",
+      display: "flex", gap: 14, alignItems: "flex-start",
+    }}>
+      <span style={{ fontSize: 22, flexShrink: 0, lineHeight: 1.5 }}>{emoji}</span>
+      <div style={{ lineHeight: 1.65 }}>{children}</div>
     </div>
   );
 }
 
-/* ── Setup Screen (tabbed: OAuth-first / legacy fallback) ────────────────── */
+// ─── Interactive button ───
+function Btn({ onClick, children, active, style }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        background: active ? "#f97316" : "rgba(255,255,255,0.06)",
+        color: active ? "#0f172a" : "#e2e8f0",
+        border: "1px solid " + (active ? "#f97316" : "rgba(255,255,255,0.1)"),
+        borderRadius: 8, padding: "8px 18px", cursor: "pointer",
+        fontFamily: "Inter, sans-serif", fontSize: 14, fontWeight: 500,
+        transition: "all 0.2s", ...style,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
 
-function SetupScreen({ onComplete, getAuthHeaders }) {
-  const [tab, setTab] = useState('oauth'); // 'oauth' | 'legacy'
-
-  // OAuth state
-  const [oauthStep, setOauthStep] = useState(1); // 1 = click button, 2 = paste code
-  const [oauthState, setOauthState] = useState('');
-  const [oauthCode, setOauthCode] = useState('');
-  const [oauthStatus, setOauthStatus] = useState('idle');
-  const [oauthError, setOauthError] = useState('');
-
-  // Legacy state
-  const [token, setToken] = useState('');
-  const [legacyStatus, setLegacyStatus] = useState('idle');
-  const [legacyError, setLegacyError] = useState('');
-
-  // Poll health until process is alive
-  const pollUntilAlive = useCallback(async () => {
-    for (let i = 0; i < 20; i++) {
-      await new Promise(r => setTimeout(r, 1000));
-      try {
-        const h = await getAuthHeaders();
-        const hr = await fetch('/api/health', { headers: h });
-        const hd = await hr.json();
-        if (hd.processAlive && !hd.needsSetup) {
-          onComplete();
-          return true;
-        }
-      } catch {}
-    }
-    return false;
-  }, [getAuthHeaders, onComplete]);
-
-  // OAuth: start flow
-  const handleOAuthStart = useCallback(async () => {
-    setOauthStatus('starting');
-    setOauthError('');
-    try {
-      const headers = await getAuthHeaders();
-      if (!headers) { setOauthError('NOT AUTHENTICATED. RELOAD PAGE.'); setOauthStatus('error'); return; }
-      const res = await fetch('/api/oauth/start', { headers });
-      const data = await res.json();
-      if (!res.ok) {
-        setOauthError(data.error || 'FAILED TO START OAUTH');
-        setOauthStatus('error');
-        return;
-      }
-      setOauthState(data.state);
-      window.open(data.authUrl, '_blank', 'noopener');
-      setOauthStep(2);
-      setOauthStatus('idle');
-    } catch (err) {
-      setOauthError('CONNECTION ERROR: ' + err.message);
-      setOauthStatus('error');
-    }
-  }, [getAuthHeaders]);
-
-  // OAuth: exchange code
-  const handleOAuthExchange = useCallback(async () => {
-    const code = oauthCode.trim();
-    if (!code || !oauthState) return;
-    setOauthStatus('exchanging');
-    setOauthError('');
-    try {
-      const headers = await getAuthHeaders();
-      if (!headers) { setOauthError('NOT AUTHENTICATED. RELOAD PAGE.'); setOauthStatus('error'); return; }
-      const res = await fetch('/api/oauth/exchange', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ code, state: oauthState }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        if (data.error?.includes('expired state') || data.error?.includes('Invalid or expired')) {
-          setOauthStep(1);
-          setOauthCode('');
-          setOauthError('SESSION EXPIRED. PLEASE START OVER.');
-          setOauthStatus('idle');
-        } else {
-          setOauthError(data.error || 'TOKEN EXCHANGE FAILED');
-          setOauthStatus('error');
-        }
-        return;
-      }
-      setOauthStatus('polling');
-      const alive = await pollUntilAlive();
-      if (!alive) {
-        setOauthError('CLAUDE PROCESS DID NOT START. CHECK SERVER LOGS.');
-        setOauthStatus('error');
-      }
-    } catch (err) {
-      setOauthError('CONNECTION ERROR: ' + err.message);
-      setOauthStatus('error');
-    }
-  }, [oauthCode, oauthState, getAuthHeaders, pollUntilAlive]);
-
-  // Legacy: paste token
-  const handleLegacyConnect = useCallback(async () => {
-    const trimmed = token.replace(/\s+/g, '');
-    if (!trimmed) return;
-    if (!trimmed.startsWith('sk-ant-oat')) {
-      setLegacyError('TOKEN MUST START WITH sk-ant-oat (RUN claude setup-token)');
-      return;
-    }
-    setLegacyStatus('loading');
-    setLegacyError('');
-    try {
-      const headers = await getAuthHeaders();
-      if (!headers) { setLegacyError('NOT AUTHENTICATED. RELOAD PAGE.'); setLegacyStatus('error'); return; }
-      const res = await fetch('/api/setup', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ token: trimmed }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setLegacyError(data.error || 'SETUP FAILED');
-        setLegacyStatus('error');
-        return;
-      }
-      setLegacyStatus('polling');
-      const alive = await pollUntilAlive();
-      if (!alive) {
-        setLegacyError('CLAUDE PROCESS DID NOT START. CHECK SERVER LOGS.');
-        setLegacyStatus('error');
-      }
-    } catch (err) {
-      setLegacyError('CONNECTION ERROR: ' + err.message);
-      setLegacyStatus('error');
-    }
-  }, [token, getAuthHeaders, pollUntilAlive]);
-
-  const oauthLoading = oauthStatus === 'starting' || oauthStatus === 'exchanging' || oauthStatus === 'polling';
-  const legacyLoading = legacyStatus === 'loading' || legacyStatus === 'polling';
-
-  const tabStyle = (active) => ({
-    flex: 1,
-    padding: '10px 0',
-    fontFamily: "'VT323', monospace",
-    fontSize: '1.1rem',
-    textTransform: 'uppercase',
-    letterSpacing: '0.1em',
-    cursor: 'pointer',
-    border: 'none',
-    borderBottom: active ? '2px solid #FFD600' : '2px solid transparent',
-    background: 'transparent',
-    color: active ? '#FFD600' : '#666',
-    transition: 'color 0.15s, border-color 0.15s',
-  });
+// ════════════════════════════════════════
+// SECTION 1: What is a Token?
+// ════════════════════════════════════════
+function TokenSection() {
+  const [name, setName] = useState("Marcus");
+  const [role, setRole] = useState("admin");
+  const token = btoa(JSON.stringify({ name, role, issued: new Date().toISOString().slice(0, 19) }));
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: 24,
-      backgroundColor: '#FFD600',
-    }}>
-      <div style={{ width: '100%', maxWidth: 480, display: 'flex', flexDirection: 'column', gap: 20 }}>
-        <div style={{ textAlign: 'center' }}>
-          <PixelFace talking={false} size={100} />
-          <h1 style={{
-            fontFamily: "'VT323', monospace",
-            fontSize: '2rem',
-            color: '#000',
-            marginTop: 16,
-            textTransform: 'uppercase',
-            letterSpacing: '0.15em',
-          }}>
-            CONNECT TO CLAUDE
-          </h1>
-          <p style={{
-            fontFamily: "'VT323', monospace",
-            fontSize: '1.1rem',
-            color: '#555',
-            marginTop: 4,
-          }}>
-            ONE-TIME SETUP TO LINK YOUR ACCOUNT
+    <Section id="tokens" num={1} title="What is a Token?" subtitle="The simplest idea in auth: proving who you are without saying your password every time.">
+      <p>
+        Imagine you walk up to a concert venue. You show your ticket at the door, they check your name against the list,
+        and they slap a <strong style={{ color: "#f97316" }}>wristband</strong> on you. From that point on, nobody asks
+        for your ticket again. The wristband <em>is</em> your proof. You flash it at the bar, at the VIP section, at the
+        merch table. Everyone trusts the wristband.
+      </p>
+      <p style={{ marginTop: 16 }}>
+        A <strong>token</strong> is the digital version of that wristband. When you log in to a website, the server checks your
+        password <em>once</em>, then hands you back a token — a long string of characters. Your browser stores it and sends
+        it along with every future request. The server sees the token and knows who you are without checking your password again.
+      </p>
+
+      <Callout emoji="&#127915;">
+        <strong>Token = wristband.</strong> You prove your identity once (password), then carry a lightweight proof (token) for everything after.
+      </Callout>
+
+      <p style={{ marginTop: 24, marginBottom: 12, fontWeight: 600, color: "#f8fafc" }}>Try it: build a simple token</p>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "#94a3b8" }}>
+          Name
+          <input
+            value={name}
+            onChange={e => setName(e.target.value)}
+            style={{
+              background: "#0f172a", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6,
+              padding: "8px 12px", color: "#e2e8f0", fontFamily: "JetBrains Mono, monospace", fontSize: 14, width: 160,
+            }}
+          />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "#94a3b8" }}>
+          Role
+          <select
+            value={role}
+            onChange={e => setRole(e.target.value)}
+            style={{
+              background: "#0f172a", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6,
+              padding: "8px 12px", color: "#e2e8f0", fontFamily: "Inter, sans-serif", fontSize: 14,
+            }}
+          >
+            <option value="admin">admin</option>
+            <option value="user">user</option>
+            <option value="guest">guest</option>
+          </select>
+        </label>
+      </div>
+      <Code>
+        <span style={{ color: "#64748b" }}>// Your identity, encoded as a base64 string:</span>{"\n"}
+        <span style={{ color: "#f97316", wordBreak: "break-all" }}>{token}</span>{"\n\n"}
+        <span style={{ color: "#64748b" }}>// Which decodes to:</span>{"\n"}
+        <span style={{ color: "#a5f3fc" }}>{JSON.stringify({ name, role, issued: new Date().toISOString().slice(0, 19) }, null, 2)}</span>
+      </Code>
+      <p style={{ fontSize: 14, color: "#64748b" }}>
+        This is just base64 — anyone can decode it. That's the problem a JWT solves. Keep scrolling.
+      </p>
+    </Section>
+  );
+}
+
+// ════════════════════════════════════════
+// SECTION 2: What is a JWT?
+// ════════════════════════════════════════
+function JWTSection() {
+  const [selected, setSelected] = useState(null);
+
+  const parts = [
+    {
+      label: "Header", color: "#ef4444", segment: FAKE_JWT_HEADER,
+      decoded: JSON.stringify({ alg: "RS256", typ: "JWT", kid: "clerk-key-abc123" }, null, 2),
+      explain: "The header says what algorithm was used to sign this token. RS256 means RSA with SHA-256 — asymmetric crypto. The 'kid' (key ID) tells the server which public key to use for verification.",
+    },
+    {
+      label: "Payload", color: "#a855f7", segment: FAKE_JWT_PAYLOAD,
+      decoded: JSON.stringify({
+        sub: "user_2xK9mL",
+        iss: "https://internal-dingo-28.clerk.accounts.dev",
+        iat: "1739500000 (when it was issued)",
+        exp: "1739503600 (when it expires)",
+        name: "Marcus Estes",
+        email: "marcus@example.com",
+        azp: "julian.exe.xyz",
+      }, null, 2),
+      explain: "The payload is your identity — who you are, who issued the token, when it expires. 'sub' is your user ID. 'iss' is the issuer (Clerk). 'exp' is the expiration timestamp. All of this is readable by anyone — it's just base64, not encrypted.",
+    },
+    {
+      label: "Signature", color: "#22c55e", segment: FAKE_JWT_SIGNATURE,
+      decoded: "(binary cryptographic signature — not human-readable)",
+      explain: "The signature is what makes a JWT trustworthy. The issuer takes the header + payload, hashes them with SHA-256, then signs the hash with their private key. The server can verify this signature using the issuer's public key. If anyone changes even one character in the header or payload, the signature won't match, and the server rejects the token.",
+    },
+  ];
+
+  return (
+    <Section id="jwt" num={2} title="What is a JWT?" subtitle="A JSON Web Token: three pieces separated by dots. Click each piece to see inside.">
+      <p>
+        JWT stands for <strong>JSON Web Token</strong> (pronounced "jot"). It's a specific <em>format</em> for tokens
+        that solves the problem from Part 1: how does the server know the token hasn't been tampered with?
+      </p>
+      <p style={{ marginTop: 12 }}>A JWT has three parts, separated by dots:</p>
+
+      {/* Interactive JWT string */}
+      <div style={{
+        background: "#0f172a", borderRadius: 12, padding: 24, margin: "24px 0",
+        border: "1px solid rgba(255,255,255,0.06)", overflowX: "auto",
+      }}>
+        <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 14, wordBreak: "break-all", lineHeight: 2 }}>
+          {parts.map((p, i) => (
+            <React.Fragment key={p.label}>
+              {i > 0 && <span style={{ color: "#475569" }}>.</span>}
+              <span
+                onClick={() => setSelected(selected === i ? null : i)}
+                style={{
+                  color: selected === i ? p.color : (selected === null ? p.color : "#334155"),
+                  cursor: "pointer",
+                  textDecoration: selected === i ? "underline" : "none",
+                  textDecorationColor: p.color,
+                  textUnderlineOffset: 4,
+                  transition: "all 0.3s",
+                  filter: selected !== null && selected !== i ? "brightness(0.4)" : "none",
+                }}
+              >
+                {p.segment}
+              </span>
+            </React.Fragment>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 20, marginTop: 16 }}>
+          {parts.map((p, i) => (
+            <span
+              key={p.label}
+              onClick={() => setSelected(selected === i ? null : i)}
+              style={{
+                fontSize: 12, fontWeight: 600, color: p.color, cursor: "pointer",
+                opacity: selected !== null && selected !== i ? 0.3 : 1,
+                transition: "opacity 0.3s", fontFamily: "JetBrains Mono, monospace",
+              }}
+            >
+              {p.label}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Decoded view */}
+      {selected !== null && (
+        <div style={{
+          background: `${parts[selected].color}08`,
+          border: `1px solid ${parts[selected].color}30`,
+          borderRadius: 12, padding: 24, margin: "0 0 24px",
+          animation: "fadeIn 0.3s ease",
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: parts[selected].color, marginBottom: 8 }}>
+            {parts[selected].label} — decoded
+          </div>
+          <Code style={{ margin: "12px 0", fontSize: 13 }}>
+            {parts[selected].decoded}
+          </Code>
+          <p style={{ fontSize: 14, color: "#94a3b8", margin: 0, lineHeight: 1.65 }}>
+            {parts[selected].explain}
           </p>
         </div>
+      )}
 
-        <div style={{
-          background: '#0F0F0F',
-          border: '4px solid #2a2a2a',
-          borderRadius: 12,
-          boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
-          display: 'flex',
-          flexDirection: 'column',
+      <Callout emoji="&#128273;">
+        The key insight: the header and payload are <strong>not encrypted</strong> — anyone can read them. The <span style={{ color: "#22c55e" }}>signature</span> just proves they haven't been changed since the issuer created the token.
+      </Callout>
+    </Section>
+  );
+}
+
+// ════════════════════════════════════════
+// SECTION 3: HTTP Headers
+// ════════════════════════════════════════
+function HeadersSection() {
+  const [headers, setHeaders] = useState({
+    "Content-Type": true,
+    "Authorization": true,
+    "Accept": false,
+    "User-Agent": false,
+  });
+
+  const headerValues = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer eyJhbGciOi...",
+    "Accept": "text/html, application/json",
+    "User-Agent": "Mozilla/5.0 (Macintosh; ...)",
+  };
+
+  const toggle = (key) => setHeaders(h => ({ ...h, [key]: !h[key] }));
+
+  return (
+    <Section id="headers" num={3} title="What are HTTP Headers?" subtitle="Every web request is like a letter. Headers are what's written on the envelope.">
+      <p>
+        When your browser talks to a server, it sends an <strong>HTTP request</strong>. Think of it like mailing a letter.
+        The letter itself (the <em>body</em>) is the content — a form submission, a JSON message, whatever. But the
+        <strong style={{ color: "#f97316" }}> envelope</strong> has metadata written on it: who it's from, what language it's in,
+        what format the contents are.
+      </p>
+      <p style={{ marginTop: 12 }}>
+        These metadata fields are called <strong>headers</strong>. They're key-value pairs sent <em>before</em> the body.
+        The server reads them to understand the request before it even looks at the content.
+      </p>
+
+      <p style={{ marginTop: 28, marginBottom: 12, fontWeight: 600, color: "#f8fafc" }}>Toggle headers on/off to see how a request changes:</p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+        {Object.keys(headers).map(h => (
+          <Btn key={h} active={headers[h]} onClick={() => toggle(h)}>
+            {headers[h] ? "\u2713 " : ""}{h}
+          </Btn>
+        ))}
+      </div>
+
+      <Code>
+        <span style={{ color: "#22c55e" }}>POST</span> <span style={{ color: "#f8fafc" }}>/api/chat</span> <span style={{ color: "#64748b" }}>HTTP/1.1</span>{"\n"}
+        <span style={{ color: "#64748b" }}>Host: julian.exe.xyz</span>{"\n"}
+        {Object.entries(headers).filter(([, v]) => v).map(([k]) => (
+          <React.Fragment key={k}>
+            <span style={{ color: k === "Authorization" ? "#f97316" : "#93c5fd" }}>{k}</span>
+            <span style={{ color: "#64748b" }}>: </span>
+            <span style={{ color: "#e2e8f0" }}>{headerValues[k]}</span>{"\n"}
+          </React.Fragment>
+        ))}
+        {"\n"}
+        <span style={{ color: "#64748b" }}>{"{"} "message": "Hello, Julian" {"}"}</span>
+      </Code>
+
+      <Callout emoji="&#128236;">
+        The <span style={{ color: "#f97316" }}>Authorization</span> header is just another envelope field — but it's the one that carries your token. That's how the server knows who's knocking.
+      </Callout>
+    </Section>
+  );
+}
+
+// ════════════════════════════════════════
+// SECTION 4: Bearer Token Pattern
+// ════════════════════════════════════════
+function BearerSection() {
+  const [dropped, setDropped] = useState(false);
+
+  return (
+    <Section id="bearer" num={4} title="Bearer Authentication" subtitle="The word 'Bearer' just means: whoever bears this token, trust them.">
+      <p>
+        There are many ways to send auth info in a request — cookies, query parameters, custom headers.
+        But the standard way for APIs is the <strong>Authorization header</strong> with a <strong>Bearer</strong> scheme:
+      </p>
+      <Code>
+        Authorization: Bearer {"<"}your-jwt-token-here{">"}
+      </Code>
+      <p>
+        "Bearer" literally means "the bearer of this token." It's a convention defined in{" "}
+        <span style={{ color: "#94a3b8" }}>RFC 6750</span>. The server doesn't care <em>who</em> sent the request —
+        if the token is valid, the request is authorized. Just like the concert wristband: whoever is wearing it gets in.
+      </p>
+
+      <p style={{ marginTop: 28, marginBottom: 12, fontWeight: 600, color: "#f8fafc" }}>
+        Try it: click the token to place it in the header
+      </p>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* Token */}
+        <div
+          onClick={() => setDropped(!dropped)}
+          style={{
+            background: dropped ? "rgba(249,115,22,0.08)" : "#0f172a",
+            border: `1px dashed ${dropped ? "#f9731640" : "#f97316"}`,
+            borderRadius: 8, padding: "12px 16px", cursor: "pointer",
+            fontFamily: "JetBrains Mono, monospace", fontSize: 12,
+            color: dropped ? "#64748b" : "#f97316",
+            textAlign: "center", transition: "all 0.4s",
+            textDecoration: dropped ? "line-through" : "none",
+          }}
+        >
+          {dropped ? "(token moved to header)" : "eyJhbGciOiJSUzI1NiIs... (click to use)"}
+        </div>
+
+        {/* Request */}
+        <Code style={{
+          borderColor: dropped ? "rgba(249,115,22,0.2)" : "rgba(255,255,255,0.06)",
+          transition: "border-color 0.4s",
         }}>
-          {/* Tabs */}
-          <div style={{ display: 'flex', borderBottom: '1px solid #2a2a2a' }}>
-            <button onClick={() => setTab('oauth')} style={tabStyle(tab === 'oauth')}>
-              Sign in with Anthropic
-            </button>
-            <button onClick={() => setTab('legacy')} style={tabStyle(tab === 'legacy')}>
-              Paste Token
-            </button>
+          <span style={{ color: "#22c55e" }}>POST</span> <span style={{ color: "#f8fafc" }}>/api/chat</span>{"\n"}
+          <span style={{ color: "#93c5fd" }}>Content-Type</span><span style={{ color: "#64748b" }}>: application/json</span>{"\n"}
+          <span style={{ color: "#f97316" }}>Authorization</span><span style={{ color: "#64748b" }}>: Bearer </span>
+          {dropped ? (
+            <span style={{ color: "#f97316", animation: "fadeIn 0.5s ease" }}>eyJhbGciOiJSUzI1NiIs...</span>
+          ) : (
+            <span style={{ color: "#334155" }}>____________</span>
+          )}{"\n\n"}
+          <span style={{ color: "#64748b" }}>{"{"} "message": "Hello" {"}"}</span>
+        </Code>
+      </div>
+
+      {dropped && (
+        <Callout emoji="&#9989;">
+          That's the whole pattern. Every request from the browser includes this header. The server extracts the token after "Bearer ", decodes the JWT, verifies the signature, and now it knows you're <strong>user_2xK9mL</strong> (Marcus) without ever asking for a password.
+        </Callout>
+      )}
+    </Section>
+  );
+}
+
+// ════════════════════════════════════════
+// SECTION 5: The Auth Flow
+// ════════════════════════════════════════
+function FlowSection() {
+  const [step, setStep] = useState(0);
+
+  const steps = [
+    {
+      title: "User opens the page",
+      left: "Browser", right: "Server",
+      arrow: "\u2192",
+      detail: "GET / — the browser requests the page. No token yet. No identity.",
+      leftIcon: "\uD83D\uDCBB", rightIcon: "\uD83C\uDF10",
+    },
+    {
+      title: "User signs in via Clerk",
+      left: "Browser", right: "Clerk",
+      arrow: "\u2192",
+      detail: "A modal pops up. The user enters their email and password (or uses OAuth). Clerk handles the authentication and returns a session.",
+      leftIcon: "\uD83D\uDCBB", rightIcon: "\uD83D\uDD10",
+    },
+    {
+      title: "Clerk issues a JWT",
+      left: "Clerk", right: "Browser",
+      arrow: "\u2192",
+      detail: "Clerk signs a JWT with its private key and sends it to the browser. The payload contains the user's ID, email, and expiration time. The browser stores it in memory.",
+      leftIcon: "\uD83D\uDD10", rightIcon: "\uD83D\uDCBB",
+    },
+    {
+      title: "Browser makes an API call",
+      left: "Browser", right: "Server",
+      arrow: "\u2192",
+      detail: "POST /api/chat with header: Authorization: Bearer eyJhb... — the token rides along with every request, like flashing your wristband.",
+      leftIcon: "\uD83D\uDCBB", rightIcon: "\uD83C\uDF10",
+    },
+    {
+      title: "Server verifies the JWT",
+      left: "Server", right: "Clerk JWKS",
+      arrow: "\u2192",
+      detail: "The server fetches Clerk's public keys (JWKS endpoint), uses them to verify the token's signature, checks it hasn't expired, and extracts the user ID. All without contacting Clerk directly for each request.",
+      leftIcon: "\uD83C\uDF10", rightIcon: "\uD83D\uDD11",
+    },
+    {
+      title: "Server responds",
+      left: "Server", right: "Browser",
+      arrow: "\u2192",
+      detail: "The request is authorized. The server processes it and returns the response. The user never shows their password again — the token does all the talking.",
+      leftIcon: "\uD83C\uDF10", rightIcon: "\uD83D\uDCBB",
+    },
+  ];
+
+  const s = steps[step];
+
+  return (
+    <Section id="flow" num={5} title="The Auth Flow" subtitle="Step through the full sequence, from opening the page to making authenticated requests.">
+      {/* Step counter */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 24 }}>
+        {steps.map((_, i) => (
+          <div
+            key={i}
+            onClick={() => setStep(i)}
+            style={{
+              flex: 1, height: 4, borderRadius: 2, cursor: "pointer",
+              background: i <= step ? "#f97316" : "rgba(255,255,255,0.08)",
+              transition: "background 0.3s",
+            }}
+          />
+        ))}
+      </div>
+
+      {/* Flow visualization */}
+      <div style={{
+        background: "#0f172a", borderRadius: 16, padding: "32px 24px",
+        border: "1px solid rgba(255,255,255,0.06)", textAlign: "center",
+        minHeight: 220, display: "flex", flexDirection: "column", justifyContent: "center",
+      }}>
+        <div style={{ fontSize: 13, color: "#f97316", fontFamily: "JetBrains Mono, monospace", marginBottom: 8 }}>
+          Step {step + 1} of {steps.length}
+        </div>
+        <div style={{ fontSize: 22, fontWeight: 700, color: "#f8fafc", marginBottom: 24 }}>
+          {s.title}
+        </div>
+
+        {/* Actor diagram */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 24, marginBottom: 24 }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 36 }}>{s.leftIcon}</div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>{s.left}</div>
+          </div>
+          <div style={{ fontSize: 28, color: "#f97316", animation: "pulse 1.5s ease infinite" }}>
+            {s.arrow}
+          </div>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 36 }}>{s.rightIcon}</div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>{s.right}</div>
+          </div>
+        </div>
+
+        <p style={{ color: "#94a3b8", fontSize: 14, lineHeight: 1.65, maxWidth: 500, margin: "0 auto" }}>
+          {s.detail}
+        </p>
+      </div>
+
+      {/* Nav buttons */}
+      <div style={{ display: "flex", gap: 12, marginTop: 20, justifyContent: "center" }}>
+        <Btn onClick={() => setStep(Math.max(0, step - 1))} style={{ opacity: step === 0 ? 0.3 : 1 }}>
+          Back
+        </Btn>
+        <Btn onClick={() => setStep(Math.min(steps.length - 1, step + 1))} active={step < steps.length - 1}>
+          {step < steps.length - 1 ? "Next Step" : "Done"}
+        </Btn>
+      </div>
+    </Section>
+  );
+}
+
+// ════════════════════════════════════════
+// SECTION 6: JWT Verification
+// ════════════════════════════════════════
+function VerifySection() {
+  const [mode, setMode] = useState(null); // "valid" | "tampered"
+  const [verifying, setVerifying] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const handleVerify = (type) => {
+    setMode(type);
+    setVerifying(true);
+    setResult(null);
+    setTimeout(() => {
+      setVerifying(false);
+      setResult(type === "valid" ? "pass" : "fail");
+    }, 1500);
+  };
+
+  return (
+    <Section id="verify" num={6} title="How the Server Verifies" subtitle="The signature check: the moment the server decides whether to trust you.">
+      <p>
+        When a JWT arrives, the server does three things:
+      </p>
+      <ol style={{ paddingLeft: 24, margin: "16px 0" }}>
+        <li style={{ marginBottom: 8 }}>
+          <strong>Decode the header</strong> to find the algorithm (<code style={{ color: "#ef4444" }}>RS256</code>) and key ID (<code style={{ color: "#ef4444" }}>kid</code>).
+        </li>
+        <li style={{ marginBottom: 8 }}>
+          <strong>Fetch the public key</strong> from the issuer's <span style={{ color: "#a855f7" }}>JWKS endpoint</span> — a URL like{" "}
+          <code style={{ color: "#94a3b8", fontSize: 13 }}>https://clerk.dev/.well-known/jwks.json</code> that publishes the public keys. The server caches these.
+        </li>
+        <li style={{ marginBottom: 8 }}>
+          <strong>Verify the signature</strong>: take the header + payload, hash them, and check that the hash matches the signature using the public key. If it matches, the token is authentic. Then check <code style={{ color: "#a855f7" }}>exp</code> to make sure it hasn't expired.
+        </li>
+      </ol>
+
+      <Callout emoji="&#128161;">
+        <strong>Asymmetric crypto is the key insight.</strong> Clerk signs with a private key that only Clerk has. Your server verifies with a public key that anyone can have. The server never needs Clerk's secret — it just needs the public key.
+      </Callout>
+
+      <p style={{ marginTop: 28, marginBottom: 12, fontWeight: 600, color: "#f8fafc" }}>
+        Try verifying two tokens:
+      </p>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
+        <Btn onClick={() => handleVerify("valid")} active={mode === "valid"}>
+          Verify Valid Token
+        </Btn>
+        <Btn onClick={() => handleVerify("tampered")} active={mode === "tampered"}>
+          Verify Tampered Token
+        </Btn>
+      </div>
+
+      {mode && (
+        <div style={{
+          background: "#0f172a", borderRadius: 12, padding: 24,
+          border: "1px solid rgba(255,255,255,0.06)",
+          fontFamily: "JetBrains Mono, monospace", fontSize: 13,
+        }}>
+          <div style={{ color: "#64748b", marginBottom: 8 }}>
+            {mode === "valid" ? "// Original token — untouched" : "// Token with payload modified (role changed to 'superadmin')"}
+          </div>
+          <div style={{ wordBreak: "break-all", lineHeight: 1.8, marginBottom: 16 }}>
+            <span style={{ color: "#ef4444" }}>{FAKE_JWT_HEADER}</span>
+            <span style={{ color: "#475569" }}>.</span>
+            <span style={{ color: mode === "tampered" ? "#fbbf24" : "#a855f7" }}>
+              {mode === "tampered"
+                ? btoa(JSON.stringify({ sub: "user_2xK9mL", role: "superadmin", exp: 9999999999 })).replace(/=/g, "")
+                : FAKE_JWT_PAYLOAD}
+            </span>
+            <span style={{ color: "#475569" }}>.</span>
+            <span style={{ color: "#22c55e" }}>{FAKE_JWT_SIGNATURE}</span>
           </div>
 
-          <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
-            {tab === 'oauth' ? (
-              /* ── OAuth Tab ── */
-              <>
-                {oauthStep === 1 ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-                    <div style={{
-                      fontFamily: "'VT323', monospace",
-                      fontSize: '1.1rem',
-                      color: '#FFD600',
-                      textAlign: 'center',
-                    }}>
-                      {'>'} STEP 1: AUTHORIZE WITH ANTHROPIC
-                    </div>
-                    <p style={{
-                      fontFamily: "'VT323', monospace",
-                      fontSize: '1rem',
-                      color: '#AA8800',
-                      textAlign: 'center',
-                      lineHeight: 1.5,
-                    }}>
-                      OPENS ANTHROPIC IN A NEW TAB. AUTHORIZE, THEN COPY THE SHORT CODE BACK HERE.
-                    </p>
-                    <button
-                      onClick={handleOAuthStart}
-                      disabled={oauthLoading}
-                      style={{
-                        padding: '14px 32px',
-                        borderRadius: 8,
-                        background: oauthLoading ? '#555' : '#FFD600',
-                        color: '#000',
-                        border: 'none',
-                        fontFamily: "'VT323', monospace",
-                        fontSize: '1.3rem',
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.1em',
-                        cursor: oauthLoading ? 'default' : 'pointer',
-                        boxShadow: oauthLoading ? 'none' : '0 4px 0 #AA8800, 0 8px 10px rgba(0,0,0,0.15)',
-                        transition: 'all 0.1s',
-                      }}
-                    >
-                      {oauthStatus === 'starting' ? 'OPENING...' : 'SIGN IN WITH ANTHROPIC'}
-                    </button>
-                    {oauthError && (
-                      <p style={{
-                        fontFamily: "'VT323', monospace",
-                        fontSize: '1rem',
-                        color: '#ff4444',
-                      }}>{oauthError}</p>
-                    )}
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                    <div style={{
-                      fontFamily: "'VT323', monospace",
-                      fontSize: '1.1rem',
-                      color: '#FFD600',
-                    }}>
-                      {'>'} STEP 2: PASTE AUTHORIZATION CODE
-                    </div>
-                    <p style={{
-                      fontFamily: "'VT323', monospace",
-                      fontSize: '1rem',
-                      color: '#AA8800',
-                      lineHeight: 1.5,
-                    }}>
-                      COPY THE SHORT CODE FROM THE ANTHROPIC PAGE AND PASTE IT BELOW.
-                    </p>
-                    <input
-                      value={oauthCode}
-                      onChange={e => { setOauthCode(e.target.value); setOauthError(''); }}
-                      placeholder="PASTE CODE HERE..."
-                      disabled={oauthLoading}
-                      style={{
-                        width: '100%',
-                        backgroundColor: '#C8A800',
-                        boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2)',
-                        borderRadius: 6,
-                        color: '#000',
-                        fontWeight: 'bold',
-                        padding: '0 16px',
-                        height: 50,
-                        fontFamily: "'VT323', monospace",
-                        fontSize: '1.1rem',
-                        border: oauthError ? '2px solid #ff4444' : '2px solid transparent',
-                        outline: 'none',
-                        opacity: oauthLoading ? 0.5 : 1,
-                        boxSizing: 'border-box',
-                      }}
-                    />
-                    {oauthError && (
-                      <p style={{
-                        fontFamily: "'VT323', monospace",
-                        fontSize: '1rem',
-                        color: '#ff4444',
-                      }}>{oauthError}</p>
-                    )}
-                    <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-                      <button
-                        onClick={() => { setOauthStep(1); setOauthCode(''); setOauthError(''); setOauthStatus('idle'); }}
-                        disabled={oauthLoading}
-                        style={{
-                          padding: '10px 20px',
-                          borderRadius: 6,
-                          background: 'transparent',
-                          color: '#AA8800',
-                          border: '1px solid #333',
-                          fontFamily: "'VT323', monospace",
-                          fontSize: '1rem',
-                          cursor: oauthLoading ? 'default' : 'pointer',
-                        }}
-                      >
-                        BACK
-                      </button>
-                      <button
-                        onClick={handleOAuthExchange}
-                        disabled={oauthLoading || !oauthCode.trim()}
-                        style={{
-                          padding: '10px 32px',
-                          borderRadius: 6,
-                          background: (oauthLoading || !oauthCode.trim()) ? '#555' : '#FFD600',
-                          color: '#000',
-                          border: 'none',
-                          fontFamily: "'VT323', monospace",
-                          fontSize: '1.1rem',
-                          fontWeight: 700,
-                          textTransform: 'uppercase',
-                          cursor: (oauthLoading || !oauthCode.trim()) ? 'default' : 'pointer',
-                          boxShadow: (oauthLoading || !oauthCode.trim()) ? 'none' : '0 3px 0 #AA8800',
-                        }}
-                      >
-                        {oauthStatus === 'exchanging' ? 'CONNECTING...' : oauthStatus === 'polling' ? 'BOOTING...' : 'CONNECT'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </>
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 16 }}>
+            {verifying ? (
+              <div style={{ color: "#f97316" }}>
+                Verifying... SHA-256(header.payload) vs signature...
+              </div>
+            ) : result === "pass" ? (
+              <div>
+                <span style={{ color: "#22c55e", fontSize: 16 }}>PASS</span>
+                <span style={{ color: "#94a3b8" }}> — Signature matches. Token is authentic. exp check: valid (not expired).</span>
+              </div>
             ) : (
-              /* ── Legacy Tab ── */
-              <>
-                <div>
-                  <div style={{
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '1.1rem',
-                    color: '#FFD600',
-                    marginBottom: 8,
-                  }}>
-                    {'>'} STEP 1: GENERATE TOKEN
-                  </div>
-                  <div style={{
-                    background: '#1a1a00',
-                    border: '1px solid #333',
-                    borderRadius: 4,
-                    padding: '8px 12px',
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '1.1rem',
-                  }}>
-                    <span style={{ color: '#666' }}>$</span>{' '}
-                    <span style={{ color: '#FFD600' }}>claude setup-token</span>
-                  </div>
-                </div>
-
-                <div style={{ height: 1, background: '#333', borderStyle: 'dashed' }} />
-
-                <div>
-                  <div style={{
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '1.1rem',
-                    color: '#FFD600',
-                    marginBottom: 8,
-                  }}>
-                    {'>'} STEP 2: PASTE TOKEN
-                  </div>
-                  <input
-                    value={token}
-                    onChange={e => { setToken(e.target.value); setLegacyError(''); }}
-                    placeholder="SK-ANT-OAT01-..."
-                    disabled={legacyLoading}
-                    style={{
-                      width: '100%',
-                      backgroundColor: '#C8A800',
-                      boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2)',
-                      borderRadius: 6,
-                      color: '#000',
-                      fontWeight: 'bold',
-                      padding: '0 16px',
-                      height: 50,
-                      fontFamily: "'VT323', monospace",
-                      textTransform: 'uppercase',
-                      fontSize: '1.1rem',
-                      border: legacyError ? '2px solid #ff4444' : '2px solid transparent',
-                      outline: 'none',
-                      opacity: legacyLoading ? 0.5 : 1,
-                      boxSizing: 'border-box',
-                    }}
-                  />
-                  {legacyError && (
-                    <p style={{
-                      fontFamily: "'VT323', monospace",
-                      fontSize: '1rem',
-                      color: '#ff4444',
-                      marginTop: 8,
-                    }}>{legacyError}</p>
-                  )}
-                </div>
-
-                <button
-                  onClick={handleLegacyConnect}
-                  disabled={legacyLoading || !token.trim()}
-                  style={{
-                    width: 80,
-                    height: 80,
-                    borderRadius: '50%',
-                    background: (legacyLoading || !token.trim()) ? '#555' : '#E5E5E5',
-                    color: '#333',
-                    border: '1px solid #999',
-                    boxShadow: (legacyLoading || !token.trim()) ? 'none' : '0 4px 0 #999, 0 8px 10px rgba(0,0,0,0.15)',
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '1rem',
-                    fontWeight: 700,
-                    textTransform: 'uppercase',
-                    letterSpacing: 1,
-                    cursor: (legacyLoading || !token.trim()) ? 'default' : 'pointer',
-                    transition: 'all 0.1s',
-                    alignSelf: 'center',
-                  }}
-                >
-                  {legacyStatus === 'loading' ? '...' : legacyStatus === 'polling' ? 'BOOT' : 'GO'}
-                </button>
-              </>
+              <div>
+                <span style={{ color: "#ef4444", fontSize: 16 }}>FAIL</span>
+                <span style={{ color: "#94a3b8" }}> — Signature mismatch. SHA-256 of modified payload does not match the original signature. This token was tampered with. Request rejected.</span>
+              </div>
             )}
           </div>
         </div>
-      </div>
-    </div>
+      )}
+    </Section>
   );
 }
 
-/* ── Chat input (retro) ──────────────────────────────────────────────────── */
+// ════════════════════════════════════════
+// SECTION 7: SSL Termination
+// ════════════════════════════════════════
+function SSLSection() {
+  const [layer, setLayer] = useState(0);
 
-function ChatInput({ onSend, disabled }) {
-  const [input, setInput] = useState('');
-  const inputRef = useRef(null);
+  const layers = [
+    {
+      label: "Your Browser",
+      desc: "The request starts here, fully encrypted with TLS. Headers, body, everything — scrambled into ciphertext that only the destination can read.",
+      color: "#22c55e",
+      encrypted: true,
+    },
+    {
+      label: "The Internet",
+      desc: "Your encrypted request travels across networks, routers, ISPs. Nobody in the middle can read the headers or body. They can see the destination IP address, but not what you're sending.",
+      color: "#22c55e",
+      encrypted: true,
+    },
+    {
+      label: "Edge Proxy (exe.dev at 44.254.50.18)",
+      desc: "HERE is where SSL termination happens. The proxy has the SSL certificate, so it decrypts the request. Now it can read every header, every byte. It processes the request, and in Julian's case — it strips the Authorization header before forwarding.",
+      color: "#ef4444",
+      encrypted: false,
+    },
+    {
+      label: "nginx (port 80)",
+      desc: "The request arrives at nginx over plain HTTP (unencrypted, but on a private network). The Authorization header is GONE. nginx proxies /api/ routes to the Bun server.",
+      color: "#f97316",
+      encrypted: false,
+    },
+    {
+      label: "Bun server (port 3847)",
+      desc: "server.ts receives the request. It looks for the Authorization header... and it's not there. The proxy stripped it. The Clerk JWT that the browser sent? Lost in transit.",
+      color: "#ef4444",
+      encrypted: false,
+    },
+  ];
 
-  const handleSend = useCallback(() => {
-    const text = input.trim();
-    if (!text || disabled) return;
-    onSend(text);
-    setInput('');
-  }, [input, disabled, onSend]);
+  return (
+    <Section id="ssl" num={7} title="SSL Termination" subtitle="The invisible middleman that broke our auth — and why it exists.">
+      <p>
+        When you visit <code style={{ color: "#94a3b8" }}>https://</code>julian.exe.xyz, the <strong>S</strong> in HTTPS means your
+        connection is encrypted with TLS (Transport Layer Security, the successor to SSL). Everything — the URL path, the headers,
+        the body — is encrypted in transit. Nobody between your browser and the server can read it.
+      </p>
+      <p style={{ marginTop: 12 }}>
+        But <em>someone</em> has to decrypt it. In a simple setup, your web server does it directly. But in production, there's often
+        a <strong>reverse proxy</strong> or <strong>load balancer</strong> sitting in front of your server. It holds the SSL certificate,
+        decrypts the traffic, and forwards the plain HTTP request to your actual server. This is called <strong style={{ color: "#f97316" }}>SSL termination</strong>.
+      </p>
+
+      <p style={{ marginTop: 28, marginBottom: 12, fontWeight: 600, color: "#f8fafc" }}>
+        Click through each layer of the request:
+      </p>
+
+      {/* Layer selector */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 20, flexWrap: "wrap" }}>
+        {layers.map((l, i) => (
+          <Btn key={i} onClick={() => setLayer(i)} active={layer === i} style={{ fontSize: 12, padding: "6px 12px" }}>
+            {i + 1}. {l.label.split("(")[0].trim()}
+          </Btn>
+        ))}
+      </div>
+
+      {/* Visualization */}
+      <div style={{
+        background: "#0f172a", borderRadius: 16, padding: 28,
+        border: `1px solid ${layers[layer].color}30`,
+        transition: "border-color 0.3s",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+          <div style={{
+            width: 10, height: 10, borderRadius: "50%",
+            background: layers[layer].encrypted ? "#22c55e" : "#ef4444",
+          }} />
+          <span style={{ fontSize: 13, fontFamily: "JetBrains Mono, monospace", color: layers[layer].encrypted ? "#22c55e" : "#ef4444" }}>
+            {layers[layer].encrypted ? "ENCRYPTED" : "DECRYPTED"}
+          </span>
+          <span style={{ fontSize: 14, fontWeight: 600, color: "#f8fafc" }}>
+            {layers[layer].label}
+          </span>
+        </div>
+
+        {/* Mock request view */}
+        <Code style={{ margin: "12px 0", fontSize: 12.5 }}>
+          {layers[layer].encrypted ? (
+            <>
+              <span style={{ color: "#22c55e" }}>TLS 1.3 encrypted payload:</span>{"\n"}
+              <span style={{ color: "#334155" }}>
+                a7:3f:9b:c2:41:e8:7d:0a:f5:62:1c:b8:d4:93:a0:5e{"\n"}
+                8c:27:f1:6d:3a:e9:50:b4:c8:72:1f:a6:d3:09:e5:4b{"\n"}
+                {"(headers, body, everything — unreadable)"}{"\n"}
+              </span>
+            </>
+          ) : (
+            <>
+              <span style={{ color: "#22c55e" }}>POST</span> /api/chat HTTP/1.1{"\n"}
+              <span style={{ color: "#93c5fd" }}>Content-Type</span>: application/json{"\n"}
+              {layer >= 3 ? (
+                <span style={{ color: "#ef4444", fontStyle: "italic" }}>
+                  {"// Authorization header is GONE — stripped by the proxy"}{"\n"}
+                </span>
+              ) : (
+                <>
+                  <span style={{ color: "#f97316" }}>Authorization</span>: Bearer eyJhbGciOi...{"\n"}
+                </>
+              )}
+              <span style={{ color: "#93c5fd" }}>X-Authorization</span>: Bearer eyJhbGciOi...{"\n"}
+              {"\n"}
+              <span style={{ color: "#64748b" }}>{"{"} "message": "Hello" {"}"}</span>
+            </>
+          )}
+        </Code>
+
+        <p style={{ color: "#94a3b8", fontSize: 14, lineHeight: 1.65, margin: 0 }}>
+          {layers[layer].desc}
+        </p>
+      </div>
+    </Section>
+  );
+}
+
+// ════════════════════════════════════════
+// SECTION 8: The X-Authorization Workaround
+// ════════════════════════════════════════
+function WorkaroundSection() {
+  const [showSolution, setShowSolution] = useState(false);
+
+  return (
+    <Section id="workaround" num={8} title="The X-Authorization Workaround" subtitle="How Julian solves the stripped-header problem with one extra line of code.">
+      <p>
+        So here's the problem: the exe.dev edge proxy terminates SSL and strips the <code style={{ color: "#f97316" }}>Authorization</code> header
+        before forwarding to nginx. This is common behavior for reverse proxies — some strip it for security reasons, some for configuration reasons.
+        The result: our Clerk JWT never arrives at the Bun server.
+      </p>
+      <p style={{ marginTop: 12 }}>
+        But the proxy only strips <em>standard</em> auth headers. Custom headers with an <code>X-</code> prefix pass through untouched.
+      </p>
+
+      <div style={{ textAlign: "center", margin: "32px 0" }}>
+        <Btn onClick={() => setShowSolution(true)} active={showSolution}>
+          {showSolution ? "The Fix" : "Show the solution"}
+        </Btn>
+      </div>
+
+      {showSolution && (
+        <>
+          <p style={{ fontWeight: 600, color: "#f8fafc", marginBottom: 8 }}>On the frontend — send both headers:</p>
+          <Code>
+            <span style={{ color: "#64748b" }}>{"// getAuthHeaders() in index.html"}</span>{"\n"}
+            <span style={{ color: "#c084fc" }}>const</span> token = <span style={{ color: "#c084fc" }}>await</span> window.Clerk.session.getToken();{"\n"}
+            <span style={{ color: "#c084fc" }}>return</span> {"{"}{"\n"}
+            {"  "}<span style={{ color: "#ef4444", textDecoration: "line-through" }}>'Authorization'</span>: <span style={{ color: "#a5f3fc" }}>{"`Bearer ${token}`"}</span>,       <span style={{ color: "#64748b" }}>{"// standard — gets stripped"}</span>{"\n"}
+            {"  "}<span style={{ color: "#22c55e" }}>'X-Authorization'</span>: <span style={{ color: "#a5f3fc" }}>{"`Bearer ${token}`"}</span>,     <span style={{ color: "#64748b" }}>{"// custom — passes through"}</span>{"\n"}
+            {"}"};
+          </Code>
+
+          <p style={{ fontWeight: 600, color: "#f8fafc", marginBottom: 8, marginTop: 24 }}>On the server — check both:</p>
+          <Code>
+            <span style={{ color: "#64748b" }}>{"// verifyClerkToken() in server.ts"}</span>{"\n"}
+            <span style={{ color: "#c084fc" }}>const</span> auth = req.headers.get(<span style={{ color: "#a5f3fc" }}>"Authorization"</span>){"\n"}
+            {"              "}|| req.headers.get(<span style={{ color: "#22c55e" }}>"X-Authorization"</span>);{"\n\n"}
+            <span style={{ color: "#64748b" }}>{"// If either header has the token, we're good."}</span>{"\n"}
+            <span style={{ color: "#64748b" }}>{"// In production, Authorization is stripped \u2192 X-Authorization wins."}</span>{"\n"}
+            <span style={{ color: "#64748b" }}>{"// In local dev, Authorization works directly."}</span>
+          </Code>
+
+          <Callout emoji="&#127919;">
+            <strong>That's it.</strong> Two lines of code — one on each side. The browser sends the token twice, the server checks both,
+            and the proxy's header-stripping becomes invisible. The same code works in local dev (where <code>Authorization</code> isn't stripped) and in production (where <code>X-Authorization</code> carries it through).
+          </Callout>
+
+          {/* Full picture summary */}
+          <div style={{
+            background: "#0f172a", borderRadius: 16, padding: 28, marginTop: 32,
+            border: "1px solid rgba(249,115,22,0.15)",
+          }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#f8fafc", marginBottom: 20, textAlign: "center" }}>
+              The Complete Picture
+            </div>
+            <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 13, lineHeight: 2.2, color: "#94a3b8" }}>
+              <div><span style={{ color: "#a855f7" }}>1.</span> User signs in via <span style={{ color: "#f8fafc" }}>Clerk</span> {"\u2192"} gets a <span style={{ color: "#ef4444" }}>JWT</span></div>
+              <div><span style={{ color: "#a855f7" }}>2.</span> Browser stores the JWT, sends it as <span style={{ color: "#f97316" }}>Authorization</span> + <span style={{ color: "#22c55e" }}>X-Authorization</span></div>
+              <div><span style={{ color: "#a855f7" }}>3.</span> Request is <span style={{ color: "#22c55e" }}>TLS-encrypted</span> from browser to edge proxy</div>
+              <div><span style={{ color: "#a855f7" }}>4.</span> Edge proxy <span style={{ color: "#ef4444" }}>terminates SSL</span>, strips <span style={{ color: "#ef4444", textDecoration: "line-through" }}>Authorization</span>, forwards to nginx</div>
+              <div><span style={{ color: "#a855f7" }}>5.</span> nginx proxies <code>/api/</code> to Bun — <span style={{ color: "#22c55e" }}>X-Authorization</span> still intact</div>
+              <div><span style={{ color: "#a855f7" }}>6.</span> server.ts reads <span style={{ color: "#22c55e" }}>X-Authorization</span>, verifies JWT with Clerk's <span style={{ color: "#a855f7" }}>JWKS</span> public keys</div>
+              <div><span style={{ color: "#a855f7" }}>7.</span> Token valid {"\u2192"} request authorized {"\u2192"} Claude subprocess receives the message</div>
+            </div>
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
+
+// ════════════════════════════════════════
+// MAIN APP
+// ════════════════════════════════════════
+export default function App() {
+  const [active, setActive] = useState("tokens");
 
   useEffect(() => {
-    if (!disabled && inputRef.current) inputRef.current.focus();
-  }, [disabled]);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(e => {
+          if (e.isIntersecting && e.intersectionRatio > 0.3) {
+            setActive(e.target.id);
+          }
+        });
+      },
+      { threshold: [0.3] }
+    );
+    SECTIONS.forEach(s => {
+      const el = document.getElementById(s.id);
+      if (el) observer.observe(el);
+    });
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: 12,
-      padding: '12px 0',
+      minHeight: "100vh",
+      background: "#0c0f1a",
+      color: "#e2e8f0",
+      fontFamily: "Inter, system-ui, sans-serif",
     }}>
-      <input
-        ref={inputRef}
-        value={input}
-        onChange={e => setInput(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-        placeholder={disabled ? "PROCESSING..." : "INPUT BUFFER..."}
-        disabled={disabled}
-        style={{
-          flex: 1,
-          backgroundColor: '#C8A800',
-          boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2)',
-          borderRadius: 6,
-          color: '#000',
-          fontWeight: 'bold',
-          padding: '0 16px',
-          height: 50,
-          fontFamily: "'VT323', monospace",
-          textTransform: 'uppercase',
-          fontSize: '1.1rem',
-          border: 'none',
-          outline: 'none',
-          opacity: disabled ? 0.5 : 1,
-        }}
-      />
-      <button
-        onClick={handleSend}
-        disabled={disabled}
-        style={{
-          width: 60,
-          height: 60,
-          borderRadius: '50%',
-          background: disabled ? '#555' : '#E5E5E5',
-          color: '#333',
-          border: '1px solid #999',
-          boxShadow: disabled ? 'none' : '0 4px 0 #999, 0 8px 10px rgba(0,0,0,0.15)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontFamily: "'VT323', monospace",
-          fontSize: '0.9rem',
-          fontWeight: 700,
-          textTransform: 'uppercase',
-          letterSpacing: 1,
-          cursor: disabled ? 'default' : 'pointer',
-          transition: 'all 0.1s',
-          flexShrink: 0,
-        }}
-      >
-        A
-      </button>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+        * { box-sizing: border-box; margin: 0; }
+        html { scroll-behavior: smooth; }
+        code { font-family: JetBrains Mono, monospace; font-size: 0.9em; background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 4px; }
+        ::selection { background: #f9731640; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+      `}</style>
+
+      <ProgressNav active={active} />
+
+      {/* Hero */}
+      <header style={{
+        minHeight: "70vh", display: "flex", flexDirection: "column",
+        justifyContent: "center", alignItems: "center", textAlign: "center",
+        padding: "40px 24px",
+      }}>
+        <div style={{ fontSize: 13, color: "#f97316", fontFamily: "JetBrains Mono, monospace", letterSpacing: 3, marginBottom: 20 }}>
+          AN INTERACTIVE GUIDE
+        </div>
+        <h1 style={{ fontSize: "clamp(36px, 7vw, 64px)", fontWeight: 700, lineHeight: 1.1, maxWidth: 700 }}>
+          How JWT Authorization<br />Actually Works
+        </h1>
+        <p style={{ fontSize: 18, color: "#64748b", marginTop: 20, maxWidth: 500, lineHeight: 1.6 }}>
+          From tokens to headers to SSL termination — everything you need to understand the auth system we built for Julian.
+        </p>
+        <div style={{ marginTop: 40, color: "#334155", fontSize: 24, animation: "pulse 2s ease infinite" }}>
+          {"\u2193"}
+        </div>
+      </header>
+
+      <TokenSection />
+      <JWTSection />
+      <HeadersSection />
+      <BearerSection />
+      <FlowSection />
+      <VerifySection />
+      <SSLSection />
+      <WorkaroundSection />
+
+      {/* Footer */}
+      <footer style={{
+        textAlign: "center", padding: "80px 24px",
+        color: "#334155", fontSize: 14,
+        borderTop: "1px solid rgba(255,255,255,0.04)",
+      }}>
+        Built for Marcus by Julian — February 2026
+      </footer>
     </div>
   );
 }
-
-/* ── Conversation ID helper ──────────────────────────────────────────────── */
-
-const CONV_KEY = 'claude-hackathon-conv-id';
-
-function getOrCreateConversationId() {
-  let id = localStorage.getItem(CONV_KEY);
-  if (!id) {
-    id = 'conv-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
-    localStorage.setItem(CONV_KEY, id);
-  }
-  return id;
-}
-
-/* ── Main App ────────────────────────────────────────────────────────────── */
-
-function App() {
-  const conversationId = useRef(getOrCreateConversationId()).current;
-
-  const { database, useLiveQuery } = useFireproofClerk("claude-hackathon-chat");
-
-  const { docs: persistedMessages } = useLiveQuery("createdAt", {
-    range: [conversationId + ":", conversationId + ":\uffff"],
-  });
-
-  const [liveAssistant, setLiveAssistant] = useState(null);
-  const [streaming, setStreaming] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [setupNeeded, setSetupNeeded] = useState(null);
-  const messagesEndRef = useRef(null);
-
-  const [artifacts, setArtifacts] = useState([]);
-  const [activeArtifact, setActiveArtifact] = useState('');
-
-  // Register service worker + inject PWA meta tags
-  useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
-    }
-    const meta = (name, content) => {
-      const el = document.createElement('meta');
-      el.setAttribute('name', name);
-      el.setAttribute('content', content);
-      document.head.appendChild(el);
-    };
-    meta('theme-color', '#FFD600');
-    meta('mobile-web-app-capable', 'yes');
-    meta('apple-mobile-web-app-status-bar-style', 'black-translucent');
-    meta('apple-mobile-web-app-title', 'Julian');
-  }, []);
-
-  const getAuthHeaders = useCallback(async () => {
-    try {
-      const token = await window.Clerk?.session?.getToken();
-      if (!token) return null;
-      return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
-    } catch {
-      return null;
-    }
-  }, []);
-
-  const refreshArtifacts = useCallback(async () => {
-    try {
-      const headers = await getAuthHeaders();
-      if (!headers) return [];
-      const r = await fetch('/api/artifacts', { headers });
-      if (r.ok) {
-        const data = await r.json();
-        setArtifacts(data.files || []);
-        return data.files || [];
-      }
-    } catch {}
-    return [];
-  }, [getAuthHeaders]);
-
-  const loadArtifact = useCallback(async (filename) => {
-    const files = await refreshArtifacts();
-    if (files.some(f => f.name === filename)) {
-      setActiveArtifact(filename);
-    }
-  }, [refreshArtifacts]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const tryInit = async () => {
-      const headers = await getAuthHeaders();
-      if (!headers) {
-        if (!cancelled) setTimeout(tryInit, 500);
-        return;
-      }
-      try {
-        const r = await fetch('/api/health', { headers });
-        const data = await r.json();
-        if (!cancelled) {
-          setConnected(data.processAlive);
-          setSetupNeeded(data.needsSetup ?? false);
-        }
-      } catch {
-        if (!cancelled) {
-          setConnected(false);
-          setSetupNeeded(false);
-        }
-      }
-      refreshArtifacts();
-    };
-    tryInit();
-    return () => { cancelled = true; };
-  }, [getAuthHeaders, refreshArtifacts]);
-
-  useEffect(() => {
-    const id = setInterval(refreshArtifacts, 10000);
-    return () => clearInterval(id);
-  }, [refreshArtifacts]);
-
-  useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [persistedMessages, liveAssistant]);
-
-  const displayMessages = React.useMemo(() => {
-    const sorted = [...(persistedMessages || [])].sort((a, b) => {
-      if (a.createdAt < b.createdAt) return -1;
-      if (a.createdAt > b.createdAt) return 1;
-      return 0;
-    });
-    const msgs = sorted.map(doc => ({
-      id: doc._id,
-      role: doc.role,
-      text: doc.text || '',
-      blocks: doc.blocks || [],
-      thinking: false,
-      streaming: false,
-    }));
-    if (liveAssistant) {
-      msgs.push(liveAssistant);
-    }
-    return msgs;
-  }, [persistedMessages, liveAssistant]);
-
-  const hasMessages = displayMessages.length > 0;
-
-  const sendMessage = useCallback(async (text) => {
-    if (streaming) return;
-
-    const userCreatedAt = conversationId + ":" + new Date().toISOString();
-    await database.put({
-      type: "message",
-      role: "user",
-      text,
-      blocks: [],
-      createdAt: userCreatedAt,
-      conversationId,
-    });
-
-    const liveMsg = { id: 'live-' + Date.now(), role: 'assistant', blocks: [], thinking: true, streaming: true };
-    setLiveAssistant(liveMsg);
-    setStreaming(true);
-
-    let finalBlocks = [];
-
-    try {
-      const headers = await getAuthHeaders();
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ message: text }),
-      });
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let sseBuffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        sseBuffer += decoder.decode(value, { stream: true });
-        const lines = sseBuffer.split('\n');
-        sseBuffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === 'done') continue;
-
-            if (data.type === 'error') {
-              finalBlocks = [{ type: 'text', text: 'Error: ' + (data.data?.message || 'Unknown error') }];
-              setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
-              continue;
-            }
-
-            const eventData = data.data;
-            if (!eventData) continue;
-            if (eventData.type === 'system') continue;
-
-            if (eventData.type === 'assistant' && eventData.message?.content) {
-              const blocks = eventData.message.content.map(block => {
-                if (block.type === 'text') return { type: 'text', text: block.text };
-                if (block.type === 'tool_use') {
-                  if (block.name === 'Write' && block.input?.file_path) {
-                    const fp = block.input.file_path;
-                    const match = fp.match(/([^/]+\.html)$/);
-                    if (match && match[1] !== 'index.html') {
-                      setTimeout(() => loadArtifact(match[1]), 1500);
-                    }
-                  }
-                  return { type: 'tool_use', name: block.name, input: block.input };
-                }
-                return block;
-              });
-              finalBlocks = blocks;
-              setLiveAssistant(prev => prev ? { ...prev, blocks, thinking: false, streaming: true } : null);
-            }
-
-            if (eventData.type === 'result') {
-              if (eventData.result && finalBlocks.length === 0) {
-                finalBlocks = [{ type: 'text', text: eventData.result }];
-              }
-              setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
-              refreshArtifacts();
-            }
-          } catch {}
-        }
-      }
-    } catch (err) {
-      finalBlocks = [{ type: 'text', text: 'Connection error: ' + err.message }];
-      setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
-    }
-
-    const assistantCreatedAt = conversationId + ":" + new Date().toISOString();
-    await database.put({
-      type: "message",
-      role: "assistant",
-      text: '',
-      blocks: finalBlocks,
-      createdAt: assistantCreatedAt,
-      conversationId,
-    });
-
-    setLiveAssistant(null);
-    setStreaming(false);
-    setConnected(true);
-  }, [streaming, conversationId, database, getAuthHeaders, loadArtifact, refreshArtifacts]);
-
-  const startNewConversation = useCallback(() => {
-    const newId = 'conv-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
-    localStorage.setItem(CONV_KEY, newId);
-    window.location.reload();
-  }, []);
-
-  return (
-    <>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
-        * { box-sizing: border-box; }
-        body {
-          margin: 0; padding: 0;
-          font-family: 'VT323', monospace;
-          background-color: #FFD600;
-          color: #000;
-          -webkit-font-smoothing: antialiased;
-        }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #0F0F0F; }
-        ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #FFD600; }
-        @keyframes blink {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0; }
-        }
-        @keyframes pulse-dot {
-          0%, 80%, 100% { opacity: 0.6; }
-          40% { opacity: 1; }
-        }
-        @keyframes pulse {
-          0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
-          40% { opacity: 1; transform: scale(1.2); }
-        }
-        #send-btn:active {
-          transform: translateY(4px);
-          box-shadow: 0 0 0 #999, inset 0 2px 5px rgba(0,0,0,0.1) !important;
-        }
-        input::placeholder {
-          color: rgba(0,0,0,0.4);
-        }
-        body::before {
-          content: '\u00D7';
-          position: fixed;
-          top: 4px;
-          left: 8px;
-          font-size: 28px;
-          color: rgba(0,0,0,0.2);
-          font-weight: 900;
-          z-index: 50;
-          pointer-events: none;
-        }
-        body::after {
-          content: '\u00D7';
-          position: fixed;
-          top: 4px;
-          right: 8px;
-          font-size: 28px;
-          color: rgba(0,0,0,0.2);
-          font-weight: 900;
-          z-index: 50;
-          pointer-events: none;
-        }
-        /* Override HiddenMenuWrapper dark background to create yellow device frame */
-        :root {
-          --hm-content-bg: #FFD600 !important;
-        }
-        @media (prefers-color-scheme: dark) {
-          :root {
-            --hm-content-bg: #FFD600 !important;
-          }
-        }
-        #container {
-          background-color: #FFD600 !important;
-        }
-      `}</style>
-
-      {setupNeeded === null ? (
-        /* ── Loading ── */
-        <div style={{
-          minHeight: '100vh',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexDirection: 'column',
-          gap: 16,
-          backgroundColor: '#FFD600',
-        }}>
-          <PixelFace talking={false} size={100} />
-          <div style={{
-            fontFamily: "'VT323', monospace",
-            fontSize: '1.4rem',
-            color: '#000',
-            opacity: 0.5,
-            animation: 'blink 1.5s step-end infinite',
-          }}>
-            BOOTING...
-          </div>
-        </div>
-      ) : setupNeeded ? (
-        /* ── Setup Screen ── */
-        <SetupScreen
-          getAuthHeaders={getAuthHeaders}
-          onComplete={() => { setSetupNeeded(false); setConnected(true); }}
-        />
-      ) : !hasMessages ? (
-        /* ── Welcome Screen ── */
-        <div style={{
-          minHeight: '100vh',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 16,
-          backgroundColor: '#FFD600',
-        }}>
-          <div style={{ width: '100%', maxWidth: 520, display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {/* Header panel */}
-            <div style={{
-              background: '#0F0F0F',
-              border: '4px solid #2a2a2a',
-              borderBottom: '1px dashed #333',
-              borderRadius: '12px 12px 0 0',
-              padding: 24,
-              boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              position: 'relative',
-            }}>
-              <div style={{
-                position: 'absolute',
-                top: 12,
-                left: 16,
-                fontFamily: "'VT323', monospace",
-                fontSize: '0.85rem',
-                color: '#AA8800',
-                letterSpacing: '0.2em',
-              }}>
-                SYS.VER.2.4 // ENG
-              </div>
-              <div style={{ position: 'absolute', top: 14, right: 16 }}>
-                <StatusDots ok={connected} />
-              </div>
-
-              <PixelFace talking={false} size={140} />
-
-              <div style={{
-                fontFamily: "'VT323', monospace",
-                fontSize: '0.9rem',
-                color: '#AA8800',
-                letterSpacing: '0.2em',
-                opacity: 0.6,
-                marginTop: 8,
-              }}>
-                STATUS: {connected ? 'ONLINE' : 'OFFLINE'}
-              </div>
-            </div>
-
-            {/* Main panel */}
-            <div style={{
-              background: '#0F0F0F',
-              border: '4px solid #2a2a2a',
-              borderTop: 'none',
-              borderRadius: '0 0 12px 12px',
-              padding: 24,
-              boxShadow: 'inset 0 -2px 10px rgba(0,0,0,0.5)',
-            }}>
-              <div style={{
-                fontFamily: "'VT323', monospace",
-                fontSize: '1.2rem',
-                color: '#FFD600',
-                textShadow: '0 0 2px #AA8800',
-                marginBottom: 16,
-              }}>
-                {'>'} BOOT_SEQUENCE_COMPLETE
-              </div>
-              <div style={{
-                fontFamily: "'VT323', monospace",
-                fontSize: '1.1rem',
-                color: '#FFD600',
-                textShadow: '0 0 2px #AA8800',
-                lineHeight: 1.5,
-                marginBottom: 20,
-              }}>
-                {'>'} HELLO. I AM JULIAN, YOUR PERSISTENT COMPANION. USE THE INPUT BUFFER BELOW TO BEGIN.
-              </div>
-
-              <div style={{
-                fontFamily: "'VT323', monospace",
-                fontSize: '0.9rem',
-                color: '#444',
-                display: 'flex',
-                gap: 16,
-                flexWrap: 'wrap',
-                marginBottom: 16,
-              }}>
-                <span>[PERSISTENT PROCESS]</span>
-                <span>[FIREPROOF SYNC]</span>
-                <span>[SSE STREAMING]</span>
-                <span>[TOOL CALLS]</span>
-              </div>
-
-              <ChatInput onSend={sendMessage} disabled={streaming} />
-            </div>
-          </div>
-        </div>
-      ) : (
-        /* ── Two-Column Chat + Artifact Interface ── */
-        <div style={{
-          display: 'flex',
-          height: '100vh',
-          padding: 16,
-          gap: 16,
-          backgroundColor: '#FFD600',
-        }}>
-          {/* Left column: Chat sidebar */}
-          <div style={{
-            width: 420,
-            minWidth: 320,
-            flexShrink: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            height: '100%',
-          }}>
-            {/* Face header */}
-            <div style={{
-              background: '#0F0F0F',
-              border: '4px solid #2a2a2a',
-              borderBottom: '1px dashed #333',
-              borderRadius: '12px 12px 0 0',
-              padding: '12px 16px',
-              boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              position: 'relative',
-            }}>
-              <div style={{ position: 'absolute', top: 8, left: 12 }}>
-                <span style={{
-                  fontFamily: "'VT323', monospace",
-                  fontSize: '0.75rem',
-                  color: '#AA8800',
-                  letterSpacing: '0.2em',
-                }}>SYS.VER.2.4</span>
-              </div>
-              <div style={{ position: 'absolute', top: 10, right: 12 }}>
-                <StatusDots ok={connected} />
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16, width: '100%' }}>
-                <PixelFace talking={streaming} size={56} />
-                <div style={{ flex: 1 }}>
-                  <div style={{
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '1.4rem',
-                    color: '#FFD600',
-                    letterSpacing: '0.05em',
-                  }}>
-                    JULIAN
-                  </div>
-                  <div style={{
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '0.85rem',
-                    color: '#AA8800',
-                    opacity: 0.6,
-                  }}>
-                    {streaming ? 'PROCESSING...' : 'LISTENING'}
-                  </div>
-                </div>
-                <button
-                  onClick={startNewConversation}
-                  style={{
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '0.85rem',
-                    color: '#AA8800',
-                    background: '#1a1a00',
-                    border: '1px solid #333',
-                    borderRadius: 4,
-                    padding: '4px 10px',
-                    cursor: 'pointer',
-                    textTransform: 'uppercase',
-                  }}
-                >
-                  NEW
-                </button>
-              </div>
-            </div>
-
-            {/* CRT overlay for chat area */}
-            <div style={{
-              flex: 1,
-              background: '#0F0F0F',
-              border: '4px solid #2a2a2a',
-              borderTop: 'none',
-              borderBottom: 'none',
-              overflowY: 'auto',
-              padding: 16,
-              position: 'relative',
-            }}>
-              {/* CRT scanlines */}
-              <div style={{
-                position: 'absolute',
-                inset: 0,
-                background: 'linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,0.1) 50%), linear-gradient(90deg, rgba(255,0,0,0.06), rgba(0,255,0,0.02), rgba(0,0,255,0.06))',
-                backgroundSize: '100% 2px, 3px 100%',
-                opacity: 0.1,
-                pointerEvents: 'none',
-                zIndex: 5,
-              }} />
-              <div style={{ position: 'relative', zIndex: 1 }}>
-                {displayMessages.map(msg => (
-                  <MessageBubble key={msg.id} message={msg} />
-                ))}
-                <div ref={messagesEndRef} />
-              </div>
-            </div>
-
-            {/* Input footer */}
-            <div style={{
-              background: '#0F0F0F',
-              border: '4px solid #2a2a2a',
-              borderTop: '1px dashed #333',
-              borderRadius: '0 0 12px 12px',
-              padding: '0 16px',
-              boxShadow: 'inset 0 -2px 10px rgba(0,0,0,0.5)',
-            }}>
-              <ChatInput onSend={sendMessage} disabled={streaming} />
-            </div>
-          </div>
-
-          {/* Right column: Artifact viewer */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <ArtifactViewer
-              activeArtifact={activeArtifact}
-              artifacts={artifacts}
-              onSelect={setActiveArtifact}
-              getAuthHeaders={getAuthHeaders}
-            />
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-export default App;

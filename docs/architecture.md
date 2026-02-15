@@ -1,17 +1,60 @@
 # Julian — Technical Architecture
 
-Julian is a persistent, browser-based conversational agent built on Claude Code. A Bun server manages a long-lived Claude CLI subprocess and bridges its stream-json protocol to an SSE-driven React SPA. HTML artifacts (the agent's memory and creative output) live on the filesystem and are rendered in-browser via iframes. Deployed at **julian.exe.xyz**.
+Julian is a persistent, browser-based conversational agent built on Claude Code. A Bun server manages a long-lived Claude CLI subprocess and bridges its stream-json protocol to an SSE-driven React SPA, while also serving all static files directly. HTML artifacts (the agent's memory and creative output) live on the filesystem and are rendered in-browser via iframes. Deployed at **julian.exe.xyz**.
+
+## System Overview
+
+Two auth layers, one bridge.
+
+The first layer is **Clerk** — standard JWT-based auth that gates who can use the web UI at all. This is a security boundary, not a convenience feature. Julian has full access to Claude Code running with `--permission-mode acceptEdits` and tools including `Bash`, `Write`, `Read`, and `Edit`. If the web UI were open to the public, anyone could authenticate with their own Anthropic credentials and then instruct Julian to execute arbitrary commands on the server — read files, write code, run shell commands. Clerk ensures that only Marcus (the single trusted user) can reach Julian's frontend. Without it, the server is an unauthenticated remote code execution endpoint.
+
+You load the page, Clerk checks your session, and if you're not signed in you get a modal. Once you're in, every API call carries a Clerk JWT in both `Authorization` and `X-Authorization` headers — the dual-header thing is a workaround because the exe.dev edge proxy (at 44.254.50.18) terminates SSL and strips the standard `Authorization` header before forwarding to Bun on port 8000. Custom headers with an `X-` prefix pass through untouched, so the server checks both: `req.headers.get("Authorization") || req.headers.get("X-Authorization")`. The same code works in local dev (where `Authorization` isn't stripped) and in production (where `X-Authorization` carries it through). Server-side, we decode the Clerk publishable key to derive the JWKS endpoint and verify the JWT with the `jose` library.
+
+The second layer is **Anthropic credentials** — this is what lets the server's Claude subprocess actually talk to the Anthropic API. On first visit, `/api/health` returns `needsSetup: true`, and you get a setup screen. The interesting path is OAuth PKCE: the server generates a code verifier and challenge, stores the verifier in memory keyed by a random state param (10-minute TTL, cleaned every 60 seconds), and hands the frontend an authorization URL pointing at `claude.ai/oauth/authorize`. That opens in a new tab. The user authorizes, gets a code back, pastes it into our UI, and we exchange it server-side at `platform.claude.com/v1/oauth/token` with the stored verifier. Tokens get written to `~/.claude/.credentials.json` with `0o600` permissions. There's also a legacy fallback where you just paste a `sk-ant-oat` token.
+
+### The Wake-Up Sequence
+
+Once both auth layers are satisfied, you hit "Start Session" and the real trick begins. The server spawns `claude --print --input-format stream-json --output-format stream-json --verbose --permission-mode acceptEdits` as a child process with stdin/stdout pipes. But a freshly spawned Claude process has no context — it doesn't know it's Julian, doesn't know who Marcus is, doesn't know about the artifact system. The wake-up message is what bridges that gap.
+
+Immediately after spawning, the server sends this exact string through `writeTurn()`:
+
+```
+You are waking up in a new session. Read your CLAUDE.md and artifacts to remember who you are. Then greet Marcus briefly.
+```
+
+This single sentence triggers a cascade. `writeTurn()` formats it as a stream-json JSONL message — `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"..."}]}}` — and writes it to the subprocess's stdin. The Claude process, running from `WORKING_DIR` (which is `/opt/julian/` in production), reads its `CLAUDE.md` file. That file contains:
+
+1. The instruction to communicate via interactive HTML artifacts
+2. The complete artifact tracking list — every HTML document Julian has ever created, with descriptions
+3. The pointer to `architecture.md` for technical context
+4. Deployment details
+
+By reading `CLAUDE.md`, the subprocess discovers the artifact list and can then read the artifacts themselves (like `naming.html`, `wager.html`, `goodnight.html`) to reconstruct its history, its name, and the decisions that define it. The wake-up message's instruction to "remember who you are" is literal — the subprocess must actively read files to reconstitute Julian's identity.
+
+The wake-up response streams back to the browser through the same SSE path used for regular chat messages. On the frontend, `startSession()` creates a live assistant message with `thinking: true, streaming: true` and renders it in the chat UI as the response arrives. The same Write-tool detection that handles regular chat operates during wake-up too — if Julian writes an HTML artifact as part of waking up, the frontend auto-loads it in the iframe viewer. Once the `result` event arrives, the wake-up message is persisted to Fireproof like any other assistant message, so it appears in the conversation history.
+
+The wake-up message is the single point where Julian's identity is bootstrapped each session. Its exact wording, and the contents of `CLAUDE.md` it triggers the subprocess to read, determine who Julian "is" for the duration of that session. Any changes to the wake-up message or to `CLAUDE.md` directly affect Julian's behavior and self-understanding.
+
+### The Bridge
+
+From there, it's a bridge: user sends a chat message, Clerk JWT is verified, the message is written to Claude's stdin as a `{"type":"user","message":...}` JSON line, and Claude's stdout events get forwarded as SSE `data:` frames. A turn lock (promise chain) serializes everything so only one message processes at a time. There's a heartbeat every 5 seconds to keep the SSE connection alive, a 120-second inactivity timeout, and a 5-minute max timeout per turn.
+
+On the frontend, the SSE stream is parsed manually — split on newlines, look for `data:` prefix, JSON.parse each payload. As `assistant` events arrive, the UI renders streaming text. When Claude writes an HTML file via the Write tool, the frontend detects it and auto-loads the artifact in an iframe after a 1.5-second delay. Every message (user and assistant) gets persisted to Fireproof so the conversation survives page refreshes.
+
+**Lifecycle**: the Claude process dies after 15 minutes of inactivity, tokens refresh proactively when within 30 minutes of expiry, and the PKCE state entries self-clean after 10 minutes.
+
+The whole thing is a single Claude subprocess per server — no user isolation, no horizontal scaling. One process, one user, stdin/stdout as the protocol, SSE as the transport, two auth layers keeping it locked down.
 
 ## Request Flow
 
 ```
 Browser (index.html)
-  │  Clerk JWT in Authorization header
+  │  Clerk JWT in both Authorization + X-Authorization headers
   ▼
-nginx (julian.exe.xyz:443)
-  │  proxy_pass
+exe.dev edge proxy (44.254.50.18)
+  │  SSL termination — strips Authorization header
   ▼
-Bun server (server.ts, port 3847)
+Bun server (server/server.ts, port 8000)
   │  stream-json on stdin
   ▼
 claude CLI subprocess (persistent, --print mode)
@@ -30,9 +73,9 @@ Browser (React state → Fireproof put)
 
 | Layer | Technology | Notes |
 |-------|-----------|-------|
-| Runtime | Bun | Server + process spawning |
-| Server | `server.ts` (684 lines) | HTTP, SSE, process management |
-| Frontend | `index.html` (3952 lines) | Single-file SPA, no build step |
+| Runtime | Bun | Server + process spawning + static files |
+| Server | `server/server.ts` (~740 lines) | HTTP, SSE, static serving, process management |
+| Frontend | `index.html` (~4200 lines) | Single-file SPA, no build step |
 | Framework | React 19 via CDN | ESM import maps, esm.sh |
 | Transpiler | Babel Standalone 7.26 | In-browser JSX compilation |
 | CSS | Tailwind Browser 4 + CSS variables | No build step |
@@ -42,32 +85,31 @@ Browser (React state → Fireproof put)
 | Font | VT323 (Google Fonts) | Monospace, retro terminal aesthetic |
 | Design system | Vibes DIY (25 components) | BrutalistCard, VibesButton, HiddenMenuWrapper, etc. |
 
-## Server (`server.ts`)
+## Server (`server/server.ts`)
 
 ### Process Management
 
 The server maintains a single persistent Claude CLI subprocess:
 
 - **Spawn command**: `claude --print --input-format stream-json --output-format stream-json --verbose --permission-mode acceptEdits --allowedTools Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch`
-- **Session resume**: If the process dies mid-conversation, `--resume <sessionId>` resumes the previous session. Session ID is captured from `result` events.
-- **`ensureProcess()`**: Called before every turn. Respawns the subprocess if it has exited.
-- **Deferred restart on token refresh**: If a token refresh occurs during an active turn (`activeListener !== null`), the process kill is deferred with a 2-second polling loop (max 5 minutes).
+- **Single process model**: The Claude process is spawned once via `startSession()`. If it dies, the user must explicitly start a new session — there is no automatic respawn or session resume.
 
 ### HTTP Endpoints
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| `GET` | `/api/health` | Clerk JWT | Returns `{ status, processAlive, needsSetup, authMethod }` |
-| `POST` | `/api/setup` | Clerk JWT | Saves `sk-ant-oat` token to `claude-auth.env`, restarts Claude |
-| `GET` | `/api/oauth/start` | Clerk JWT | Generates PKCE challenge, returns Anthropic authorization URL |
-| `POST` | `/api/oauth/exchange` | Clerk JWT | Exchanges authorization code for OAuth tokens, saves to `claude-auth.json` |
-| `POST` | `/api/chat` | Clerk JWT | Sends message to Claude stdin, returns SSE stream of events |
-| `GET` | `/api/artifacts` | Clerk JWT | Lists `*.html` files (excluding `index.html`) sorted by mtime desc |
-| `GET` | `/api/artifacts/:filename` | None | Serves HTML artifact file (unauthenticated — iframes can't send Bearer headers) |
-| `GET` | `/` or `/index.html` | None | Serves `index.html` (dev fallback; nginx serves in production) |
+| `GET` | `/api/health` | None | Returns `{ status, processAlive, needsSetup, authMethod }` |
+| `POST` | `/api/setup` | Clerk JWT | Saves `sk-ant-oat` token to `claude-auth.env` |
+| `GET` | `/api/oauth/start` | None | Generates PKCE challenge, returns Anthropic authorization URL |
+| `POST` | `/api/oauth/exchange` | None | Exchanges authorization code for OAuth tokens |
+| `POST` | `/api/session/start` | Clerk JWT | Spawns Claude subprocess, streams wake-up SSE response |
+| `POST` | `/api/session/end` | Clerk JWT | Kills Claude subprocess |
+| `POST` | `/api/chat` | Clerk JWT | Sends message to Claude stdin, returns SSE stream |
+| `GET` | `/api/artifacts` | Clerk JWT | Lists `*.html` files from `memory/` sorted by mtime desc |
+| `GET` | `/api/artifacts/:filename` | None | Serves HTML artifact file (iframes can't send headers) |
 | `OPTIONS` | `*` | None | CORS preflight |
 
-Static file whitelist (dev fallback): `fireproof-clerk-bundle.js`, `favicon.svg`, `favicon.ico`, `favicon-96x96.png`, `apple-touch-icon.png`, `site.webmanifest`, `sw.js`, PWA manifest icons.
+The server also serves all static files from `WORKING_DIR` and provides SPA fallback to `index.html` for client-side routes.
 
 ### SSE Streaming
 
@@ -141,7 +183,7 @@ User visits julian.exe.xyz
 
 A single HTML file containing everything: CSS variables, Vibes design system components (25 pre-compiled React components in a `<script type="module">` block), and the main application in a `<script type="text/babel" data-type="module">` block transpiled by Babel Standalone at runtime.
 
-**Module loading**: ESM import maps resolve `react`, `react-dom`, `@clerk/clerk-react`, `use-fireproof`, and `@fireproof/clerk` to CDN URLs (esm.sh) or local bundles (`/fireproof-clerk-bundle.js`).
+**Module loading**: ESM import maps resolve `react`, `react-dom`, `@clerk/clerk-react`, `use-fireproof`, and `@fireproof/clerk` to CDN URLs (esm.sh) or local bundles (`/bundles/fireproof-clerk-bundle.js`).
 
 ### Auth Flow
 
@@ -220,7 +262,7 @@ Both tabs poll `/api/health` after setup until `processAlive && !needsSetup`.
 
 | Layer | What | Where | Sync |
 |-------|------|-------|------|
-| Filesystem | HTML artifacts (~37 files) | `/opt/julian/*.html` (prod), `WORKING_DIR` (dev) | None (manual rsync deploy) |
+| Filesystem | HTML artifacts (~44 files) | `/opt/julian/memory/*.html` (prod), `WORKING_DIR/memory` (dev) | None (manual rsync deploy) |
 | Fireproof CRDT | Chat messages | IndexedDB + cloud sync via Clerk auth | Automatic cross-device |
 | Server memory | OAuth tokens (also persisted to JSON/env), PKCE state, turn lock, session ID | Bun process | Lost on restart (except token files) |
 
@@ -240,7 +282,7 @@ User types → ChatInput.handleSend()
 ### Artifact Lifecycle
 
 ```
-Claude executes Write tool → file written to WORKING_DIR
+Claude executes Write tool → file written to WORKING_DIR/memory/
   → Frontend detects Write tool_use in SSE stream
   → setTimeout(loadArtifact, 1500) for the written filename
   → GET /api/artifacts returns updated file list
@@ -259,15 +301,19 @@ Claude executes Write tool → file written to WORKING_DIR
 
 **Production**: `julian.exe.xyz`
 
-- nginx reverse-proxies to Bun on port 3847
-- nginx serves static files directly; Bun serves them only as dev fallback
+- Bun serves everything (static files + API) on port 8000
+- exe.dev edge proxy routes HTTPS traffic to port 8000
 - Files live at `/opt/julian/` on the server
 
 **Deploy process** (manual):
 
 ```bash
-rsync server.ts index.html *.html /opt/julian/ user@julian.exe.xyz:/opt/julian/
-ssh julian.exe.xyz "cd /opt/julian && bun server.ts"
+rsync -avz --exclude='.git' --exclude='node_modules' \
+  index.html sw.js package.json server memory bundles assets julianscreen deploy \
+  julian.exe.xyz:/opt/julian/
+scp deploy/CLAUDE.server.md julian.exe.xyz:/opt/julian/CLAUDE.md
+ssh julian.exe.xyz "cd /opt/julian && /home/exedev/.bun/bin/bun install && \
+  sudo systemctl restart julian julian-screen"
 ```
 
 No CI/CD pipeline. No automated tests.
@@ -278,7 +324,7 @@ No CI/CD pipeline. No automated tests.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `PORT` | `3847` | Bun HTTP server port |
+| `PORT` | `8000` | Bun HTTP server port |
 | `WORKING_DIR` | `process.cwd()` | Directory for Claude subprocess and artifact storage |
 | `ALLOWED_ORIGIN` | `*` | CORS `Access-Control-Allow-Origin` header |
 | `VITE_CLERK_PUBLISHABLE_KEY` | (none) | Clerk publishable key for JWT verification |
@@ -302,14 +348,22 @@ Set in `window.__VIBES_CONFIG__` (hardcoded in index.html):
 }
 ```
 
+## JulianScreen (Pixel Display)
+
+A standalone 128x96 pixel display driven by text commands via HTTP. Runs on port 3848 alongside the main server on 8000. Any Claude Code agent can send commands like `S happy` or `T Hello!` via `curl -X POST localhost:3848/cmd` to control an animated avatar, backgrounds, speech bubbles, buttons, and effects.
+
+See [`docs/julianscreen.md`](julianscreen.md) for the complete SDK reference: command protocol, coordinate system, rendering pipeline, sprite data formats, and integration patterns.
+
+**Quick start:** `bun run julianscreen/server/index.js` → open `http://localhost:3848` → send commands via curl.
+
 ## Known Issues & Debt
 
-- **OAuth flow working**: Direct PKCE flow (no subprocess) implemented in server.ts. Legacy `sk-ant-oat` token paste also supported as fallback.
+- **OAuth flow working**: Direct PKCE flow (no subprocess) implemented in `server/server.ts`. Legacy `sk-ant-oat` token paste also supported as fallback.
 - **Monolithic `index.html`**: 3952 lines with no build step means no code splitting, tree shaking, or minification. The Vibes design system alone is ~1500 lines of pre-compiled React components.
 - **Manual SSE parsing**: The frontend manually reads the response body stream and parses `data: ` lines. Could use the native `EventSource` API (though POST support would require a wrapper).
 - **Artifact polling**: 10-second interval poll to `/api/artifacts`. Could use filesystem watch + WebSocket push for instant updates.
-- **No CI/CD**: Manual rsync + ssh deploy.
 - **No automated tests**: No unit, integration, or e2e tests.
 - **Iframe sandbox**: Artifacts run with `allow-scripts` but without `allow-same-origin`, limiting their access to parent page APIs. This is intentional for security but limits artifact-to-app communication.
 - **Backup file accumulation**: 17 `index.*.bak.html` files in the project root from iterative development.
 - **Single-process architecture**: One Claude subprocess serves all users. No horizontal scaling or user isolation.
+- **PWA staleness and compatibility**: Service worker (`sw.js`) is active but has cache staleness issues and Clerk auth may break in standalone mode. See [`WIP.md`](WIP.md) for full audit and fix checklist.

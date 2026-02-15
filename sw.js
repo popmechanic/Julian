@@ -1,12 +1,12 @@
-const CACHE_NAME = 'julian-v2';
+const CACHE_NAME = 'julian-v3';
 const APP_SHELL = [
   '/',
-  '/fireproof-clerk-bundle.js',
-  '/favicon-96x96.png',
-  '/apple-touch-icon.png',
-  '/web-app-manifest-192x192.png',
-  '/web-app-manifest-512x512.png',
-  '/site.webmanifest',
+  '/bundles/fireproof-clerk-bundle.js',
+  '/assets/icons/favicon-96x96.png',
+  '/assets/icons/apple-touch-icon.png',
+  '/assets/icons/web-app-manifest-192x192.png',
+  '/assets/icons/web-app-manifest-512x512.png',
+  '/assets/icons/site.webmanifest',
 ];
 
 self.addEventListener('install', (event) => {

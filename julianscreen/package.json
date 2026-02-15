@@ -1,0 +1,7 @@
+{
+  "name": "julianscreen",
+  "version": "0.1.0",
+  "scripts": {
+    "start": "bun run server/index.js"
+  }
+}
