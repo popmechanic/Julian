@@ -36,6 +36,36 @@ Determine the target VM name:
    - If dirty, warn the user but don't block (they may want to test local changes)
 3. Confirm the target: print the VM name and URL (`https://<vmname>.exe.xyz/`)
 
+### Clerk Pre-flight
+
+Read the local `.env` file and check for `VITE_CLERK_PUBLISHABLE_KEY`:
+
+- **If present** (matches `pk_(test|live)_*`): Extract the value and store it for Step 5. Proceed silently.
+- **If missing or invalid**: STOP deployment and guide the user:
+  - Option A: Run `/vibes:connect` to set up Clerk + Connect end-to-end
+  - Option B: Manually add `VITE_CLERK_PUBLISHABLE_KEY=pk_test_...` to `.env`
+  - Remind them to create the `with-email` JWT template in Clerk Dashboard:
+    1. Go to Clerk Dashboard → Configure → JWT Templates
+    2. Create a new template named **`with-email`**
+    3. Set custom claims JSON (the `|| ''` fallbacks are required — Fireproof Studio rejects null names):
+       ```json
+       {
+         "params": {
+           "email": "{{user.primary_email_address}}",
+           "email_verified": "{{user.email_verified}}",
+           "external_id": "{{user.external_id}}",
+           "first": "{{user.first_name || ''}}",
+           "last": "{{user.last_name || ''}}",
+           "name": "{{user.full_name || ''}}",
+           "image_url": "{{user.image_url}}",
+           "public_meta": "{{user.public_metadata}}"
+         },
+         "role": "authenticated",
+         "userId": "{{user.id}}"
+       }
+       ```
+  - After the user fixes `.env`, re-run the deploy
+
 ## Deployment Steps
 
 ### Step 1: Ensure VM exists and has Bun
@@ -112,12 +142,16 @@ This installs `jose` and any other dependencies from `package.json`. Use the ful
 
 ### Step 5: Create .env file
 
+Use the `VITE_CLERK_PUBLISHABLE_KEY` value extracted during the Clerk Pre-flight check (do NOT hardcode it):
+
 ```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cat > /opt/julian/.env << 'ENVEOF'
-VITE_CLERK_PUBLISHABLE_KEY=pk_test_aW50ZXJuYWwtZGluZ28tMjguY2xlcmsuYWNjb3VudHMuZGV2JA
+VITE_CLERK_PUBLISHABLE_KEY=<value from local .env>
 ALLOWED_ORIGIN=https://<vmname>.exe.xyz
 ENVEOF"
 ```
+
+Replace `<value from local .env>` with the actual key read during pre-flight (e.g., `pk_test_aW50ZXJu...`). Never hardcode this value in the skill itself.
 
 ### Step 6: Install and start systemd services
 
@@ -187,4 +221,5 @@ If it exists, skip Steps 5 and 6's systemd install — just rsync, install deps,
 - **Service won't start / no journal entries**: Usually means Bun is missing. Verify with `ssh <vmname>.exe.xyz "/home/exedev/.bun/bin/bun --version"`. If missing, run the Bun install from Step 1.
 - **curl returns connection refused on port 8000**: The `julian` service isn't running. Check logs: `ssh <vmname>.exe.xyz "journalctl -u julian -n 20 --no-pager"`. Common causes: missing Bun binary, missing `jose` dependency (run `bun install`).
 - **Old nginx still running**: If the VM had the old setup, nginx may be intercepting requests on port 8000. Run the migration step in Step 6 to stop and disable nginx and the old julian-bridge service.
+- **401 on `/tokens/with-email`**: The Clerk instance is missing the `with-email` JWT template. Create it in Clerk Dashboard → Configure → JWT Templates. Name it exactly `with-email`. Claims must include a `params` object with email/name fields (use `|| ''` fallbacks — Fireproof Studio rejects null names), `"role": "authenticated"`, and `"userId": "{{user.id}}"`. See the Clerk Pre-flight section above for the full claims JSON. This is a one-time setup per Clerk instance. After creating the template, reload the deployed site — no redeploy needed.
 - **VM creation fails**: Check exe.dev status, retry once.

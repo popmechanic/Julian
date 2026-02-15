@@ -15,6 +15,39 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Julian" />
     <script>globalThis.process = { env: { NODE_ENV: "production" } };</script>
+    <script>
+      // One-time IndexedDB migration: clear corrupted Fireproof CRDT state
+      // caused by failed auth syncs (401 on /tokens/with-email).
+      // Bump DB_VERSION to re-trigger if corruption recurs.
+      (function() {
+        var DB_VERSION = 1;
+        var KEY = 'fp_migration_v' + DB_VERSION;
+        if (localStorage.getItem(KEY)) return;
+        var dbs = indexedDB.databases ? indexedDB.databases() : Promise.resolve([]);
+        dbs.then(function(databases) {
+          var fpDbs = databases.filter(function(db) {
+            return db.name && db.name.indexOf('fireproof') !== -1;
+          });
+          if (fpDbs.length === 0) {
+            localStorage.setItem(KEY, Date.now());
+            return;
+          }
+          var deleted = 0;
+          fpDbs.forEach(function(db) {
+            var req = indexedDB.deleteDatabase(db.name);
+            req.onsuccess = req.onerror = function() {
+              deleted++;
+              if (deleted === fpDbs.length) {
+                localStorage.setItem(KEY, Date.now());
+                location.reload();
+              }
+            };
+          });
+        }).catch(function() {
+          localStorage.setItem(KEY, Date.now());
+        });
+      })();
+    </script>
     <script src="https://unpkg.com/@babel/standalone@7.26.0/babel.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <!-- JulianScreen client modules (must load in order: renderer creates window.JScreen, others attach to it) -->
