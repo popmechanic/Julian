@@ -66,22 +66,47 @@ A 128x96 pixel display you can drive via `curl -X POST localhost:3848/cmd -d 'S 
 
 ## Deployment
 
-- **nginx** serves static files from `/var/www/html/` (not `/opt/julian/`)
-- **server/server.ts** runs from `/opt/julian/` via systemd service `julian-bridge`
-- **`.env`** at `/opt/julian/.env` has `VITE_CLERK_PUBLISHABLE_KEY` (loaded by Bun automatically)
-
-### Deploy commands
+Use the `/julian:deploy` skill to deploy Julian instances. Load the plugin with:
 
 ```bash
-# Sync source files to server
-rsync -avz index.html sw.js server/ memory/ bundles/ assets/ julian.exe.xyz:/opt/julian/
+claude --plugin-dir ./julian-plugin
+```
 
-# Copy static files to where nginx actually serves them
-ssh julian.exe.xyz "sudo cp /opt/julian/index.html /var/www/html/index.html"
-ssh julian.exe.xyz "sudo cp /opt/julian/sw.js /var/www/html/sw.js"
-ssh julian.exe.xyz "sudo cp -r /opt/julian/bundles/ /var/www/html/bundles/"
-ssh julian.exe.xyz "sudo cp -r /opt/julian/assets/ /var/www/html/assets/"
+### Deploy skill usage
 
-# Restart the bridge service
-ssh julian.exe.xyz "sudo systemctl restart julian-bridge"
+```bash
+/julian:deploy              # Deploy to julian-<branch>.exe.xyz (auto-derived from git branch)
+/julian:deploy screen-test  # Deploy to julian-screen-test.exe.xyz
+/julian:deploy julian       # Deploy to production (requires confirmation)
+```
+
+The skill handles VM creation, rsync, nginx config, systemd services, .env setup, and verification automatically.
+
+### How it works
+
+- **nginx** serves static files from `/var/www/html/`, proxies `/api/` to Bun on port 3847
+- **server/server.ts** runs via systemd service `julian-bridge` (port 3847)
+- **julianscreen/server/index.js** runs via systemd service `julian-screen` (port 3848)
+- **`.env`** at `/opt/julian/.env` has `VITE_CLERK_PUBLISHABLE_KEY` and `ALLOWED_ORIGIN`
+- **Auth**: Clerk works automatically on any domain. Anthropic credentials require one-time setup on first visit.
+
+### Config files
+
+Deploy templates live in `deploy/`:
+- `deploy/nginx-julian.conf` — nginx site config
+- `deploy/julian-bridge.service` — systemd unit for the bridge server
+- `deploy/julian-screen.service` — systemd unit for JulianScreen
+
+### Manual deploy (fallback)
+
+```bash
+rsync -avz --exclude='.git' --exclude='node_modules' \
+  index.html sw.js server/ memory/ bundles/ assets/ julianscreen/ deploy/ \
+  julian.exe.xyz:/opt/julian/
+
+ssh julian.exe.xyz "sudo cp /opt/julian/index.html /var/www/html/ && \
+  sudo cp /opt/julian/sw.js /var/www/html/ && \
+  sudo cp -r /opt/julian/bundles/ /var/www/html/ && \
+  sudo cp -r /opt/julian/assets/ /var/www/html/ && \
+  sudo systemctl restart julian-bridge julian-screen"
 ```

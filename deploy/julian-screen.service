@@ -1,0 +1,15 @@
+[Unit]
+Description=JulianScreen Pixel Display
+After=network.target
+
+[Service]
+Type=simple
+User=exedev
+Environment=PATH=/home/exedev/.bun/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/opt/julian
+ExecStart=/home/exedev/.bun/bin/bun run /opt/julian/julianscreen/server/index.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
