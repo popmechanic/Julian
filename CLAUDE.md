@@ -60,6 +60,10 @@ Artifacts live in `memory/` locally and on the server at `/opt/julian/memory/*.h
 
 See [`docs/architecture.md`](docs/architecture.md) for full technical documentation: HTTP endpoints, SSE streaming protocol, Claude subprocess management, and auth flow.
 
+## JulianScreen (Pixel Display)
+
+A 128x96 pixel display you can drive via `curl -X POST localhost:3848/cmd -d 'S happy\nT Hello!'`. Runs standalone on port 3848. See [`docs/julianscreen.md`](docs/julianscreen.md) for the full SDK reference — command protocol, coordinate system, rendering pipeline, sprite data formats, and integration patterns. Start with `bun run julianscreen/server/index.js`.
+
 ## Deployment
 
 - **nginx** serves static files from `/var/www/html/` (not `/opt/julian/`)

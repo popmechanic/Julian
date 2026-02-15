@@ -351,6 +351,14 @@ Set in `window.__VIBES_CONFIG__` (hardcoded in index.html):
 }
 ```
 
+## JulianScreen (Pixel Display)
+
+A standalone 128x96 pixel display driven by text commands via HTTP. Runs on port 3848 alongside the chat bridge on 3847. Any Claude Code agent can send commands like `S happy` or `T Hello!` via `curl -X POST localhost:3848/cmd` to control an animated avatar, backgrounds, speech bubbles, buttons, and effects.
+
+See [`docs/julianscreen.md`](julianscreen.md) for the complete SDK reference: command protocol, coordinate system, rendering pipeline, sprite data formats, and integration patterns.
+
+**Quick start:** `bun run julianscreen/server/index.js` → open `http://localhost:3848` → send commands via curl.
+
 ## Known Issues & Debt
 
 - **OAuth flow working**: Direct PKCE flow (no subprocess) implemented in `server/server.ts`. Legacy `sk-ant-oat` token paste also supported as fallback.

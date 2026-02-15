@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JulianScreen</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #0a0a0a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  #wrap {
+    position: relative;
+    /* 128x96 scaled to fill viewport with integer scaling */
+  }
+  #screen {
+    display: block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #0F0F0F;
+  }
+  #status {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #333;
+    transition: background 0.3s;
+  }
+  #status.connected { background: #FFD600; }
+</style>
+</head>
+<body>
+
+<div id="wrap">
+  <canvas id="screen" width="128" height="96"></canvas>
+  <div id="status"></div>
+</div>
+
+<script src="renderer.js"></script>
+<script src="sprites.js"></script>
+<script src="tiles.js"></script>
+<script src="text.js"></script>
+<script src="input.js"></script>
+<script src="effects.js"></script>
+
+<script>
+(function() {
+  const canvas = document.getElementById('screen');
+  const statusDot = document.getElementById('status');
+  const wrap = document.getElementById('wrap');
+
+  // Scale canvas to fill viewport with integer scaling
+  function resize() {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const scaleX = Math.floor(vw / 128) || 1;
+    const scaleY = Math.floor(vh / 96) || 1;
+    const scale = Math.min(scaleX, scaleY);
+    const w = 128 * scale;
+    const h = 96 * scale;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    wrap.style.width = w + 'px';
+    wrap.style.height = h + 'px';
+    // Store scale for input hit-testing
+    window.JScreen._scale = scale;
+    window.JScreen._canvasRect = canvas.getBoundingClientRect();
+  }
+
+  window.addEventListener('resize', resize);
+
+  // Init renderer
+  JScreen.init(canvas);
+  resize();
+
+  // WebSocket connection
+  const wsUrl = `ws://${location.hostname || 'localhost'}:${location.port || 3848}/ws`;
+  let ws = null;
+  let reconnectTimer = null;
+
+  function connect() {
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      statusDot.classList.add('connected');
+      console.log('[JulianScreen] WebSocket connected');
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const commands = JSON.parse(event.data);
+        if (Array.isArray(commands)) {
+          // Filter out READY signals
+          const cmds = commands.filter(c => c.type !== 'READY');
+          if (cmds.length > 0) {
+            JScreen.enqueueCommands(cmds);
+          }
+        }
+      } catch (e) {
+        console.error('[JulianScreen] Bad message:', e);
+      }
+    };
+
+    ws.onclose = () => {
+      statusDot.classList.remove('connected');
+      console.log('[JulianScreen] Disconnected, reconnecting...');
+      reconnectTimer = setTimeout(connect, 2000);
+    };
+
+    ws.onerror = () => {
+      ws.close();
+    };
+  }
+
+  // Send feedback to server
+  window.JScreen.sendFeedback = function(event) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(event));
+    }
+  };
+
+  connect();
+})();
+</script>
+
+</body>
+</html>
