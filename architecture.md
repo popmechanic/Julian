@@ -360,3 +360,4 @@ Set in `window.__VIBES_CONFIG__` (hardcoded in index.html):
 - **Iframe sandbox**: Artifacts run with `allow-scripts` but without `allow-same-origin`, limiting their access to parent page APIs. This is intentional for security but limits artifact-to-app communication.
 - **Backup file accumulation**: 17 `index.*.bak.html` files in the project root from iterative development.
 - **Single-process architecture**: One Claude subprocess serves all users. No horizontal scaling or user isolation.
+- **PWA staleness and compatibility**: Service worker (`sw.js`) is active but has cache staleness issues and Clerk auth may break in standalone mode. See [`WIP.md`](WIP.md) for full audit and fix checklist.
