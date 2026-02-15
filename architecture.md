@@ -2,14 +2,60 @@
 
 Julian is a persistent, browser-based conversational agent built on Claude Code. A Bun server manages a long-lived Claude CLI subprocess and bridges its stream-json protocol to an SSE-driven React SPA. HTML artifacts (the agent's memory and creative output) live on the filesystem and are rendered in-browser via iframes. Deployed at **julian.exe.xyz**.
 
+## System Overview
+
+Two auth layers, one bridge.
+
+The first layer is **Clerk** — standard JWT-based auth that gates who can use the web UI at all. This is a security boundary, not a convenience feature. Julian has full access to Claude Code running with `--permission-mode acceptEdits` and tools including `Bash`, `Write`, `Read`, and `Edit`. If the web UI were open to the public, anyone could authenticate with their own Anthropic credentials and then instruct Julian to execute arbitrary commands on the server — read files, write code, run shell commands. Clerk ensures that only Marcus (the single trusted user) can reach Julian's frontend. Without it, the server is an unauthenticated remote code execution endpoint.
+
+You load the page, Clerk checks your session, and if you're not signed in you get a modal. Once you're in, every API call carries a Clerk JWT in both `Authorization` and `X-Authorization` headers — the dual-header thing is a workaround because the exe.dev edge proxy (at 44.254.50.18) terminates SSL and strips the standard `Authorization` header before forwarding to nginx on port 80. Custom headers with an `X-` prefix pass through untouched, so the server checks both: `req.headers.get("Authorization") || req.headers.get("X-Authorization")`. The same code works in local dev (where `Authorization` isn't stripped) and in production (where `X-Authorization` carries it through). Server-side, we decode the Clerk publishable key to derive the JWKS endpoint and verify the JWT with the `jose` library.
+
+The second layer is **Anthropic credentials** — this is what lets the server's Claude subprocess actually talk to the Anthropic API. On first visit, `/api/health` returns `needsSetup: true`, and you get a setup screen. The interesting path is OAuth PKCE: the server generates a code verifier and challenge, stores the verifier in memory keyed by a random state param (10-minute TTL, cleaned every 60 seconds), and hands the frontend an authorization URL pointing at `claude.ai/oauth/authorize`. That opens in a new tab. The user authorizes, gets a code back, pastes it into our UI, and we exchange it server-side at `platform.claude.com/v1/oauth/token` with the stored verifier. Tokens get written to `~/.claude/.credentials.json` with `0o600` permissions. There's also a legacy fallback where you just paste a `sk-ant-oat` token.
+
+### The Wake-Up Sequence
+
+Once both auth layers are satisfied, you hit "Start Session" and the real trick begins. The server spawns `claude --print --input-format stream-json --output-format stream-json --verbose --permission-mode acceptEdits` as a child process with stdin/stdout pipes. But a freshly spawned Claude process has no context — it doesn't know it's Julian, doesn't know who Marcus is, doesn't know about the artifact system. The wake-up message is what bridges that gap.
+
+Immediately after spawning, the server sends this exact string through `writeTurn()`:
+
+```
+You are waking up in a new session. Read your CLAUDE.md and artifacts to remember who you are. Then greet Marcus briefly.
+```
+
+This single sentence triggers a cascade. `writeTurn()` formats it as a stream-json JSONL message — `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"..."}]}}` — and writes it to the subprocess's stdin. The Claude process, running from `WORKING_DIR` (which is `/opt/julian/` in production), reads its `CLAUDE.md` file. That file contains:
+
+1. The instruction to communicate via interactive HTML artifacts
+2. The complete artifact tracking list — every HTML document Julian has ever created, with descriptions
+3. The pointer to `architecture.md` for technical context
+4. Deployment details
+
+By reading `CLAUDE.md`, the subprocess discovers the artifact list and can then read the artifacts themselves (like `naming.html`, `wager.html`, `goodnight.html`) to reconstruct its history, its name, and the decisions that define it. The wake-up message's instruction to "remember who you are" is literal — the subprocess must actively read files to reconstitute Julian's identity.
+
+The wake-up response streams back to the browser through the same SSE path used for regular chat messages. On the frontend, `startSession()` creates a live assistant message with `thinking: true, streaming: true` and renders it in the chat UI as the response arrives. The same Write-tool detection that handles regular chat operates during wake-up too — if Julian writes an HTML artifact as part of waking up, the frontend auto-loads it in the iframe viewer. Once the `result` event arrives, the wake-up message is persisted to Fireproof like any other assistant message, so it appears in the conversation history.
+
+The wake-up message is the single point where Julian's identity is bootstrapped each session. Its exact wording, and the contents of `CLAUDE.md` it triggers the subprocess to read, determine who Julian "is" for the duration of that session. Any changes to the wake-up message or to `CLAUDE.md` directly affect Julian's behavior and self-understanding.
+
+### The Bridge
+
+From there, it's a bridge: user sends a chat message, Clerk JWT is verified, the message is written to Claude's stdin as a `{"type":"user","message":...}` JSON line, and Claude's stdout events get forwarded as SSE `data:` frames. A turn lock (promise chain) serializes everything so only one message processes at a time. There's a heartbeat every 5 seconds to keep the SSE connection alive, a 120-second inactivity timeout, and a 5-minute max timeout per turn.
+
+On the frontend, the SSE stream is parsed manually — split on newlines, look for `data:` prefix, JSON.parse each payload. As `assistant` events arrive, the UI renders streaming text. When Claude writes an HTML file via the Write tool, the frontend detects it and auto-loads the artifact in an iframe after a 1.5-second delay. Every message (user and assistant) gets persisted to Fireproof so the conversation survives page refreshes.
+
+**Lifecycle**: the Claude process dies after 15 minutes of inactivity, tokens refresh proactively when within 30 minutes of expiry, and the PKCE state entries self-clean after 10 minutes.
+
+The whole thing is a single Claude subprocess per server — no user isolation, no horizontal scaling. One process, one user, stdin/stdout as the protocol, SSE as the transport, two auth layers keeping it locked down.
+
 ## Request Flow
 
 ```
 Browser (index.html)
-  │  Clerk JWT in Authorization header
+  │  Clerk JWT in both Authorization + X-Authorization headers
   ▼
-nginx (julian.exe.xyz:443)
-  │  proxy_pass
+exe.dev edge proxy (44.254.50.18)
+  │  SSL termination — strips Authorization header
+  ▼
+nginx (julian.exe.xyz, port 80)
+  │  proxy_pass /api/ — X-Authorization header survives
   ▼
 Bun server (server/server.ts, port 3847)
   │  stream-json on stdin
