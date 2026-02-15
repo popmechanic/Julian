@@ -1,7 +1,7 @@
 const CACHE_NAME = 'julian-v3';
 const APP_SHELL = [
   '/',
-  '/fireproof-clerk-bundle.js',
+  '/bundles/fireproof-clerk-bundle.js',
   '/assets/icons/favicon-96x96.png',
   '/assets/icons/apple-touch-icon.png',
   '/assets/icons/web-app-manifest-192x192.png',

@@ -6,7 +6,7 @@ Service worker (`sw.js`) is active and registered, but the installed PWA version
 
 ## Critical
 
-- **`fireproof-clerk-bundle.js` cached without versioning** — Deploys serve stale bundle until `CACHE_NAME` is manually bumped in `sw.js`. Users who installed the PWA get the old bundle indefinitely.
+- **`bundles/fireproof-clerk-bundle.js` cached without versioning** — Deploys serve stale bundle until `CACHE_NAME` is manually bumped in `sw.js`. Users who installed the PWA get the old bundle indefinitely.
 - **No SW update notification** — Users are stuck on old app version until the browser's ~24h automatic update check fires. No `updatefound`/`controllerchange` listener, no reload prompt.
 - **`@tailwindcss/browser@4` unpinned** — Cached at whatever version was first loaded from `esm.sh`. Never updates unless cache is cleared.
 
@@ -34,7 +34,7 @@ Service worker (`sw.js`) is active and registered, but the installed PWA version
 ## Fixes Needed for Full Parity
 
 - [ ] **SW update detection** — Listen for `updatefound`/`controllerchange`, prompt user to reload
-- [ ] **Cache-bust `fireproof-clerk-bundle.js`** — Content hash in filename or query string
+- [ ] **Cache-bust `bundles/fireproof-clerk-bundle.js`** — Content hash in filename or query string
 - [ ] **Pin Tailwind CDN** to specific patch version (e.g. `@tailwindcss/browser@4.1.8`)
 - [ ] **Handle Clerk auth in standalone mode** — Detect `display-mode: standalone` media query, use redirect-based auth instead of popup
 - [ ] **Move PWA meta tags to static HTML `<head>`** — Remove `useEffect` injection, hardcode in `index.html`

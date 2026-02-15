@@ -58,7 +58,7 @@ Artifacts live in `memory/` locally and on the server at `/opt/julian/memory/*.h
 
 ## Architecture
 
-See [`architecture.md`](architecture.md) for full technical documentation: HTTP endpoints, SSE streaming protocol, Claude subprocess management, and auth flow.
+See [`docs/architecture.md`](docs/architecture.md) for full technical documentation: HTTP endpoints, SSE streaming protocol, Claude subprocess management, and auth flow.
 
 ## Deployment
 
@@ -70,10 +70,11 @@ See [`architecture.md`](architecture.md) for full technical documentation: HTTP 
 
 ```bash
 # Sync source files to server
-rsync -avz index.html server/ memory/ julian.exe.xyz:/opt/julian/
+rsync -avz index.html sw.js server/ memory/ bundles/ julian.exe.xyz:/opt/julian/
 
-# Copy index.html to where nginx actually serves it
+# Copy index.html and sw.js to where nginx actually serves them
 ssh julian.exe.xyz "sudo cp /opt/julian/index.html /var/www/html/index.html"
+ssh julian.exe.xyz "sudo cp /opt/julian/sw.js /var/www/html/sw.js"
 
 # Restart the bridge service
 ssh julian.exe.xyz "sudo systemctl restart julian-bridge"

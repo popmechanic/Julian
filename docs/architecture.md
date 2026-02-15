@@ -114,7 +114,7 @@ The server maintains a single persistent Claude CLI subprocess:
 | `GET` | `/api/artifacts/:filename` | None | Serves HTML artifact file (iframes can't send headers) |
 | `OPTIONS` | `*` | None | CORS preflight |
 
-Static file whitelist (dev fallback): `fireproof-clerk-bundle.js`, `assets/icons/favicon.svg`, `assets/icons/favicon.ico`, `assets/icons/favicon-96x96.png`, `assets/icons/apple-touch-icon.png`, `assets/icons/site.webmanifest`, `sw.js`, PWA manifest icons.
+Static file whitelist (dev fallback): `bundles/fireproof-clerk-bundle.js`, `assets/icons/favicon.svg`, `assets/icons/favicon.ico`, `assets/icons/favicon-96x96.png`, `assets/icons/apple-touch-icon.png`, `assets/icons/site.webmanifest`, `sw.js`, PWA manifest icons.
 
 ### SSE Streaming
 
@@ -188,7 +188,7 @@ User visits julian.exe.xyz
 
 A single HTML file containing everything: CSS variables, Vibes design system components (25 pre-compiled React components in a `<script type="module">` block), and the main application in a `<script type="text/babel" data-type="module">` block transpiled by Babel Standalone at runtime.
 
-**Module loading**: ESM import maps resolve `react`, `react-dom`, `@clerk/clerk-react`, `use-fireproof`, and `@fireproof/clerk` to CDN URLs (esm.sh) or local bundles (`/fireproof-clerk-bundle.js`).
+**Module loading**: ESM import maps resolve `react`, `react-dom`, `@clerk/clerk-react`, `use-fireproof`, and `@fireproof/clerk` to CDN URLs (esm.sh) or local bundles (`/bundles/fireproof-clerk-bundle.js`).
 
 ### Auth Flow
 
