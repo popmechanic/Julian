@@ -3351,6 +3351,7 @@ function App() {
   }, [persistedMessages, liveAssistant]);
 
   const displayMessages = React.useMemo(() => {
+    console.log('[chat] displayMessages recalc — persistedMessages:', persistedMessages?.length ?? 0, 'liveAssistant:', !!liveAssistant);
     const sorted = [...(persistedMessages || [])].sort((a, b) => {
       if (a.createdAt < b.createdAt) return -1;
       if (a.createdAt > b.createdAt) return 1;
@@ -3373,31 +3374,37 @@ function App() {
   const isMobile = useMobile();
 
   const sendMessage = useCallback(async (text) => {
+    console.log('[chat] sendMessage called, sessionActive:', sessionActive, 'streaming:', streaming);
     if (streaming) return;
     if (!sessionActive) return;
 
-    await database.put({
+    // Show thinking bubble immediately
+    const liveMsg = { id: 'live-' + Date.now(), role: 'assistant', blocks: [], thinking: true, streaming: true };
+    setLiveAssistant(liveMsg);
+    setStreaming(true);
+
+    // Persist user message (fire-and-forget — useLiveQuery picks it up)
+    database.put({
       type: "message",
       role: "user",
       text,
       blocks: [],
       createdAt: new Date().toISOString(),
       conversationId,
-    });
-
-    const liveMsg = { id: 'live-' + Date.now(), role: 'assistant', blocks: [], thinking: true, streaming: true };
-    setLiveAssistant(liveMsg);
-    setStreaming(true);
+    }).then(() => console.log('[chat] user message saved to Fireproof'))
+      .catch(err => console.error('[chat] Fireproof put failed:', err));
 
     let finalBlocks = [];
 
     try {
       const headers = await getAuthHeaders();
+      console.log('[chat] sending to server...');
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers,
         body: JSON.stringify({ message: text }),
       });
+      console.log('[chat] server response status:', response.status);
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -3451,18 +3458,21 @@ function App() {
         }
       }
     } catch (err) {
+      console.error('[chat] fetch error:', err);
       finalBlocks = [{ type: 'text', text: 'Connection error: ' + err.message }];
       setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
     }
 
-    await database.put({
+    // Persist assistant response (fire-and-forget)
+    database.put({
       type: "message",
       role: "assistant",
       text: '',
       blocks: finalBlocks,
       createdAt: new Date().toISOString(),
       conversationId,
-    });
+    }).then(() => console.log('[chat] assistant message saved to Fireproof'))
+      .catch(err => console.error('[chat] Fireproof put failed:', err));
 
     setLiveAssistant(null);
     setStreaming(false);
@@ -3558,16 +3568,16 @@ function App() {
       setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
     }
 
-    // Persist the wake-up message
+    // Persist the wake-up message (fire-and-forget)
     if (finalBlocks.length > 0) {
-      await database.put({
+      database.put({
         type: "message",
         role: "assistant",
         text: '',
         blocks: finalBlocks,
         createdAt: new Date().toISOString(),
         conversationId,
-      });
+      }).catch(err => console.error('[chat] Fireproof wake-up put failed:', err));
     }
 
     setLiveAssistant(null);
