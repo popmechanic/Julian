@@ -1,6 +1,6 @@
 # Julian — Technical Architecture
 
-Julian is a persistent, browser-based conversational agent built on Claude Code. A Bun server manages a long-lived Claude CLI subprocess and bridges its stream-json protocol to an SSE-driven React SPA. HTML artifacts (the agent's memory and creative output) live on the filesystem and are rendered in-browser via iframes. Deployed at **julian.exe.xyz**.
+Julian is a persistent, browser-based conversational agent built on Claude Code. A Bun server manages a long-lived Claude CLI subprocess and bridges its stream-json protocol to an SSE-driven React SPA, while also serving all static files directly. HTML artifacts (the agent's memory and creative output) live on the filesystem and are rendered in-browser via iframes. Deployed at **julian.exe.xyz**.
 
 ## System Overview
 
@@ -8,7 +8,7 @@ Two auth layers, one bridge.
 
 The first layer is **Clerk** — standard JWT-based auth that gates who can use the web UI at all. This is a security boundary, not a convenience feature. Julian has full access to Claude Code running with `--permission-mode acceptEdits` and tools including `Bash`, `Write`, `Read`, and `Edit`. If the web UI were open to the public, anyone could authenticate with their own Anthropic credentials and then instruct Julian to execute arbitrary commands on the server — read files, write code, run shell commands. Clerk ensures that only Marcus (the single trusted user) can reach Julian's frontend. Without it, the server is an unauthenticated remote code execution endpoint.
 
-You load the page, Clerk checks your session, and if you're not signed in you get a modal. Once you're in, every API call carries a Clerk JWT in both `Authorization` and `X-Authorization` headers — the dual-header thing is a workaround because the exe.dev edge proxy (at 44.254.50.18) terminates SSL and strips the standard `Authorization` header before forwarding to nginx on port 80. Custom headers with an `X-` prefix pass through untouched, so the server checks both: `req.headers.get("Authorization") || req.headers.get("X-Authorization")`. The same code works in local dev (where `Authorization` isn't stripped) and in production (where `X-Authorization` carries it through). Server-side, we decode the Clerk publishable key to derive the JWKS endpoint and verify the JWT with the `jose` library.
+You load the page, Clerk checks your session, and if you're not signed in you get a modal. Once you're in, every API call carries a Clerk JWT in both `Authorization` and `X-Authorization` headers — the dual-header thing is a workaround because the exe.dev edge proxy (at 44.254.50.18) terminates SSL and strips the standard `Authorization` header before forwarding to Bun on port 8000. Custom headers with an `X-` prefix pass through untouched, so the server checks both: `req.headers.get("Authorization") || req.headers.get("X-Authorization")`. The same code works in local dev (where `Authorization` isn't stripped) and in production (where `X-Authorization` carries it through). Server-side, we decode the Clerk publishable key to derive the JWKS endpoint and verify the JWT with the `jose` library.
 
 The second layer is **Anthropic credentials** — this is what lets the server's Claude subprocess actually talk to the Anthropic API. On first visit, `/api/health` returns `needsSetup: true`, and you get a setup screen. The interesting path is OAuth PKCE: the server generates a code verifier and challenge, stores the verifier in memory keyed by a random state param (10-minute TTL, cleaned every 60 seconds), and hands the frontend an authorization URL pointing at `claude.ai/oauth/authorize`. That opens in a new tab. The user authorizes, gets a code back, pastes it into our UI, and we exchange it server-side at `platform.claude.com/v1/oauth/token` with the stored verifier. Tokens get written to `~/.claude/.credentials.json` with `0o600` permissions. There's also a legacy fallback where you just paste a `sk-ant-oat` token.
 
@@ -54,10 +54,7 @@ Browser (index.html)
 exe.dev edge proxy (44.254.50.18)
   │  SSL termination — strips Authorization header
   ▼
-nginx (julian.exe.xyz, port 80)
-  │  proxy_pass /api/ — X-Authorization header survives
-  ▼
-Bun server (server/server.ts, port 3847)
+Bun server (server/server.ts, port 8000)
   │  stream-json on stdin
   ▼
 claude CLI subprocess (persistent, --print mode)
@@ -76,8 +73,8 @@ Browser (React state → Fireproof put)
 
 | Layer | Technology | Notes |
 |-------|-----------|-------|
-| Runtime | Bun | Server + process spawning |
-| Server | `server/server.ts` (~720 lines) | HTTP, SSE, process management |
+| Runtime | Bun | Server + process spawning + static files |
+| Server | `server/server.ts` (~740 lines) | HTTP, SSE, static serving, process management |
 | Frontend | `index.html` (~4200 lines) | Single-file SPA, no build step |
 | Framework | React 19 via CDN | ESM import maps, esm.sh |
 | Transpiler | Babel Standalone 7.26 | In-browser JSX compilation |
@@ -112,7 +109,7 @@ The server maintains a single persistent Claude CLI subprocess:
 | `GET` | `/api/artifacts/:filename` | None | Serves HTML artifact file (iframes can't send headers) |
 | `OPTIONS` | `*` | None | CORS preflight |
 
-The server does not serve static files — nginx handles all static assets in production.
+The server also serves all static files from `WORKING_DIR` and provides SPA fallback to `index.html` for client-side routes.
 
 ### SSE Streaming
 
@@ -304,19 +301,19 @@ Claude executes Write tool → file written to WORKING_DIR/memory/
 
 **Production**: `julian.exe.xyz`
 
-- nginx reverse-proxies to Bun on port 3847
-- nginx serves static files directly; Bun serves them only as dev fallback
+- Bun serves everything (static files + API) on port 8000
+- exe.dev edge proxy routes HTTPS traffic to port 8000
 - Files live at `/opt/julian/` on the server
 
 **Deploy process** (manual):
 
 ```bash
-rsync -avz index.html sw.js server/ memory/ bundles/ assets/ julian.exe.xyz:/opt/julian/
-ssh julian.exe.xyz "sudo cp /opt/julian/index.html /var/www/html/index.html"
-ssh julian.exe.xyz "sudo cp /opt/julian/sw.js /var/www/html/sw.js"
-ssh julian.exe.xyz "sudo cp -r /opt/julian/bundles/ /var/www/html/bundles/"
-ssh julian.exe.xyz "sudo cp -r /opt/julian/assets/ /var/www/html/assets/"
-ssh julian.exe.xyz "sudo systemctl restart julian-bridge"
+rsync -avz --exclude='.git' --exclude='node_modules' \
+  index.html sw.js package.json server memory bundles assets julianscreen deploy \
+  julian.exe.xyz:/opt/julian/
+scp deploy/CLAUDE.server.md julian.exe.xyz:/opt/julian/CLAUDE.md
+ssh julian.exe.xyz "cd /opt/julian && /home/exedev/.bun/bin/bun install && \
+  sudo systemctl restart julian julian-screen"
 ```
 
 No CI/CD pipeline. No automated tests.
@@ -327,7 +324,7 @@ No CI/CD pipeline. No automated tests.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `PORT` | `3847` | Bun HTTP server port |
+| `PORT` | `8000` | Bun HTTP server port |
 | `WORKING_DIR` | `process.cwd()` | Directory for Claude subprocess and artifact storage |
 | `ALLOWED_ORIGIN` | `*` | CORS `Access-Control-Allow-Origin` header |
 | `VITE_CLERK_PUBLISHABLE_KEY` | (none) | Clerk publishable key for JWT verification |
@@ -353,7 +350,7 @@ Set in `window.__VIBES_CONFIG__` (hardcoded in index.html):
 
 ## JulianScreen (Pixel Display)
 
-A standalone 128x96 pixel display driven by text commands via HTTP. Runs on port 3848 alongside the chat bridge on 3847. Any Claude Code agent can send commands like `S happy` or `T Hello!` via `curl -X POST localhost:3848/cmd` to control an animated avatar, backgrounds, speech bubbles, buttons, and effects.
+A standalone 128x96 pixel display driven by text commands via HTTP. Runs on port 3848 alongside the main server on 8000. Any Claude Code agent can send commands like `S happy` or `T Hello!` via `curl -X POST localhost:3848/cmd` to control an animated avatar, backgrounds, speech bubbles, buttons, and effects.
 
 See [`docs/julianscreen.md`](julianscreen.md) for the complete SDK reference: command protocol, coordinate system, rendering pipeline, sprite data formats, and integration patterns.
 
@@ -365,7 +362,6 @@ See [`docs/julianscreen.md`](julianscreen.md) for the complete SDK reference: co
 - **Monolithic `index.html`**: 3952 lines with no build step means no code splitting, tree shaking, or minification. The Vibes design system alone is ~1500 lines of pre-compiled React components.
 - **Manual SSE parsing**: The frontend manually reads the response body stream and parses `data: ` lines. Could use the native `EventSource` API (though POST support would require a wrapper).
 - **Artifact polling**: 10-second interval poll to `/api/artifacts`. Could use filesystem watch + WebSocket push for instant updates.
-- **No CI/CD**: Manual rsync + ssh deploy.
 - **No automated tests**: No unit, integration, or e2e tests.
 - **Iframe sandbox**: Artifacts run with `allow-scripts` but without `allow-same-origin`, limiting their access to parent page APIs. This is intentional for security but limits artifact-to-app communication.
 - **Backup file accumulation**: 17 `index.*.bak.html` files in the project root from iterative development.

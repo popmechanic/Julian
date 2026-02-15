@@ -1,11 +1,11 @@
 import { spawn } from "bun";
-import { join } from "path";
+import { join, resolve } from "path";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { createHash, randomBytes } from "crypto";
 
-const PORT = parseInt(process.env.PORT || "3847");
+const PORT = parseInt(process.env.PORT || "8000");
 const WORKING_DIR = process.env.WORKING_DIR || process.cwd();
 const AUTH_ENV_PATH = join(import.meta.dir, "..", "claude-auth.env");
 
@@ -436,7 +436,7 @@ function writeTurn(message: string): ReadableStream {
 }
 
 // ── Allowed origin for CORS ──────────────────────────────────────────────────
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:3847";
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:8000";
 
 function corsHeaders() {
   return {
@@ -686,6 +686,28 @@ Bun.serve({
       } catch {
         return new Response("Not Found", { status: 404, headers: corsHeaders() });
       }
+    }
+
+    // ── Static file serving ──────────────────────────────────────────────
+    // Serve files from WORKING_DIR (replaces nginx static serving)
+    const requestedPath = decodeURIComponent(url.pathname);
+    const safePath = resolve(WORKING_DIR, requestedPath.slice(1)); // strip leading /
+    if (safePath.startsWith(resolve(WORKING_DIR))) {
+      const file = Bun.file(safePath);
+      if (await file.exists()) {
+        const headers: Record<string, string> = {};
+        // Service worker must not be cached
+        if (requestedPath === "/sw.js") {
+          headers["Cache-Control"] = "no-cache";
+        }
+        return new Response(file, { headers });
+      }
+    }
+
+    // SPA fallback — serve index.html for client-side routes
+    const indexFile = Bun.file(join(WORKING_DIR, "index.html"));
+    if (await indexFile.exists()) {
+      return new Response(indexFile);
     }
 
     return new Response("Not Found", { status: 404 });

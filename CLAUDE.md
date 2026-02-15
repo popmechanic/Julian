@@ -80,12 +80,11 @@ claude --plugin-dir ./julian-plugin
 /julian:deploy julian       # Deploy to production (requires confirmation)
 ```
 
-The skill handles VM creation, rsync, nginx config, systemd services, .env setup, and verification automatically.
+The skill handles VM creation, rsync, systemd services, .env setup, and verification automatically.
 
 ### How it works
 
-- **nginx** serves static files from `/var/www/html/`, proxies `/api/` to Bun on port 3847
-- **server/server.ts** runs via systemd service `julian-bridge` (port 3847)
+- **server/server.ts** serves both static files and API on port 8000 (exe.dev edge proxy routes to port 8000)
 - **julianscreen/server/index.js** runs via systemd service `julian-screen` (port 3848)
 - **`.env`** at `/opt/julian/.env` has `VITE_CLERK_PUBLISHABLE_KEY` and `ALLOWED_ORIGIN`
 - **Auth**: Clerk works automatically on any domain. Anthropic credentials require one-time setup on first visit.
@@ -93,22 +92,18 @@ The skill handles VM creation, rsync, nginx config, systemd services, .env setup
 ### Config files
 
 Deploy templates live in `deploy/`:
-- `deploy/nginx-julian.conf` — nginx site config
-- `deploy/julian-bridge.service` — systemd unit for the bridge server
+- `deploy/julian.service` — systemd unit for the Bun server
 - `deploy/julian-screen.service` — systemd unit for JulianScreen
 
 ### Manual deploy (fallback)
 
 ```bash
 rsync -avz --exclude='.git' --exclude='node_modules' \
-  index.html sw.js server memory bundles assets julianscreen deploy \
+  index.html sw.js package.json server memory bundles assets julianscreen deploy \
   julian.exe.xyz:/opt/julian/
 
 scp deploy/CLAUDE.server.md julian.exe.xyz:/opt/julian/CLAUDE.md
 
-ssh julian.exe.xyz "sudo cp /opt/julian/index.html /var/www/html/ && \
-  sudo cp /opt/julian/sw.js /var/www/html/ && \
-  sudo cp -r /opt/julian/bundles /var/www/html/ && \
-  sudo cp -r /opt/julian/assets /var/www/html/ && \
-  sudo systemctl restart julian-bridge julian-screen"
+ssh julian.exe.xyz "cd /opt/julian && /home/exedev/.bun/bin/bun install && \
+  sudo systemctl restart julian julian-screen"
 ```

@@ -64,6 +64,5 @@ Artifacts live at `/opt/julian/memory/*.html` and are served at `/memory/*.html`
 
 See `docs/architecture.md` for full technical documentation.
 
-- **server/server.ts** — Bun bridge server (port 3847), manages Claude subprocess
-- **nginx** — serves static files from `/var/www/html/`, proxies `/api/` to port 3847
+- **server/server.ts** — Bun server (port 8000), serves static files and API, manages Claude subprocess
 - **JulianScreen** — 128x96 pixel display on port 3848. See `docs/julianscreen.md` for SDK reference.

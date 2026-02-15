@@ -1,0 +1,16 @@
+[Unit]
+Description=Julian
+After=network.target
+
+[Service]
+Type=simple
+User=exedev
+Environment=PATH=/home/exedev/.bun/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/opt/julian
+EnvironmentFile=/opt/julian/.env
+ExecStart=/home/exedev/.bun/bin/bun run /opt/julian/server/server.ts
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

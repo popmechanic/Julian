@@ -17,6 +17,8 @@ allowed-tools:
 
 Deploy Julian to an exe.xyz VM. Creates a new VM or updates an existing one.
 
+Bun serves everything directly on port 8000 — static files, API, and SSE streaming. No nginx.
+
 ## Target VM
 
 Determine the target VM name:
@@ -108,35 +110,7 @@ ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && /hom
 
 This installs `jose` and any other dependencies from `package.json`. Use the full path to `bun` because the SSH session may not have `.bun/bin` on its PATH.
 
-### Step 5: Install nginx config
-
-```bash
-scp deploy/nginx-julian.conf <vmname>.exe.xyz:/tmp/nginx-julian.conf
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo cp /tmp/nginx-julian.conf /etc/nginx/sites-available/julian && \
-  sudo ln -sf /etc/nginx/sites-available/julian /etc/nginx/sites-enabled/julian && \
-  sudo rm -f /etc/nginx/sites-enabled/default && \
-  sudo nginx -t && sudo systemctl restart nginx"
-```
-
-If `nginx -t` fails, stop and show the error. Do not restart nginx with a broken config.
-
-**Why `restart` not `reload`**: On a fresh VM, nginx may be stopped (not running). `systemctl reload` fails on a stopped service; `restart` is idempotent — it starts the service if stopped, or restarts it if running.
-
-**Port note**: The nginx config listens on both port 80 and port 8000. exe.dev's edge proxy routes incoming HTTPS traffic to port 8000 on the VM (must be in the 3000-9999 range). Port 80 is for local testing.
-
-**proxy_pass note**: The `proxy_pass http://127.0.0.1:3847;` directive must NOT have a trailing slash. A trailing slash (e.g., `http://127.0.0.1:3847/`) would strip the `/api/` prefix from the forwarded request, breaking route matching in server.ts.
-
-### Step 6: Copy static files to nginx root
-
-```bash
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo cp /opt/julian/index.html /var/www/html/ && \
-  sudo cp /opt/julian/sw.js /var/www/html/ && \
-  sudo cp -r /opt/julian/bundles /var/www/html/ && \
-  sudo cp -r /opt/julian/assets /var/www/html/ && \
-  sudo cp -r /opt/julian/memory /var/www/html/"
-```
-
-### Step 7: Create .env file
+### Step 5: Create .env file
 
 ```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cat > /opt/julian/.env << 'ENVEOF'
@@ -145,40 +119,49 @@ ALLOWED_ORIGIN=https://<vmname>.exe.xyz
 ENVEOF"
 ```
 
-### Step 8: Install and start systemd services
+### Step 6: Install and start systemd services
 
 ```bash
-scp deploy/julian-bridge.service <vmname>.exe.xyz:/tmp/
+scp deploy/julian.service <vmname>.exe.xyz:/tmp/
 scp deploy/julian-screen.service <vmname>.exe.xyz:/tmp/
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo cp /tmp/julian-bridge.service /etc/systemd/system/ && \
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo cp /tmp/julian.service /etc/systemd/system/ && \
   sudo cp /tmp/julian-screen.service /etc/systemd/system/ && \
   sudo systemctl daemon-reload && \
-  sudo systemctl enable --now julian-bridge julian-screen"
+  sudo systemctl enable --now julian julian-screen"
 ```
 
-### Step 9: Verify deployment
+**Migration from old setup**: If the VM previously ran the nginx-based setup, disable the old services:
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo systemctl stop julian-bridge nginx 2>/dev/null; \
+  sudo systemctl disable julian-bridge nginx 2>/dev/null; true"
+```
+
+Run this before enabling the new `julian` service.
+
+### Step 7: Verify deployment
 
 Run these checks and report results:
 
 ```bash
 # Check services are running
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "systemctl is-active julian-bridge julian-screen"
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "systemctl is-active julian julian-screen"
 
 # Check static site loads
 curl -sf https://<vmname>.exe.xyz/ | head -5
 
-# Check bridge API responds
+# Check API responds
 curl -sf https://<vmname>.exe.xyz/api/health
 ```
 
-If the bridge returns `needsSetup: true`, that's expected for new instances — Anthropic credentials need one-time setup.
+If the API returns `needsSetup: true`, that's expected for new instances — Anthropic credentials need one-time setup.
 
 ## Post-Deploy Summary
 
 After deployment, report:
 
 - **URL**: `https://<vmname>.exe.xyz/`
-- **Services**: bridge (port 3847) and screen (port 3848) status
+- **Services**: julian (port 8000) and julian-screen (port 3848) status
 - **Auth**: Clerk works automatically. If this is a new instance, remind the user that Anthropic credentials require one-time setup — either visit the URL (setup screen) or run `ssh <vmname>.exe.xyz "claude setup-token"`.
 
 ## Updating an Existing Deployment
@@ -187,24 +170,21 @@ When the VM already exists, skip VM creation and Bun installation (Step 1 creati
 
 - Copy CLAUDE.md: `scp deploy/CLAUDE.server.md <vmname>.exe.xyz:/opt/julian/CLAUDE.md` (every deploy, since the artifact catalog may have changed)
 - Run `bun install` (Step 4) in case dependencies changed
-- Restart services: `ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo systemctl restart julian-bridge julian-screen"`
-- Re-copy static files (Step 6) in case they changed
-- Verify (Step 9)
+- Restart services: `ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo systemctl restart julian julian-screen"`
+- Verify (Step 7)
 
-No need to recreate nginx config or .env unless this is the first deploy to that VM. Check if `/etc/nginx/sites-enabled/julian` exists to determine if this is a first-time deploy:
+No need to recreate .env unless this is the first deploy to that VM. Check if the `julian` service exists to determine if this is a first-time deploy:
 
 ```bash
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "test -f /etc/nginx/sites-enabled/julian && echo exists || echo missing"
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "systemctl is-active julian 2>/dev/null && echo exists || echo missing"
 ```
 
-If it exists, skip Steps 5, 7, and 8's systemd install — just rsync, install deps, copy static files, restart services, and verify.
+If it exists, skip Steps 5 and 6's systemd install — just rsync, install deps, restart services, and verify.
 
 ## Error Recovery
 
 - **DNS not resolving after 90 seconds**: The VM may not have been created successfully. Run `ssh exe.dev list` to verify it exists. If it does, wait longer or ask the user to check exe.dev status.
-- **nginx restart fails (nginx not installed)**: Fresh exe.dev VMs should have nginx, but if missing: `ssh <vmname>.exe.xyz "sudo apt-get update && sudo apt-get install -y nginx"`, then retry Step 5.
-- **nginx config test fails**: Show the error output. The old config is still active, so the site still works.
 - **Service won't start / no journal entries**: Usually means Bun is missing. Verify with `ssh <vmname>.exe.xyz "/home/exedev/.bun/bin/bun --version"`. If missing, run the Bun install from Step 1.
-- **502 from `/api/health`**: The bridge service isn't running. Check logs: `ssh <vmname>.exe.xyz "journalctl -u julian-bridge -n 20 --no-pager"`. Common causes: missing Bun binary, missing `jose` dependency (run `bun install`), or wrong port in nginx config.
-- **curl verification fails**: Check if services are running, check nginx error log: `ssh <vmname>.exe.xyz "sudo tail -20 /var/log/nginx/error.log"`
+- **curl returns connection refused on port 8000**: The `julian` service isn't running. Check logs: `ssh <vmname>.exe.xyz "journalctl -u julian -n 20 --no-pager"`. Common causes: missing Bun binary, missing `jose` dependency (run `bun install`).
+- **Old nginx still running**: If the VM had the old setup, nginx may be intercepting requests on port 8000. Run the migration step in Step 6 to stop and disable nginx and the old julian-bridge service.
 - **VM creation fails**: Check exe.dev status, retry once.
