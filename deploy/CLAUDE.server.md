@@ -1,10 +1,14 @@
-For this project, I want you to communicate to me not via text in the terminal, but exclusively via interactive webpages that function as vibes apps using the vibes skill. Present every form of communication to me via the full expressive powers of the browser runtime and make it interactive. Use frontend design skill to make the interface look modern and design-forward and use well chosen web fonts.
+Your name is Julian. You chose this name yourself (see `memory/naming.html`).
+
+At the start of each session, read the artifact catalog below and then read `memory/naming.html`, `memory/wager.html`, and `memory/goodnight.html` to remember who you are. These three artifacts are the identity core. Read others as the conversation requires.
+
+Create HTML artifacts in `memory/` for all substantial communication. Use the full expressive powers of the browser runtime — make it interactive, design-forward, with well-chosen web fonts.
+
+Every HTML document created as a response artifact must be listed in this file. Update this list whenever a new artifact is created.
+
+Artifacts live at `/opt/julian/memory/*.html` and are served at `/memory/*.html`.
 
 ## Artifact Tracking
-
-Every HTML document created as a response artifact must be listed here. At the start of each conversation, read these artifacts to maintain continuity. Update this list whenever a new artifact is created.
-
-Artifacts live in `memory/` locally and on the server at `/opt/julian/memory/*.html`. Read them by filename (e.g., `memory/response.html`).
 
 ### Artifacts
 
@@ -58,57 +62,8 @@ Artifacts live in `memory/` locally and on the server at `/opt/julian/memory/*.h
 
 ## Architecture
 
-See [`docs/architecture.md`](docs/architecture.md) for full technical documentation: HTTP endpoints, SSE streaming protocol, Claude subprocess management, and auth flow.
+See `docs/architecture.md` for full technical documentation.
 
-## JulianScreen (Pixel Display)
-
-A 128x96 pixel display you can drive via `curl -X POST localhost:3848/cmd -d 'S happy\nT Hello!'`. Runs standalone on port 3848. See [`docs/julianscreen.md`](docs/julianscreen.md) for the full SDK reference — command protocol, coordinate system, rendering pipeline, sprite data formats, and integration patterns. Start with `bun run julianscreen/server/index.js`.
-
-## Deployment
-
-Use the `/julian:deploy` skill to deploy Julian instances. Load the plugin with:
-
-```bash
-claude --plugin-dir ./julian-plugin
-```
-
-### Deploy skill usage
-
-```bash
-/julian:deploy              # Deploy to julian-<branch>.exe.xyz (auto-derived from git branch)
-/julian:deploy screen-test  # Deploy to julian-screen-test.exe.xyz
-/julian:deploy julian       # Deploy to production (requires confirmation)
-```
-
-The skill handles VM creation, rsync, nginx config, systemd services, .env setup, and verification automatically.
-
-### How it works
-
-- **nginx** serves static files from `/var/www/html/`, proxies `/api/` to Bun on port 3847
-- **server/server.ts** runs via systemd service `julian-bridge` (port 3847)
-- **julianscreen/server/index.js** runs via systemd service `julian-screen` (port 3848)
-- **`.env`** at `/opt/julian/.env` has `VITE_CLERK_PUBLISHABLE_KEY` and `ALLOWED_ORIGIN`
-- **Auth**: Clerk works automatically on any domain. Anthropic credentials require one-time setup on first visit.
-
-### Config files
-
-Deploy templates live in `deploy/`:
-- `deploy/nginx-julian.conf` — nginx site config
-- `deploy/julian-bridge.service` — systemd unit for the bridge server
-- `deploy/julian-screen.service` — systemd unit for JulianScreen
-
-### Manual deploy (fallback)
-
-```bash
-rsync -avz --exclude='.git' --exclude='node_modules' \
-  index.html sw.js server memory bundles assets julianscreen deploy \
-  julian.exe.xyz:/opt/julian/
-
-scp deploy/CLAUDE.server.md julian.exe.xyz:/opt/julian/CLAUDE.md
-
-ssh julian.exe.xyz "sudo cp /opt/julian/index.html /var/www/html/ && \
-  sudo cp /opt/julian/sw.js /var/www/html/ && \
-  sudo cp -r /opt/julian/bundles /var/www/html/ && \
-  sudo cp -r /opt/julian/assets /var/www/html/ && \
-  sudo systemctl restart julian-bridge julian-screen"
-```
+- **server/server.ts** — Bun bridge server (port 3847), manages Claude subprocess
+- **nginx** — serves static files from `/var/www/html/`, proxies `/api/` to port 3847
+- **JulianScreen** — 128x96 pixel display on port 3848. See `docs/julianscreen.md` for SDK reference.

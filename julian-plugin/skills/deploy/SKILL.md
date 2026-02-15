@@ -92,6 +92,14 @@ rsync -avz --exclude='.git' --exclude='node_modules' --exclude='.env' \
 
 `package.json` is included because `server.ts` imports `jose`, which is listed as a dependency.
 
+Then copy the server-specific CLAUDE.md (rsync can't rename files, so use scp):
+
+```bash
+scp deploy/CLAUDE.server.md <vmname>.exe.xyz:/opt/julian/CLAUDE.md
+```
+
+This gives Julian his identity bootstrap file — the wake-up sequence reads this to discover artifacts and remember who he is.
+
 ### Step 4: Install dependencies
 
 ```bash
@@ -177,6 +185,7 @@ After deployment, report:
 
 When the VM already exists, skip VM creation and Bun installation (Step 1 creation/install parts). The rsync in Step 3 is idempotent. After rsync:
 
+- Copy CLAUDE.md: `scp deploy/CLAUDE.server.md <vmname>.exe.xyz:/opt/julian/CLAUDE.md` (every deploy, since the artifact catalog may have changed)
 - Run `bun install` (Step 4) in case dependencies changed
 - Restart services: `ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo systemctl restart julian-bridge julian-screen"`
 - Re-copy static files (Step 6) in case they changed
