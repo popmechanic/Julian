@@ -475,8 +475,11 @@ Bun.serve({
       }, { headers: corsHeaders() });
     }
 
-    // Setup endpoint: store auth token (no auth — self-protecting via token format validation)
+    // Setup endpoint: store auth token (requires Clerk auth)
     if (url.pathname === "/api/setup" && req.method === "POST") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
       const body = (await req.json()) as { token?: string };
       if (!body.token || typeof body.token !== "string") {
         return Response.json({ error: "Token required" }, { status: 400, headers: corsHeaders() });

@@ -313,8 +313,12 @@ Claude executes Write tool → file written to WORKING_DIR/memory/
 **Deploy process** (manual):
 
 ```bash
-rsync -avz server/ index.html memory/ user@julian.exe.xyz:/opt/julian/
-ssh julian.exe.xyz "cd /opt/julian && bun server/server.ts"
+rsync -avz index.html sw.js server/ memory/ bundles/ assets/ julian.exe.xyz:/opt/julian/
+ssh julian.exe.xyz "sudo cp /opt/julian/index.html /var/www/html/index.html"
+ssh julian.exe.xyz "sudo cp /opt/julian/sw.js /var/www/html/sw.js"
+ssh julian.exe.xyz "sudo cp -r /opt/julian/bundles/ /var/www/html/bundles/"
+ssh julian.exe.xyz "sudo cp -r /opt/julian/assets/ /var/www/html/assets/"
+ssh julian.exe.xyz "sudo systemctl restart julian-bridge"
 ```
 
 No CI/CD pipeline. No automated tests.

@@ -70,11 +70,13 @@ See [`docs/architecture.md`](docs/architecture.md) for full technical documentat
 
 ```bash
 # Sync source files to server
-rsync -avz index.html sw.js server/ memory/ bundles/ julian.exe.xyz:/opt/julian/
+rsync -avz index.html sw.js server/ memory/ bundles/ assets/ julian.exe.xyz:/opt/julian/
 
-# Copy index.html and sw.js to where nginx actually serves them
+# Copy static files to where nginx actually serves them
 ssh julian.exe.xyz "sudo cp /opt/julian/index.html /var/www/html/index.html"
 ssh julian.exe.xyz "sudo cp /opt/julian/sw.js /var/www/html/sw.js"
+ssh julian.exe.xyz "sudo cp -r /opt/julian/bundles/ /var/www/html/bundles/"
+ssh julian.exe.xyz "sudo cp -r /opt/julian/assets/ /var/www/html/assets/"
 
 # Restart the bridge service
 ssh julian.exe.xyz "sudo systemctl restart julian-bridge"

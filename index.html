@@ -2649,7 +2649,7 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, getAuthHeaders })
         {/* Open in new tab */}
         {activeArtifact && (
           <a
-            href={'/' + encodeURIComponent(activeArtifact)}
+            href={'/api/artifacts/' + encodeURIComponent(activeArtifact)}
             target="_blank"
             rel="noopener noreferrer"
             style={{
@@ -2682,7 +2682,7 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, getAuthHeaders })
       {activeArtifact ? (
         <iframe
           key={activeArtifact}
-          src={'/' + encodeURIComponent(activeArtifact)}
+          src={'/api/artifacts/' + encodeURIComponent(activeArtifact)}
           style={{
             flex: 1,
             width: '100%',
