@@ -292,7 +292,9 @@ function spawnClaude() {
                 turnResolve = null;
               }
             }
-          } catch {}
+          } catch (err) {
+            console.warn("[Claude stdout] Failed to parse JSON line:", (err as Error).message, line.slice(0, 200));
+          }
         }
       }
     } catch (err) {
@@ -434,7 +436,7 @@ function writeTurn(message: string): ReadableStream {
 }
 
 // ── Allowed origin for CORS ──────────────────────────────────────────────────
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "*";
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:3847";
 
 function corsHeaders() {
   return {

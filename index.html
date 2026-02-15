@@ -9,6 +9,11 @@
     <link rel="icon" type="image/x-icon" href="/assets/icons/favicon.ico" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/icons/apple-touch-icon.png" />
     <link rel="manifest" href="/assets/icons/site.webmanifest" />
+    <meta name="theme-color" content="#FFD600" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Julian" />
     <script>globalThis.process = { env: { NODE_ENV: "production" } };</script>
     <script src="https://unpkg.com/@babel/standalone@7.26.0/babel.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
@@ -177,6 +182,7 @@
       window.__VIBES_CONFIG__ = {
         tokenApiUri: "https://vibes-share-studio.exe.xyz/api/",
         cloudBackendUrl: "fpcloud://vibes-share-studio.exe.xyz?protocol=wss",
+        // Must match VITE_CLERK_PUBLISHABLE_KEY in server/julian-bridge.service
         clerkPublishableKey: "pk_test_aW50ZXJuYWwtZGluZ28tMjguY2xlcmsuYWNjb3VudHMuZGV2JA"
       };
     </script>
@@ -206,18 +212,9 @@ function useMobile() {
 }
 
 
-// === useIsMobile ===
+// === useIsMobile === (alias for useMobile)
 function useIsMobile() {
-  const [isMobile, setIsMobile] = React.useState(false);
-  React.useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-    checkMobile();
-    window.addEventListener("resize", checkMobile);
-    return () => window.removeEventListener("resize", checkMobile);
-  }, []);
-  return isMobile;
+  return useMobile();
 }
 
 
@@ -938,12 +935,7 @@ const getAnimationStyles = () => `
 
 
 // === AuthScreen ===
-const CARD_URLS = [
-  "/cards/card-1.png",
-  "/cards/card-2.png",
-  "/cards/card-3.png",
-  "/cards/card-4.png"
-];
+const CARD_URLS = [];
 const AuthScreen = ({
   children,
   title,
@@ -2369,11 +2361,12 @@ function PixelFace({ talking, size = 120 }) {
 
     draw();
 
+    let blinkTimeout;
     function scheduleBlink() {
       const delay = Math.random() * 3000 + 2000;
-      setTimeout(() => {
+      blinkTimeout = setTimeout(() => {
         stateRef.current.blinking = true;
-        setTimeout(() => {
+        blinkTimeout = setTimeout(() => {
           stateRef.current.blinking = false;
           scheduleBlink();
         }, 150);
@@ -2383,6 +2376,7 @@ function PixelFace({ talking, size = 120 }) {
 
     return () => {
       if (animRef.current) cancelAnimationFrame(animRef.current);
+      clearTimeout(blinkTimeout);
     };
   }, []);
 
@@ -3297,21 +3291,11 @@ function App() {
   const [artifacts, setArtifacts] = useState([]);
   const [activeArtifact, setActiveArtifact] = useState('');
 
-  // Register service worker + inject PWA meta tags
+  // Register service worker
   useEffect(() => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
-    const meta = (name, content) => {
-      const el = document.createElement('meta');
-      el.setAttribute('name', name);
-      el.setAttribute('content', content);
-      document.head.appendChild(el);
-    };
-    meta('theme-color', '#FFD600');
-    meta('mobile-web-app-capable', 'yes');
-    meta('apple-mobile-web-app-status-bar-style', 'black-translucent');
-    meta('apple-mobile-web-app-title', 'Julian');
   }, []);
 
   const getAuthHeaders = useCallback(async () => {
@@ -3334,8 +3318,19 @@ function App() {
   }, []);
 
   const refreshArtifacts = useCallback(async () => {
-    return [];
-  }, []);
+    try {
+      const headers = await getAuthHeaders();
+      if (!headers) return [];
+      const res = await fetch('/api/artifacts', { headers });
+      if (!res.ok) return [];
+      const files = await res.json();
+      setArtifacts(files);
+      return files;
+    } catch (err) {
+      console.warn('[Artifacts] refresh failed:', err);
+      return [];
+    }
+  }, [getAuthHeaders]);
 
   const loadArtifact = useCallback(async (filename) => {
     setArtifacts(prev => {
@@ -3507,7 +3502,9 @@ function App() {
               }
               setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
             }
-          } catch {}
+          } catch (parseErr) {
+            console.warn('[SSE] Failed to parse event:', parseErr, line);
+          }
         }
       }
     } catch (err) {
@@ -3616,7 +3613,9 @@ function App() {
               }
               setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
             }
-          } catch {}
+          } catch (parseErr) {
+            console.warn('[SSE] Failed to parse wake-up event:', parseErr, line);
+          }
         }
       }
     } catch (err) {

@@ -77,8 +77,8 @@ Browser (React state → Fireproof put)
 | Layer | Technology | Notes |
 |-------|-----------|-------|
 | Runtime | Bun | Server + process spawning |
-| Server | `server/server.ts` (684 lines) | HTTP, SSE, process management |
-| Frontend | `index.html` (3952 lines) | Single-file SPA, no build step |
+| Server | `server/server.ts` (~720 lines) | HTTP, SSE, process management |
+| Frontend | `index.html` (~4200 lines) | Single-file SPA, no build step |
 | Framework | React 19 via CDN | ESM import maps, esm.sh |
 | Transpiler | Babel Standalone 7.26 | In-browser JSX compilation |
 | CSS | Tailwind Browser 4 + CSS variables | No build step |
@@ -95,16 +95,14 @@ Browser (React state → Fireproof put)
 The server maintains a single persistent Claude CLI subprocess:
 
 - **Spawn command**: `claude --print --input-format stream-json --output-format stream-json --verbose --permission-mode acceptEdits --allowedTools Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch`
-- **Session resume**: If the process dies mid-conversation, `--resume <sessionId>` resumes the previous session. Session ID is captured from `result` events.
-- **`ensureProcess()`**: Called before every turn. Respawns the subprocess if it has exited.
-- **Deferred restart on token refresh**: If a token refresh occurs during an active turn (`activeListener !== null`), the process kill is deferred with a 2-second polling loop (max 5 minutes).
+- **Single process model**: The Claude process is spawned once via `startSession()`. If it dies, the user must explicitly start a new session — there is no automatic respawn or session resume.
 
 ### HTTP Endpoints
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | `GET` | `/api/health` | None | Returns `{ status, processAlive, needsSetup, authMethod }` |
-| `POST` | `/api/setup` | None | Saves `sk-ant-oat` token to `claude-auth.env` |
+| `POST` | `/api/setup` | Clerk JWT | Saves `sk-ant-oat` token to `claude-auth.env` |
 | `GET` | `/api/oauth/start` | None | Generates PKCE challenge, returns Anthropic authorization URL |
 | `POST` | `/api/oauth/exchange` | None | Exchanges authorization code for OAuth tokens |
 | `POST` | `/api/session/start` | Clerk JWT | Spawns Claude subprocess, streams wake-up SSE response |
@@ -114,7 +112,7 @@ The server maintains a single persistent Claude CLI subprocess:
 | `GET` | `/api/artifacts/:filename` | None | Serves HTML artifact file (iframes can't send headers) |
 | `OPTIONS` | `*` | None | CORS preflight |
 
-Static file whitelist (dev fallback): `bundles/fireproof-clerk-bundle.js`, `assets/icons/favicon.svg`, `assets/icons/favicon.ico`, `assets/icons/favicon-96x96.png`, `assets/icons/apple-touch-icon.png`, `assets/icons/site.webmanifest`, `sw.js`, PWA manifest icons.
+The server does not serve static files — nginx handles all static assets in production.
 
 ### SSE Streaming
 

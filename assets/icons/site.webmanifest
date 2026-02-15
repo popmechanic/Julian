@@ -2,6 +2,7 @@
   "name": "Julian",
   "short_name": "Julian",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#FFD600",
   "theme_color": "#FFD600",
