@@ -513,6 +513,7 @@ function App() {
           setConnected(data.sessionActive ?? false);
           setSetupNeeded(data.needsSetup ?? false);
           if (data.sessionId) setServerSessionId(data.sessionId);
+          if (data.version) window.__julianVersion = data.version;
         }
       } catch {
         if (!cancelled) {
@@ -549,6 +550,22 @@ function App() {
     }, 10000);
     return () => clearInterval(id);
   }, [sessionActive, serverSessionId, getAuthHeaders]);
+
+  // Auto-reload on deploy: poll version every 15s regardless of session state
+  useEffect(() => {
+    const id = setInterval(async () => {
+      try {
+        const r = await fetch('/api/health');
+        if (!r.ok) return;
+        const data = await r.json();
+        if (data.version && window.__julianVersion && data.version !== window.__julianVersion) {
+          console.log(`[Deploy] Version changed: ${window.__julianVersion} → ${data.version}, reloading`);
+          location.reload();
+        }
+      } catch {}
+    }, 15000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -1325,19 +1342,18 @@ function App() {
                   <div style={{
                     flex: 1,
                     display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: 24,
+                    flexDirection: 'column',
+                    padding: '16px 24px',
+                    minHeight: 0,
                   }}>
-                    <div style={{ width: '100%', maxWidth: 480 }}>
-                      <AgentGrid
-                        agents={agents}
-                        activeAgent={activeAgent}
-                        onSelectAgent={handleSelectAgent}
-                        onSummon={handleSummon}
-                        summoning={summoning}
-                      />
-                    </div>
+                    <AgentGrid
+                      agents={agents}
+                      activeAgent={activeAgent}
+                      onSelectAgent={handleSelectAgent}
+                      onSummon={handleSummon}
+                      summoning={summoning}
+                      fillContainer
+                    />
                   </div>
                 </div>
               )}

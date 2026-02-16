@@ -553,7 +553,7 @@ function EggHatch({ color = '#FFD600', size = 48, onComplete }) {
 const JULIAN_POSITION = 4;
 const AGENT_POSITIONS = [0, 1, 2, 3, 5, 6, 7, 8];
 
-function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, summoning = false }) {
+function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, summoning = false, fillContainer = false }) {
   const cells = Array.from({ length: 9 }, (_, i) => {
     if (i === JULIAN_POSITION) {
       return { type: 'julian' };
@@ -570,11 +570,13 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
   const hasEmptySlots = cells.some(c => c.type === 'empty');
 
   return (
-    <div style={{ padding: '12px 8px' }}>
+    <div style={{ padding: fillContainer ? 0 : '12px 8px', display: 'flex', flexDirection: 'column', flex: fillContainer ? 1 : undefined, height: fillContainer ? '100%' : undefined }}>
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: 8,
+        gridTemplateRows: fillContainer ? 'repeat(3, 1fr)' : undefined,
+        gap: fillContainer ? 12 : 8,
+        flex: fillContainer ? 1 : undefined,
       }}>
         {cells.map((cell, i) => {
           const isSelected = cell.agent && activeAgent === cell.agent.name;
@@ -643,7 +645,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
                 background: '#0a0a0a',
                 opacity,
                 cursor: clickHandler ? 'pointer' : 'default',
-                minHeight: 90,
+                minHeight: fillContainer ? 0 : 90,
                 transition: 'border 0.15s, opacity 0.15s',
               }}
             >

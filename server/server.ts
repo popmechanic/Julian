@@ -7,6 +7,14 @@ import { createHash, randomBytes } from "crypto";
 
 const PORT = parseInt(process.env.PORT || "8000");
 const WORKING_DIR = process.env.WORKING_DIR || process.cwd();
+
+// Git version for deploy detection — read once at startup
+let GIT_VERSION = "unknown";
+try {
+  const result = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd: WORKING_DIR });
+  GIT_VERSION = result.stdout.toString().trim() || "unknown";
+} catch {}
+console.log(`[Server] Git version: ${GIT_VERSION}`);
 const AUTH_ENV_PATH = join(import.meta.dir, "..", "claude-auth.env");
 
 // ── Credential paths ────────────────────────────────────────────────────
@@ -565,6 +573,7 @@ const server = Bun.serve({
         sessionId,
         needsSetup: await needsSetup(),
         authMethod: getAuthMethod(),
+        version: GIT_VERSION,
       }, { headers: corsHeaders() });
     }
 
