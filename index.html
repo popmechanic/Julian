@@ -259,6 +259,7 @@ function App() {
   const messagesEndRef = useRef(null);
   const [artifacts, setArtifacts] = useState([]);
   const [activeArtifact, setActiveArtifact] = useState('');
+  const [menuDataLoaded, setMenuDataLoaded] = useState(false);
 
   // Register service worker
   useEffect(() => {
@@ -311,6 +312,7 @@ function App() {
         const data = await agentsRes.value.json();
         if (window.JScreen?.setMenuData) window.JScreen.setMenuData('agents', data);
       }
+      setMenuDataLoaded(true);
     } catch (err) {
       console.warn('[Menu] refresh failed:', err);
     }
@@ -320,6 +322,13 @@ function App() {
   useEffect(() => {
     refreshMenuData();
   }, [refreshMenuData]);
+
+  // Enter menu once data is loaded and no session is active
+  useEffect(() => {
+    if (menuDataLoaded && !sessionActive && window.JScreen?.enterMenu && !window.JScreen.isMenuActive?.()) {
+      window.JScreen.enterMenu('browser');
+    }
+  }, [menuDataLoaded, sessionActive]);
 
   // Handle file selection from JulianScreen menu
   const handleFileSelect = useCallback((filename) => {
@@ -709,7 +718,8 @@ function App() {
     setSessionActive(false);
     setConnected(false);
     setServerSessionId(null);
-  }, [getAuthHeaders]);
+    refreshMenuData();
+  }, [getAuthHeaders, refreshMenuData]);
 
   const startNewConversation = useCallback(async () => {
     if (!confirm("Start new conversation? Julian will remember what you talked about.")) return;

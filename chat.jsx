@@ -432,16 +432,6 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
     };
   }, [onFileSelect]);
 
-  // Enter menu when connected but no session
-  useEffect(() => {
-    if (connected && !sessionActive && window.JScreen?.enterMenu) {
-      const timer = setTimeout(() => {
-        window.JScreen.enterMenu('browser');
-      }, 200);
-      return () => clearTimeout(timer);
-    }
-  }, [connected, sessionActive]);
-
   // Exit menu when a session becomes active
   useEffect(() => {
     if (connected && sessionActive && window.JScreen?.exitMenu && window.JScreen.isMenuActive?.()) {
