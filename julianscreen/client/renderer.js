@@ -180,22 +180,23 @@ function setColor(cmd) {
 // Init
 let initialized = false;
 function init(canvas) {
-  if (initialized) return;
-  initialized = true;
   mainCanvas = canvas;
   window.JScreen._canvas = canvas;
   mainCtx = canvas.getContext('2d');
   mainCtx.imageSmoothingEnabled = false;
 
-  // Register drawing primitive handlers
-  registerHandler('RECT', drawRect);
-  registerHandler('CIRC', drawCirc);
-  registerHandler('LINE', drawLine);
-  registerHandler('DOT', drawDot);
-  registerHandler('CLR', clearDraw);
-  registerHandler('COL', setColor);
+  if (!initialized) {
+    initialized = true;
+    // Register drawing primitive handlers
+    registerHandler('RECT', drawRect);
+    registerHandler('CIRC', drawCirc);
+    registerHandler('LINE', drawLine);
+    registerHandler('DOT', drawDot);
+    registerHandler('CLR', clearDraw);
+    registerHandler('COL', setColor);
 
-  requestAnimationFrame(animLoop);
+    requestAnimationFrame(animLoop);
+  }
 }
 
 // Export as global
