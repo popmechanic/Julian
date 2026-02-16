@@ -496,13 +496,19 @@ function App() {
 
   // Auto-seed agent identities from server if Fireproof is empty
   const agentSeedRef = useRef(false);
+  const agentSeedAttempts = useRef(0);
   useEffect(() => {
     if (!database || !agentDocs || agentSeedRef.current) return;
     if (agentDocs.length > 0) return; // already seeded
+    if (agentSeedAttempts.current >= 5) return; // give up after 5 tries
     agentSeedRef.current = true;
+    agentSeedAttempts.current++;
+    const attempt = agentSeedAttempts.current;
     (async () => {
       try {
+        // Wait for cloud stores to finish attaching after Clerk auth
         await database.ready();
+        await new Promise(r => setTimeout(r, 1000 * attempt));
         const headers = await getAuthHeaders();
         if (!headers) { agentSeedRef.current = false; return; }
         const res = await fetch('/api/agents/identities', { headers });
@@ -514,7 +520,8 @@ function App() {
           }
         }
       } catch (err) {
-        console.error('[AgentSeed] Error:', err);
+        if (attempt < 5) console.debug('[AgentSeed] Retry', attempt, '- stores not ready yet');
+        else console.error('[AgentSeed] Failed after 5 attempts:', err);
         agentSeedRef.current = false;
       }
     })();
