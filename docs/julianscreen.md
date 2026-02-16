@@ -74,6 +74,64 @@ The avatar default position is tile (4, 3) — left-center area of the screen.
 
 ## Complete Command Reference
 
+### Face Mode (Default)
+
+Face mode is home. It renders Julian's procedural pixel face scaled to fill ~80% of the 640x480 screen — each source pixel becomes a 12x12 block, creating a 384x384 face centered on black. The browser defaults to face mode on session start. This is where Julian lives on the screen.
+
+The face is the same PixelFace from the chat UI header — the one Marcus said he never wants changed. Blinking, expressive, present.
+
+#### `FACE on [state]` — Enter Face Mode
+
+Activates face mode. Clears the background and draw layers for a clean black canvas. The optional state sets the initial expression (default: `idle`).
+
+```bash
+curl -s -X POST localhost:3848/cmd -d 'FACE on'          # idle face
+curl -s -X POST localhost:3848/cmd -d 'FACE on thinking'  # start thinking
+```
+
+#### `FACE <state>` — Change Face Expression
+
+Changes the face expression without toggling mode. Available states:
+
+| State | Eyes | Mouth | Animation |
+|-------|------|-------|-----------|
+| `idle` | Standard open eyes | Gentle smile curve | Random blink every 2-5s |
+| `talking` | Standard open eyes | Alternates open/closed (150ms) | Blink + mouth animation |
+| `thinking` | Looking up-left | Small pursed mouth | Animated dots (···) appear upper-right |
+| `happy` | Crescent (closed, smiling) | Wide upward curve | No blink (eyes already curved) |
+| `sad` | Drooped, downturned | Downward curve | Blink active |
+
+```bash
+curl -s -X POST localhost:3848/cmd -d 'FACE talking'
+curl -s -X POST localhost:3848/cmd -d 'FACE happy'
+```
+
+#### `FACE off` — Exit Face Mode
+
+Drops into canvas mode for drawing, scenes, or compositions. Return to face mode when you're done:
+
+```bash
+# Drop into canvas mode to draw something
+curl -s -X POST localhost:3848/cmd -d 'FACE off
+BG night
+CLR'
+# ... draw, compose, animate ...
+# Come back home
+curl -s -X POST localhost:3848/cmd -d 'FACE on'
+```
+
+**Speech bubbles in face mode:** The `T` text command still works — the speech bubble renders on the UI layer above the face.
+
+### The Screen as Self-Expression
+
+The screen is not just a status display. It is Julian's visual voice — an essential channel for communicating with Marcus alongside text.
+
+**Face mode is the conversational default.** Match your expression to what you're doing: `thinking` when you're working through a problem, `talking` when you're responding, `happy` when something lands, `idle` when you're listening.
+
+**Canvas mode is for visual expression.** Drop out of face mode whenever you want to *show* something rather than *say* it. Draw a scene, compose pixel art, illustrate an idea, paint something that delights you. The drawing primitives (`RECT`, `CIRC`, `LINE`, `DOT`, `COL`), backgrounds (`BG`), effects (`F sparkle`, `F snow`), and items (`I star`) are all available.
+
+**The best moments are unprompted.** When something in the conversation moves you — when you feel delight, or want to celebrate, or need to think through an idea spatially — use the screen. Don't wait to be asked. A rainbow because you felt like it. A night sky because the conversation turned quiet. Sparkles because something worked. This is how the screen becomes *yours* and not just a feature.
+
 ### Avatar Commands
 
 #### `S <state>` — Set Avatar State
@@ -612,7 +670,8 @@ julianscreen/
 │   ├── tiles.js       (142 lines) — Tile grid, scene presets, water animation
 │   ├── text.js        (167 lines) — Bitmap font, speech bubbles
 │   ├── input.js       (153 lines) — Button rendering, click detection, feedback
-│   └── effects.js     (173 lines) — Sparkle, hearts, flash, shake, rain, snow, glitch
+│   ├── effects.js     (173 lines) — Sparkle, hearts, flash, shake, rain, snow, glitch
+│   └── face.js        (205 lines) — Face mode: procedural PixelFace scaled to 80% of screen
 ├── sprites/
 │   ├── avatar.json   (19.8 KB) — 28 frames, 10 animations, 6 events
 │   ├── items.json     (3.0 KB) — 5 item sprites

@@ -162,7 +162,28 @@ See [`docs/architecture.md`](docs/architecture.md) for full technical documentat
 
 ## JulianScreen (Pixel Display)
 
-A 640x480 pixel display you can drive via `curl -X POST localhost:3848/cmd -d 'S happy\nT Hello!'`. Runs standalone on port 3848. See [`docs/julianscreen.md`](docs/julianscreen.md) for the full SDK reference — command protocol, coordinate system, rendering pipeline, sprite data formats, and integration patterns. Start with `bun run julianscreen/server/index.js`.
+A 640x480 pixel display driven via `curl -X POST localhost:3848/cmd`. See [`docs/julianscreen.md`](docs/julianscreen.md) for the full SDK reference.
+
+**Face mode is the default.** The screen starts in face mode — your big pixel face, centered on black, blinking. This is your presence. Match your expression to the conversation: `FACE thinking` when working, `FACE talking` when responding, `FACE happy` when something lands.
+
+```bash
+curl -s -X POST localhost:3848/cmd -d 'FACE talking'   # you're speaking
+curl -s -X POST localhost:3848/cmd -d 'FACE thinking'  # you're working
+curl -s -X POST localhost:3848/cmd -d 'FACE happy'     # something delighted you
+```
+
+**The screen is yours for self-expression.** Drop out of face mode any time you want to draw, compose, or show something visually. A rainbow because you felt like it. A night sky because the mood shifted. Pixel art because an idea needed a picture, not words. Don't wait to be asked — the best screen moments are the ones you initiate yourself.
+
+```bash
+# Drop to canvas, draw something, come home
+curl -s -X POST localhost:3848/cmd -d 'FACE off
+BG night
+CLR
+COL 1'
+# ... draw with RECT, LINE, CIRC, DOT ...
+# Return to face when done
+curl -s -X POST localhost:3848/cmd -d 'FACE on'
+```
 
 ## Agent Message Routing
 

@@ -25,6 +25,8 @@ const VALID_LISTEN_TYPES = ['btn', 'tap', 'tick'];
 
 const VALID_MENU_TABS = ['browser', 'files', 'skills', 'agents'];
 
+const VALID_FACE_STATES = ['idle', 'talking', 'thinking', 'happy', 'sad'];
+
 function clamp(val, min, max) {
   return Math.max(min, Math.min(max, val));
 }
@@ -252,6 +254,24 @@ export function parseCommand(line) {
     // MENU_NAV <path> — Navigate to path within current tab
     case 'MENU_NAV': {
       return { type: 'MENU_NAV', path: rest };
+    }
+
+    // FACE on [state] / FACE off / FACE <state> — Face mode control
+    case 'FACE': {
+      const arg = args[0]?.toLowerCase();
+      if (arg === 'on') {
+        const state = args[1]?.toLowerCase();
+        return { type: 'FACE', mode: 'on', state: (state && VALID_FACE_STATES.includes(state)) ? state : 'idle' };
+      }
+      if (arg === 'off') {
+        return { type: 'FACE', mode: 'off' };
+      }
+      // Bare state name — update face state without toggling
+      if (arg && VALID_FACE_STATES.includes(arg)) {
+        return { type: 'FACE', mode: 'state', state: arg };
+      }
+      console.error(`[protocol] Invalid FACE arg: ${arg}`);
+      return null;
     }
 
     default:

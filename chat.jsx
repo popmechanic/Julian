@@ -986,19 +986,17 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab, no
     }
   }, []);
 
-  // Initialize default scene when session becomes active (tab bar handles visibility)
+  // Initialize default screen when session becomes active — face mode is home
   useEffect(() => {
     if (connected && sessionActive) {
       // Exit menu mode so the canvas shows Julian's live display
       if (window.JScreen?.exitMenu && window.JScreen.isMenuActive?.()) {
         window.JScreen.exitMenu();
       }
-      // Set up default scene
+      // Default to face mode — Julian's face is his presence on screen
       if (window.JScreen?.enqueueCommands) {
         window.JScreen.enqueueCommands([
-          { type: 'SCENE', scene: 'home' },
-          { type: 'POS', tx: 4, ty: 3 },
-          { type: 'STATE', state: 'idle' },
+          { type: 'FACE', mode: 'on', state: 'idle' },
         ]);
       }
     }
