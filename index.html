@@ -876,13 +876,46 @@ function App() {
             padding: 8,
             flexShrink: 0,
           }}>
-            <JulianScreenEmbed sessionActive={sessionActive} compact />
+            <JulianScreenEmbed sessionActive={sessionActive} compact onFileSelect={handleFileSelect} />
           </div>
 
-          {/* Mobile chat: messages + input */}
+          {/* Mobile artifact viewer: shown only when an artifact is selected */}
+          {activeArtifact && (
+            <div style={{
+              padding: '0 8px',
+              flex: 1,
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+            }}>
+              <ArtifactViewer
+                activeArtifact={activeArtifact}
+                artifacts={artifacts}
+                onSelect={setActiveArtifact}
+              />
+              <button
+                onClick={() => setActiveArtifact('')}
+                style={{
+                  fontFamily: "'VT323', monospace",
+                  fontSize: '0.85rem',
+                  color: '#AA8800',
+                  background: '#1a1a00',
+                  border: '1px solid #333',
+                  borderRadius: 4,
+                  padding: '6px 12px',
+                  cursor: 'pointer',
+                  textTransform: 'uppercase',
+                  marginTop: 4,
+                  alignSelf: 'center',
+                }}
+              >CLOSE VIEWER</button>
+            </div>
+          )}
+
+          {/* Mobile chat: messages + input (hidden when artifact viewer is open) */}
           <div style={{
             flex: 1,
-            display: 'flex',
+            display: activeArtifact ? 'none' : 'flex',
             flexDirection: 'column',
             minHeight: 0,
             padding: '0 8px 8px',
