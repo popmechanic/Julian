@@ -589,6 +589,8 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
         gridTemplateRows: fillContainer ? 'repeat(3, 1fr)' : undefined,
         gap: fillContainer ? 12 : 8,
         flex: fillContainer ? 1 : undefined,
+        minHeight: fillContainer ? 0 : undefined,
+        overflow: 'hidden',
       }}>
         {cells.map((cell, i) => {
           const isSelected = cell.agent && activeAgent === cell.agent.name;
@@ -699,7 +701,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
           );
         })}
       </div>
-      {(showSummon || showWake) && !allAwake && (
+      {(showSummon || showWake) && !allAwake && (<div style={{ flexShrink: 0 }}>{
         showWake ? (
           <button
             onClick={onWake}
@@ -749,7 +751,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
             {summoning ? 'SUMMONING...' : 'SUMMON'}
           </button>
         )
-      )}
+      }</div>)}
     </div>
   );
 }

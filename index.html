@@ -759,6 +759,28 @@ function App() {
         await new Promise(r => setTimeout(r, 1000));
       }
 
+      // Create hatching placeholders so eggs appear immediately
+      const palette = [
+        { pos: 0, color: '#c9b1e8', colorName: 'Violet Heaven', gender: 'woman' },
+        { pos: 1, color: '#755d00', colorName: 'Ayahuasca Vine', gender: 'man' },
+        { pos: 2, color: '#00afd1', colorName: 'Aquarius', gender: 'woman' },
+        { pos: 3, color: '#007e98', colorName: 'Pacific Pleasure', gender: 'man' },
+        { pos: 5, color: '#c85cb4', colorName: 'Barbiecore', gender: 'woman' },
+        { pos: 6, color: '#da89c9', colorName: 'Pink Punk', gender: 'man' },
+        { pos: 7, color: '#B8DDE6', colorName: 'Salt Air', gender: 'woman' },
+        { pos: 8, color: '#F2C4B0', colorName: 'Cloud Coral', gender: 'man' },
+      ];
+      const hatchingDocs = {};
+      for (const p of palette) {
+        const doc = await database.put({
+          type: 'agent-identity', hatching: true,
+          gridPosition: p.pos, color: p.color,
+          colorName: p.colorName, gender: p.gender,
+        });
+        hatchingDocs[p.pos] = doc.id;
+        console.log('[Summon] Created hatching egg at position', p.pos);
+      }
+
       // Send summon through the chat — Julian's response streams back via SSE
       const response = await fetch('/api/agents/summon', {
         method: 'POST',
@@ -794,10 +816,25 @@ function App() {
                   const jsonStr = agentLine.slice(agentLine.indexOf('{'));
                   const agent = JSON.parse(jsonStr);
                   if (agent.name && agent.gridPosition != null) {
-                    const existing = (agentDocs || []).map(d => d.gridPosition);
-                    if (!existing.includes(agent.gridPosition)) {
-                      await database.put({ ...agent, type: 'agent-identity' });
-                      console.log('[Summon] Saved agent:', agent.name, 'at position', agent.gridPosition);
+                    const hatchId = hatchingDocs[agent.gridPosition];
+                    if (hatchId) {
+                      // Update the hatching placeholder with full identity
+                      try {
+                        const existing = await database.get(hatchId);
+                        await database.put({ ...existing, ...agent, type: 'agent-identity', hatching: false });
+                        console.log('[Summon] Hatched agent:', agent.name, 'at position', agent.gridPosition);
+                      } catch (e) {
+                        // Fallback: create new doc if hatching doc was lost
+                        await database.put({ ...agent, type: 'agent-identity' });
+                        console.log('[Summon] Saved agent (fallback):', agent.name, 'at position', agent.gridPosition);
+                      }
+                    } else {
+                      // No hatching doc for this position, create fresh
+                      const existingPositions = (agentDocs || []).map(d => d.gridPosition);
+                      if (!existingPositions.includes(agent.gridPosition)) {
+                        await database.put({ ...agent, type: 'agent-identity' });
+                        console.log('[Summon] Saved agent:', agent.name, 'at position', agent.gridPosition);
+                      }
                     }
                   }
                 } catch (parseErr) {
