@@ -342,11 +342,11 @@
         if (cx >= tab.x && cx < tab.x + tab.w) {
           if (tab.id !== state.tab) {
             state.tab = tab.id;
-            // Default FILES to shared/ if it exists
+            // Default FILES to shared/ if it has visible content
             if (tab.id === 'files') {
               const data = state.data.files;
-              const hasShared = data?.entries?.some(e => e.name === 'shared' && e.type === 'folder');
-              state.path = hasShared ? ['shared'] : [];
+              const shared = data?.entries?.find(e => e.name === 'shared' && e.type === 'folder');
+              state.path = (shared?.children?.length > 0) ? ['shared'] : [];
             } else {
               state.path = [];
             }
@@ -448,10 +448,10 @@
     if (cmd.initialPath) {
       state.path = Array.isArray(cmd.initialPath) ? cmd.initialPath : [cmd.initialPath];
     } else if (state.tab === 'files') {
-      // Default to shared/ if the folder exists in the data
+      // Default to shared/ if it has visible content
       const data = state.data.files;
-      const hasShared = data?.entries?.some(e => e.name === 'shared' && e.type === 'folder');
-      state.path = hasShared ? ['shared'] : [];
+      const shared = data?.entries?.find(e => e.name === 'shared' && e.type === 'folder');
+      state.path = (shared?.children?.length > 0) ? ['shared'] : [];
     } else {
       state.path = [];
     }
