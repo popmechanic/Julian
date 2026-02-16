@@ -659,7 +659,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
                 padding: 12,
                 border: `${(isSelected || isJulianSelected) ? 2 : 1}px solid ${borderColor}`,
                 borderRadius: 8,
-                background: '#1a1a1a',
+                background: '#0c0c0c',
                 opacity,
                 cursor: clickHandler ? 'pointer' : 'default',
                 minHeight: fillContainer ? 0 : 90,
