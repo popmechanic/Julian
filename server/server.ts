@@ -533,8 +533,18 @@ const server = Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
 
-    // WebSocket upgrade for JulianScreen proxy
+    // WebSocket upgrade for JulianScreen proxy (authenticated via query param)
     if (url.pathname === '/screen/ws') {
+      const wsToken = url.searchParams.get('token');
+      if (JWKS && wsToken) {
+        try {
+          await jwtVerify(wsToken, JWKS, { clockTolerance: 10 });
+        } catch {
+          return new Response('Unauthorized', { status: 401 });
+        }
+      } else if (JWKS && !wsToken) {
+        return new Response('Unauthorized — token query param required', { status: 401 });
+      }
       const upgraded = server.upgrade(req, { data: {} });
       if (upgraded) return undefined;
       return new Response('WebSocket upgrade failed', { status: 400 });
@@ -583,6 +593,9 @@ const server = Bun.serve({
 
     // OAuth start: generate PKCE auth URL directly (no subprocess)
     if (url.pathname === "/api/oauth/start" && req.method === "GET") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
       const state = randomBytes(32).toString("hex");
       const verifier = generateCodeVerifier();
       const challenge = generateCodeChallenge(verifier);
@@ -605,6 +618,9 @@ const server = Bun.serve({
 
     // OAuth exchange: POST authorization code to token endpoint directly
     if (url.pathname === "/api/oauth/exchange" && req.method === "POST") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
       const body = (await req.json()) as { code?: string; state?: string };
       if (!body.code || !body.state) {
         return Response.json({ error: "code and state required" }, { status: 400, headers: corsHeaders() });
@@ -934,6 +950,13 @@ const server = Bun.serve({
 
     // Serve files from WORKING_DIR (replaces nginx static serving)
     const requestedPath = decodeURIComponent(url.pathname);
+
+    // Block sensitive files/directories from being served
+    const BLOCKED_PREFIXES = ['/.env', '/claude-auth.env', '/.git', '/server/', '/deploy/', '/node_modules/', '/CLAUDE.md', '/.claude/', '/docs/', '/julian-plugin/'];
+    if (BLOCKED_PREFIXES.some(p => requestedPath === p || requestedPath.startsWith(p))) {
+      return new Response("Not Found", { status: 404 });
+    }
+
     const safePath = resolve(WORKING_DIR, requestedPath.slice(1)); // strip leading /
     if (safePath.startsWith(resolve(WORKING_DIR))) {
       const file = Bun.file(safePath);

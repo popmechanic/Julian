@@ -357,11 +357,19 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
 
   // WebSocket connection + feedback handler
   useEffect(() => {
-    function connect() {
+    async function connect() {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = location.hostname === 'localhost'
-        ? 'ws://localhost:3848/ws'
-        : `${proto}//${location.host}/screen/ws`;
+      let wsUrl;
+      if (location.hostname === 'localhost') {
+        wsUrl = 'ws://localhost:3848/ws';
+      } else {
+        // Pass Clerk token as query param for WebSocket auth
+        let token = '';
+        try {
+          token = await window.Clerk?.session?.getToken() || '';
+        } catch {}
+        wsUrl = `${proto}//${location.host}/screen/ws${token ? '?token=' + encodeURIComponent(token) : ''}`;
+      }
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
