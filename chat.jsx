@@ -426,7 +426,9 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
         reconnectRef.current = null;
       }
       if (wsRef.current) {
-        wsRef.current.close();
+        if (wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.close();
+        }
         wsRef.current = null;
       }
     };
