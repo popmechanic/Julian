@@ -455,8 +455,8 @@ function App() {
   const [wakingUp, setWakingUp] = useState(false);
   const [serverSessionId, setServerSessionId] = useState(null);
   const messagesEndRef = useRef(null);
-  const [artifacts, setArtifacts] = useState([]);
-  const [activeArtifact, setActiveArtifact] = useState('');
+  const [artifacts, setArtifacts] = useState(demoMode ? [{ name: 'shared/readme.html', modified: Date.now() }] : []);
+  const [activeArtifact, setActiveArtifact] = useState(demoMode ? 'shared/readme.html' : '');
   const [menuDataLoaded, setMenuDataLoaded] = useState(false);
   const [filesData, setFilesData] = useState(null);
   const [skillsData, setSkillsData] = useState(null);
@@ -464,7 +464,8 @@ function App() {
   // Agent Teams state
   const [activeAgent, setActiveAgent] = useState(null);
   const [summoning, setSummoning] = useState(false);
-  const [menuTab, setMenuTab] = useState('files');
+  const [demoMode, setDemoMode] = useState(new URLSearchParams(window.location.search).get('demo') === '1');
+  const [menuTab, setMenuTab] = useState(demoMode ? 'browser' : 'files');
   const [sfxMuted, setSfxMuted] = useState(window.SFX?.isMuted ?? false);
   useEffect(() => {
     const handler = (e) => setSfxMuted(e.detail.muted);
@@ -649,6 +650,12 @@ function App() {
           setSetupNeeded(data.needsSetup ?? false);
           if (data.sessionId) setServerSessionId(data.sessionId);
           if (data.version) window.__julianVersion = data.version;
+          if (data.demoMode && !demoMode) {
+            setDemoMode(true);
+            setMenuTab('browser');
+            setActiveArtifact('shared/readme.html');
+            setArtifacts(prev => prev.some(f => f.name === 'shared/readme.html') ? prev : [...prev, { name: 'shared/readme.html', modified: Date.now() }]);
+          }
         }
       } catch {
         if (!cancelled) {

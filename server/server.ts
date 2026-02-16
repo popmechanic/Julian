@@ -575,6 +575,7 @@ const server = Bun.serve({
         needsSetup: await needsSetup(),
         authMethod: getAuthMethod(),
         version: GIT_VERSION,
+        demoMode: FORCE_DEMO_MODE,
       }, { headers: corsHeaders() });
     }
 
