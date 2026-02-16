@@ -792,6 +792,23 @@ const server = Bun.serve({
       });
     }
 
+    // Agent identities endpoint: serves agents.json written by Julian
+    if (url.pathname === "/api/agents/identities" && req.method === "GET") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
+      const agentsPath = join(import.meta.dir, "..", "agents.json");
+      try {
+        if (!existsSync(agentsPath)) {
+          return Response.json({ agents: [] }, { headers: corsHeaders() });
+        }
+        const data = JSON.parse(readFileSync(agentsPath, "utf-8"));
+        return Response.json({ agents: Array.isArray(data) ? data : [] }, { headers: corsHeaders() });
+      } catch (err) {
+        return Response.json({ agents: [] }, { headers: corsHeaders() });
+      }
+    }
+
     // Summon agents endpoint: triggers Julian to create agent team
     if (url.pathname === "/api/agents/summon" && req.method === "POST") {
       if (!(await verifyClerkToken(req))) {
