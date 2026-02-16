@@ -241,7 +241,13 @@ let activeListener: ((event: any) => void) | null = null;
 let turnResolve: (() => void) | null = null;
 let processAlive = false;
 let lastActivity = 0;
-const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+const HEARTBEAT_INTERVAL_MS = 5_000;
+const TURN_INACTIVITY_MS = 120_000;
+const TURN_INACTIVITY_CHECK_MS = 10_000;
+const MAX_TURN_TIMEOUT_MS = 5 * 60 * 1000;
+const PROCESS_KILL_WAIT_MS = 300;
+const MAX_MESSAGE_SIZE = 100_000;
 let sessionId: string | null = null;
 const AGENT_NAME = process.env.AGENT_NAME || "Julian";
 
@@ -318,7 +324,9 @@ function spawnClaude() {
         const text = decoder.decode(value, { stream: true });
         if (text.trim()) console.error("[Claude stderr]", text.trim());
       }
-    } catch {} finally {
+    } catch (err) {
+      console.debug("[Claude stderr] Read error:", err);
+    } finally {
       reader.releaseLock();
     }
   })();
@@ -382,12 +390,12 @@ function writeTurn(message: string): ReadableStream {
         try {
           controller.enqueue(new TextEncoder().encode(":heartbeat\n\n"));
         } catch {}
-      }, 5000);
+      }, HEARTBEAT_INTERVAL_MS);
 
-      // Safety timeout: if no events for 120s, send error
+      // Safety timeout: if no events for TURN_INACTIVITY_MS, send error
       const inactivityCheck = setInterval(() => {
-        if (Date.now() - lastEventTime > 120_000) {
-          send({ type: "error", data: { message: "No response from Claude for 120 seconds" } });
+        if (Date.now() - lastEventTime > TURN_INACTIVITY_MS) {
+          send({ type: "error", data: { message: `No response from Claude for ${TURN_INACTIVITY_MS / 1000} seconds` } });
           clearInterval(heartbeat);
           clearInterval(inactivityCheck);
           activeListener = null;
@@ -395,7 +403,7 @@ function writeTurn(message: string): ReadableStream {
           controller.close();
           releaseLock();
         }
-      }, 10_000);
+      }, TURN_INACTIVITY_CHECK_MS);
 
       // Write JSONL user message to Claude's stdin
       const jsonl = JSON.stringify({
@@ -416,16 +424,16 @@ function writeTurn(message: string): ReadableStream {
         return;
       }
 
-      // Wait for the result event, with a 5-minute max timeout
+      // Wait for the result event, with a max timeout
       const maxTimeout = new Promise<void>((resolve) => {
         setTimeout(() => {
           if (turnResolve) {
-            send({ type: "error", data: { message: "Turn exceeded 5 minute maximum" } });
+            send({ type: "error", data: { message: `Turn exceeded ${MAX_TURN_TIMEOUT_MS / 60_000} minute maximum` } });
             turnResolve();
             turnResolve = null;
           }
           resolve();
-        }, 5 * 60 * 1000);
+        }, MAX_TURN_TIMEOUT_MS);
       });
 
       await Promise.race([turnDone, maxTimeout]);
@@ -510,9 +518,13 @@ function walkSkillDirs(baseDir: string): Array<{name: string, type: string, chil
             }
           }
         }
-      } catch {}
+      } catch (err) {
+        console.debug("[Skills] Error scanning nested plugin dir:", entry, err);
+      }
     }
-  } catch {}
+  } catch (err) {
+    console.debug("[Skills] Error scanning plugin base dir:", baseDir, err);
+  }
 
   return results;
 }
@@ -747,7 +759,7 @@ const server = Bun.serve({
       if (claudeProc && processAlive) {
         claudeProc.kill();
         // Wait briefly for cleanup
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise(r => setTimeout(r, PROCESS_KILL_WAIT_MS));
       }
       claudeProc = null;
       processAlive = false;
@@ -765,8 +777,8 @@ const server = Bun.serve({
       }
       lastActivity = Date.now();
       const { message } = (await req.json()) as { message?: string };
-      if (!message || typeof message !== 'string' || message.length > 100_000) {
-        return Response.json({ error: "Message required (max 100KB)" }, { status: 400, headers: corsHeaders() });
+      if (!message || typeof message !== 'string' || message.length > MAX_MESSAGE_SIZE) {
+        return Response.json({ error: `Message required (max ${MAX_MESSAGE_SIZE / 1000}KB)` }, { status: 400, headers: corsHeaders() });
       }
       return new Response(writeTurn(message), {
         headers: {
@@ -897,7 +909,8 @@ const server = Bun.serve({
         }
 
         return Response.json({ entries: allEntries }, { headers: corsHeaders() });
-      } catch {
+      } catch (err) {
+        console.debug("[Skills] Error listing skills:", err);
         return Response.json({ entries: [] }, { headers: corsHeaders() });
       }
     }
@@ -929,10 +942,13 @@ const server = Bun.serve({
                 agentType: m.agent_type || m.agentType || "unknown",
               })),
             });
-          } catch {}
+          } catch (err) {
+            console.debug("[Agents] Error parsing team config:", dir, err);
+          }
         }
         return Response.json({ teams }, { headers: corsHeaders() });
-      } catch {
+      } catch (err) {
+        console.debug("[Agents] Error listing teams:", err);
         return Response.json({ teams: [] }, { headers: corsHeaders() });
       }
     }

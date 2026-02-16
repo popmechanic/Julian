@@ -146,9 +146,14 @@ function PixelFace({ talking, size = 120 }) {
   const canvasRef = useRef(null);
   const stateRef = useRef({ talking: false, blinking: false });
   const animRef = useRef(null);
+  const drawRef = useRef(null);
 
   useEffect(() => {
     stateRef.current.talking = talking;
+    // Kick the animation loop when talking state changes
+    if (drawRef.current && !animRef.current) {
+      animRef.current = requestAnimationFrame(drawRef.current);
+    }
   }, [talking]);
 
   useEffect(() => {
@@ -216,8 +221,14 @@ function PixelFace({ talking, size = 120 }) {
       } else {
         drawPixels(mouthIdle);
       }
-      animRef.current = requestAnimationFrame(draw);
+      // Only keep looping when animating (talking or blinking)
+      if (stateRef.current.talking || stateRef.current.blinking) {
+        animRef.current = requestAnimationFrame(draw);
+      } else {
+        animRef.current = null;
+      }
     }
+    drawRef.current = draw;
 
     draw();
 
@@ -226,8 +237,12 @@ function PixelFace({ talking, size = 120 }) {
       const delay = Math.random() * 3000 + 2000;
       blinkTimeout = setTimeout(() => {
         stateRef.current.blinking = true;
+        // Kick animation loop for blink
+        if (!animRef.current) animRef.current = requestAnimationFrame(draw);
         blinkTimeout = setTimeout(() => {
           stateRef.current.blinking = false;
+          // One more frame to render eyes-open, then loop stops
+          if (!animRef.current) animRef.current = requestAnimationFrame(draw);
           scheduleBlink();
         }, 150);
       }, delay);
@@ -236,6 +251,7 @@ function PixelFace({ talking, size = 120 }) {
 
     return () => {
       if (animRef.current) cancelAnimationFrame(animRef.current);
+      animRef.current = null;
       clearTimeout(blinkTimeout);
     };
   }, []);
