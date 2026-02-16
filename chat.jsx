@@ -1186,6 +1186,228 @@ function ChatInput({ onSend, disabled }) {
   );
 }
 
+/* ── Artifact Viewer (retro themed) ──────────────────────────────────────── */
+
+function ArtifactViewer({ activeArtifact, artifacts, onSelect }) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    function handleClick(e) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  return (
+    <div className="flex flex-col" style={{
+      flex: 1,
+      minHeight: 0,
+      background: '#0F0F0F',
+      border: '4px solid #2a2a2a',
+      borderRadius: 12,
+      overflow: 'hidden',
+      boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
+      position: 'relative',
+    }}>
+      {/* CRT overlay */}
+      <div style={{
+        position: 'absolute',
+        inset: 0,
+        background: 'linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,0.1) 50%), linear-gradient(90deg, rgba(255,0,0,0.06), rgba(0,255,0,0.02), rgba(0,0,255,0.06))',
+        backgroundSize: '100% 2px, 3px 100%',
+        opacity: 0.08,
+        pointerEvents: 'none',
+        zIndex: 20,
+        borderRadius: 12,
+      }} />
+
+      {/* Header bar */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '10px 16px',
+        borderBottom: '1px dashed #333',
+        background: '#0F0F0F',
+        minHeight: 50,
+        position: 'relative',
+        zIndex: 10,
+      }}>
+        <span style={{
+          color: '#AA8800',
+          fontSize: '0.85rem',
+          fontFamily: "'VT323', monospace",
+          letterSpacing: '0.15em',
+        }}>DISPLAY://</span>
+
+        {/* Dropdown selector */}
+        <div style={{ position: 'relative', flex: 1 }} ref={dropdownRef}>
+          <button
+            onClick={() => setDropdownOpen(!dropdownOpen)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              width: '100%',
+              padding: '6px 12px',
+              background: '#1a1a00',
+              border: '2px solid #333',
+              borderRadius: 4,
+              color: activeArtifact ? '#FFD600' : '#666',
+              fontFamily: "'VT323', monospace",
+              fontSize: '1rem',
+              textAlign: 'left',
+              cursor: 'pointer',
+              textTransform: 'uppercase',
+            }}
+          >
+            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {activeArtifact || 'SELECT FILE...'}
+            </span>
+            <span style={{ color: '#666', fontSize: 10 }}>
+              {dropdownOpen ? '\u25B2' : '\u25BC'}
+            </span>
+          </button>
+
+          {dropdownOpen && artifacts.length > 0 && (
+            <div style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              right: 0,
+              marginTop: 4,
+              background: '#0F0F0F',
+              border: '2px solid #333',
+              borderRadius: 4,
+              zIndex: 50,
+              maxHeight: 300,
+              overflowY: 'auto',
+            }}>
+              {artifacts.map(f => (
+                <button
+                  key={f.name}
+                  onClick={() => { onSelect(f.name); setDropdownOpen(false); }}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '6px 12px',
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1rem',
+                    color: f.name === activeArtifact ? '#FFD600' : '#AA8800',
+                    background: f.name === activeArtifact ? '#1a1a00' : 'transparent',
+                    border: 'none',
+                    borderBottom: '1px solid #1a1a1a',
+                    cursor: 'pointer',
+                    textTransform: 'uppercase',
+                  }}
+                  onMouseEnter={e => e.target.style.background = '#1a1a00'}
+                  onMouseLeave={e => e.target.style.background = f.name === activeArtifact ? '#1a1a00' : 'transparent'}
+                >
+                  {f.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Open in new tab */}
+        {activeArtifact && (
+          <a
+            href={'/api/artifacts/' + encodeURIComponent(activeArtifact)}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 36,
+              height: 36,
+              borderRadius: '50%',
+              background: '#E5E5E5',
+              color: '#333',
+              border: '1px solid #999',
+              boxShadow: '0 3px 0 #999, 0 6px 8px rgba(0,0,0,0.15)',
+              textDecoration: 'none',
+              fontFamily: "'VT323', monospace",
+              fontSize: '1rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              flexShrink: 0,
+            }}
+            title="OPEN IN NEW TAB"
+          >&#8599;</a>
+        )}
+      </div>
+
+      {/* iframe or empty state */}
+      {activeArtifact ? (
+        <iframe
+          key={activeArtifact}
+          src={'/api/artifacts/' + encodeURIComponent(activeArtifact)}
+          style={{
+            flex: 1,
+            width: '100%',
+            border: 'none',
+            background: '#fff',
+            borderRadius: '0 0 8px 8px',
+          }}
+          title={activeArtifact}
+          sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+        />
+      ) : (
+        <div style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 16,
+        }}>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(8, 1fr)',
+            gap: 3,
+            opacity: 0.15,
+          }}>
+            {Array.from({ length: 64 }, (_, i) => (
+              <div key={i} style={{
+                width: 6,
+                height: 6,
+                backgroundColor: (i % 7 === 0 || i % 11 === 0) ? '#FFD600' : '#333',
+              }} />
+            ))}
+          </div>
+          <div style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '1.2rem',
+            color: '#444',
+            textAlign: 'center',
+            textTransform: 'uppercase',
+            letterSpacing: '0.1em',
+          }}>
+            {artifacts.length > 0
+              ? '> SELECT ARTIFACT TO DISPLAY'
+              : '> AWAITING ARTIFACT GENERATION'}
+          </div>
+          <div style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '0.9rem',
+            color: '#333',
+            textAlign: 'center',
+          }}>
+            JULIAN WILL CREATE ARTIFACTS HERE
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // === Window Exports (for App component) ===
 if (typeof window !== 'undefined') {
   window.escapeHtml = escapeHtml;
@@ -1200,4 +1422,5 @@ if (typeof window !== 'undefined') {
   window.MessageBubble = MessageBubble;
   window.SetupScreen = SetupScreen;
   window.ChatInput = ChatInput;
+  window.ArtifactViewer = ArtifactViewer;
 }

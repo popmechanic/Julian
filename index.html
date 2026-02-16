@@ -257,6 +257,8 @@ function App() {
   const [wakingUp, setWakingUp] = useState(false);
   const [serverSessionId, setServerSessionId] = useState(null);
   const messagesEndRef = useRef(null);
+  const [artifacts, setArtifacts] = useState([]);
+  const [activeArtifact, setActiveArtifact] = useState('');
 
   // Register service worker
   useEffect(() => {
@@ -282,6 +284,34 @@ function App() {
       console.error('[Auth] Clerk getToken() error:', err);
       return null;
     }
+  }, []);
+
+  const refreshArtifacts = useCallback(async () => {
+    try {
+      const headers = await getAuthHeaders();
+      if (!headers) return;
+      const res = await fetch('/api/artifacts', { headers });
+      if (!res.ok) return;
+      const data = await res.json();
+      setArtifacts(data.files || data);
+    } catch (err) {
+      console.warn('[Artifacts] refresh failed:', err);
+    }
+  }, [getAuthHeaders]);
+
+  // Fetch artifacts on mount
+  useEffect(() => {
+    refreshArtifacts();
+  }, [refreshArtifacts]);
+
+  // Handle file selection from JulianScreen menu
+  const handleFileSelect = useCallback((filename) => {
+    // Ensure it's in the artifacts list
+    setArtifacts(prev => {
+      if (prev.some(f => f.name === filename)) return prev;
+      return [...prev, { name: filename, modified: Date.now() }];
+    });
+    setActiveArtifact(filename);
   }, []);
 
   useEffect(() => {
@@ -1062,15 +1092,27 @@ function App() {
             </div>
           </div>
 
-          {/* Right column: JulianScreen */}
+          {/* Right column: JulianScreen + Artifact Viewer */}
           <div style={{
             flex: 1,
             minWidth: 0,
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
+            flexDirection: 'column',
+            gap: 16,
+            height: '100%',
           }}>
-            <JulianScreenEmbed sessionActive={sessionActive} />
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+              <JulianScreenEmbed sessionActive={sessionActive} onFileSelect={handleFileSelect} />
+            </div>
+            <ArtifactViewer
+              activeArtifact={activeArtifact}
+              artifacts={artifacts}
+              onSelect={setActiveArtifact}
+            />
           </div>
         </div>
       )}
