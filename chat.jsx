@@ -294,6 +294,7 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
   const reconnectRef = useRef(null);
+  const reconnectDelayRef = useRef(2000);
   const onFileSelectRef = useRef(onFileSelect);
   const [connected, setConnected] = useState(false);
   const [scale, setScale] = useState(1);
@@ -318,20 +319,16 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
       if (location.hostname === 'localhost') {
         wsUrl = 'ws://localhost:3848/ws';
       } else {
-        // Pass Clerk token as query param for WebSocket auth
-        let token = '';
-        try {
-          token = await window.Clerk?.session?.getToken() || '';
-        } catch {}
-        wsUrl = `${proto}//${location.host}/screen/ws${token ? '?token=' + encodeURIComponent(token) : ''}`;
+        wsUrl = `${proto}//${location.host}/screen/ws`;
       }
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
         setConnected(true);
+        reconnectDelayRef.current = 2000;
         if (reconnectRef.current) {
-          clearInterval(reconnectRef.current);
+          clearTimeout(reconnectRef.current);
           reconnectRef.current = null;
         }
         // Set up sendFeedback to intercept FILE_SELECT locally
@@ -373,7 +370,11 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
         setConnected(false);
         wsRef.current = null;
         if (!reconnectRef.current) {
-          reconnectRef.current = setInterval(() => connect(), 2000);
+          reconnectRef.current = setTimeout(() => {
+            reconnectRef.current = null;
+            connect();
+          }, reconnectDelayRef.current);
+          reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 2, 30000);
         }
       };
 
@@ -385,7 +386,7 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
     connect();
     return () => {
       if (reconnectRef.current) {
-        clearInterval(reconnectRef.current);
+        clearTimeout(reconnectRef.current);
         reconnectRef.current = null;
       }
       if (wsRef.current) {

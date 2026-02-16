@@ -74,8 +74,8 @@ Browser (React state → Fireproof put)
 | Layer | Technology | Notes |
 |-------|-----------|-------|
 | Runtime | Bun | Server + process spawning + static files |
-| Server | `server/server.ts` (~740 lines) | HTTP, SSE, static serving, process management |
-| Frontend | `index.html` (~4200 lines) | Single-file SPA, no build step |
+| Server | `server/server.ts` (~1040 lines) | HTTP, SSE, static serving, process management |
+| Frontend | `vibes.jsx` + `chat.jsx` + `index.html` (~4200 lines total) | 3-file SPA, no build step, Babel in-browser |
 | Framework | React 19 via CDN | ESM import maps, esm.sh |
 | Transpiler | Babel Standalone 7.26 | In-browser JSX compilation |
 | CSS | Tailwind Browser 4 + CSS variables | No build step |
@@ -100,13 +100,16 @@ The server maintains a single persistent Claude CLI subprocess:
 |--------|------|------|---------|
 | `GET` | `/api/health` | None | Returns `{ status, processAlive, needsSetup, authMethod }` |
 | `POST` | `/api/setup` | Clerk JWT | Saves `sk-ant-oat` token to `claude-auth.env` |
-| `GET` | `/api/oauth/start` | None | Generates PKCE challenge, returns Anthropic authorization URL |
-| `POST` | `/api/oauth/exchange` | None | Exchanges authorization code for OAuth tokens |
+| `GET` | `/api/oauth/start` | Clerk JWT | Generates PKCE challenge, returns Anthropic authorization URL |
+| `POST` | `/api/oauth/exchange` | Clerk JWT | Exchanges authorization code for OAuth tokens |
 | `POST` | `/api/session/start` | Clerk JWT | Spawns Claude subprocess, streams wake-up SSE response |
 | `POST` | `/api/session/end` | Clerk JWT | Kills Claude subprocess |
 | `POST` | `/api/chat` | Clerk JWT | Sends message to Claude stdin, returns SSE stream |
 | `GET` | `/api/artifacts` | Clerk JWT | Lists `*.html` files from `memory/` sorted by mtime desc |
 | `GET` | `/api/artifacts/:filename` | None | Serves HTML artifact file (iframes can't send headers) |
+| `GET` | `/api/skills` | Clerk JWT | Lists available Claude Code skills/plugins |
+| `GET` | `/api/agents` | Clerk JWT | Lists active agent teams |
+| `WS` | `/screen/ws` | None | WebSocket proxy to JulianScreen (port 3848) |
 | `OPTIONS` | `*` | None | CORS preflight |
 
 The server also serves all static files from `WORKING_DIR` and provides SPA fallback to `index.html` for client-side routes.
@@ -134,7 +137,7 @@ Controls **who can access Julian's web UI**. Part of the Vibes framework.
 - `ClerkFireproofProvider` wraps the app; `<SignedIn>` / `<SignedOut>` gates content.
 - Frontend calls `window.Clerk.session.getToken()` to get a short-lived JWT.
 - All protected endpoints (`/api/session/start`, `/api/session/end`, `/api/chat`) require `Authorization: Bearer <clerk-jwt>`.
-- Server verifies JWTs via JWKS (`jose.jwtVerify()`) with 10s clock tolerance.
+- Server verifies JWTs via JWKS (`jose.jwtVerify()`) with 60s clock tolerance.
 - JWKS URL derived from publishable key: base64-decode `pk_test_...` → Clerk frontend API domain → `https://<domain>/.well-known/jwks.json`.
 - If no `VITE_CLERK_PUBLISHABLE_KEY`, auth is skipped (local dev mode).
 - Health and OAuth endpoints are public (no Clerk auth required).
@@ -181,7 +184,7 @@ User visits julian.exe.xyz
 
 ### Architecture
 
-A single HTML file containing everything: CSS variables, Vibes design system components (25 pre-compiled React components in a `<script type="module">` block), and the main application in a `<script type="text/babel" data-type="module">` block transpiled by Babel Standalone at runtime.
+Three files loaded via in-browser Babel `<script type="text/babel">` tags (no build step): `vibes.jsx` (~1,878 lines — auto-generated vibes components), `chat.jsx` (~1,340 lines — chat UI, JulianScreen embed, setup screen), and `index.html` (~1,177 lines — HTML shell, CSS, imports, App component). Components export to `window.*` for cross-script access. Load order: vibes.jsx → chat.jsx → inline App script.
 
 **Module loading**: ESM import maps resolve `react`, `react-dom`, `@clerk/clerk-react`, `use-fireproof`, and `@fireproof/clerk` to CDN URLs (esm.sh) or local bundles (`/bundles/fireproof-clerk-bundle.js`).
 

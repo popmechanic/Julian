@@ -98,7 +98,7 @@ async function verifyClerkToken(req: Request): Promise<boolean> {
     return false;
   }
   try {
-    await jwtVerify(auth.slice(7), JWKS, { clockTolerance: 10 });
+    await jwtVerify(auth.slice(7), JWKS, { clockTolerance: 60 });
     return true;
   } catch (err) {
     console.error("[Clerk] JWT verification failed:", (err as Error).message);
@@ -545,18 +545,8 @@ const server = Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
 
-    // WebSocket upgrade for JulianScreen proxy (authenticated via query param)
+    // WebSocket upgrade for JulianScreen proxy (unauthenticated — low-risk pixel display)
     if (url.pathname === '/screen/ws') {
-      const wsToken = url.searchParams.get('token');
-      if (JWKS && wsToken) {
-        try {
-          await jwtVerify(wsToken, JWKS, { clockTolerance: 10 });
-        } catch {
-          return new Response('Unauthorized', { status: 401 });
-        }
-      } else if (JWKS && !wsToken) {
-        return new Response('Unauthorized — token query param required', { status: 401 });
-      }
       const upgraded = server.upgrade(req, { data: {} });
       if (upgraded) return undefined;
       return new Response('WebSocket upgrade failed', { status: 400 });
