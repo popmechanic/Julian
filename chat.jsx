@@ -886,12 +886,12 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
 
     function updateScale() {
       const rect = container.getBoundingClientRect();
-      const sx = Math.floor(rect.width / 128);
-      const sy = Math.floor(rect.height / 96);
+      const sx = Math.floor(rect.width / 640);
+      const sy = Math.floor(rect.height / 480);
       const s = Math.max(1, Math.min(sx, sy));
       setScale(s);
-      canvas.style.width = (128 * s) + 'px';
-      canvas.style.height = (96 * s) + 'px';
+      canvas.style.width = (640 * s) + 'px';
+      canvas.style.height = (480 * s) + 'px';
       if (window.JScreen) window.JScreen._scale = s;
     }
 
@@ -944,12 +944,12 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
       <canvas
         ref={canvasRef}
         id="screen"
-        width={128}
-        height={96}
+        width={640}
+        height={480}
         style={{
           imageRendering: 'pixelated',
-          width: 128 * scale,
-          height: 96 * scale,
+          width: 640 * scale,
+          height: 480 * scale,
         }}
       />
     </div>
