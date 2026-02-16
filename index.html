@@ -418,6 +418,34 @@ async function streamSSEResponse(response, setLiveAssistant) {
           finalBlocks = blocks;
           if (!notifiedArrival) { window.SFX?.play('notification'); notifiedArrival = true; }
           setLiveAssistant(prev => prev ? { ...prev, blocks, thinking: false, streaming: true } : null);
+
+          // Detect [AGENT_REGISTERED] markers in any SSE stream
+          for (const block of eventData.message.content) {
+            if (block.type !== 'text') continue;
+            const agentLines = block.text.split('\n').filter(l => l.includes('[AGENT_REGISTERED]'));
+            for (const agentLine of agentLines) {
+              try {
+                const jsonStr = agentLine.slice(agentLine.indexOf('{'));
+                const agent = JSON.parse(jsonStr);
+                if (agent.name && agent.gridPosition != null && window._julianDB) {
+                  const db = window._julianDB;
+                  // Check if agent already exists at this position
+                  const existing = await db.query("type", { key: "agent-identity" });
+                  const atPosition = (existing.rows || []).find(r => (r.doc || r.value || r).gridPosition === agent.gridPosition);
+                  if (atPosition) {
+                    const doc = atPosition.doc || atPosition.value || atPosition;
+                    await db.put({ ...doc, ...agent, type: 'agent-identity', hatching: false });
+                  } else {
+                    await db.put({ ...agent, type: 'agent-identity' });
+                  }
+                  window.SFX?.play('select');
+                  console.log('[SSE] Detected and saved agent:', agent.name, 'at position', agent.gridPosition);
+                }
+              } catch (parseErr) {
+                console.debug('[SSE] Failed to parse agent identity:', parseErr);
+              }
+            }
+          }
         }
 
         if (eventData.type === 'result') {
