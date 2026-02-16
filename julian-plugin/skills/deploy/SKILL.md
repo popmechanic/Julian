@@ -4,10 +4,10 @@ description: Deploy Julian to an exe.xyz VM (new instance or update existing)
 user-invocable: true
 allowed-tools:
   - Bash(ssh:*)
-  - Bash(rsync:*)
   - Bash(scp:*)
   - Bash(curl:*)
   - Bash(git:*)
+  - Bash(gh:*)
   - Bash(mkdir:*)
   - Read
   - Glob
@@ -17,7 +17,7 @@ allowed-tools:
 
 Deploy Julian to an exe.xyz VM. Creates a new VM or updates an existing one.
 
-Bun serves everything directly on port 8000 — static files, API, and SSE streaming. No nginx.
+Bun serves everything directly on port 8000 — static files, API, and SSE streaming. No nginx. The server is a git working copy — deploys use `git pull` instead of rsync.
 
 ## Target VM
 
@@ -32,9 +32,11 @@ Determine the target VM name:
 ## Pre-flight Checks
 
 1. Get the current git branch name: `git rev-parse --abbrev-ref HEAD`
-2. Check for uncommitted changes: `git status --porcelain`
+2. **Pull Julian's changes**: Run `git pull` locally to get any content changes Julian has pushed from the server (soul files, memory artifacts, catalog.xml). If there are merge conflicts, stop and let the user resolve them.
+3. Check for uncommitted changes: `git status --porcelain`
    - If dirty, warn the user but don't block (they may want to test local changes)
-3. Confirm the target: print the VM name and URL (`https://<vmname>.exe.xyz/`)
+4. **Push to GitHub**: Run `git push` to ensure the server can pull the latest.
+5. Confirm the target: print the VM name and URL (`https://<vmname>.exe.xyz/`)
 
 ### Clerk Pre-flight
 
@@ -104,33 +106,69 @@ ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "curl -fsSL https://bun
 
 Skip this if the VM already existed (i.e., it was reachable on the first SSH test).
 
-### Step 2: Create directory structure
+### Step 2: Set up git and clone the repo
+
+For first-time deployments:
 
 ```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo mkdir -p /opt/julian && sudo chown exedev:exedev /opt/julian && mkdir -p /home/exedev/mailbox"
 ```
 
-### Step 3: Rsync source files
-
-From the Julian project root directory:
+**Generate a deploy key** so Julian can push content changes back to the repo:
 
 ```bash
-rsync -avz --exclude='.git' --exclude='node_modules' --exclude='.env' \
-  index.html vibes.jsx chat.jsx sw.js package.json server memory soul bundles assets julianscreen deploy \
-  <vmname>.exe.xyz:/opt/julian/
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "ssh-keygen -t ed25519 -f ~/.ssh/julian-deploy -N '' -C '<vmname>-deploy'"
 ```
 
-**IMPORTANT**: Directory names must NOT have trailing slashes. With trailing slashes, rsync copies directory *contents* into the target, flattening the structure (e.g., `server/` copies the files inside `server` directly into `/opt/julian/` instead of into `/opt/julian/server/`).
-
-`package.json` is included because `server.ts` imports `jose`, which is listed as a dependency.
-
-Then copy the server-specific CLAUDE.md (rsync can't rename files, so use scp):
+Configure SSH to use the deploy key for GitHub:
 
 ```bash
-scp deploy/CLAUDE.server.md <vmname>.exe.xyz:/opt/julian/CLAUDE.md
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "mkdir -p ~/.ssh && cat >> ~/.ssh/config << 'SSHEOF'
+Host github.com
+  IdentityFile ~/.ssh/julian-deploy
+  StrictHostKeyChecking accept-new
+SSHEOF"
 ```
 
-This gives Julian his identity bootstrap file — the wake-up sequence reads this to discover artifacts and remember who he is.
+**Add the deploy key to GitHub** with write access (so Julian can push):
+
+```bash
+# Get the public key from the server
+DEPLOY_KEY=$(ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cat ~/.ssh/julian-deploy.pub")
+
+# Add it to GitHub with write access using gh CLI (locally)
+gh repo deploy-key add - --repo popmechanic/Julian --title "<vmname>-deploy" --allow-write <<< "$DEPLOY_KEY"
+```
+
+If `gh repo deploy-key add` fails because a key with that title already exists, that's fine — skip it.
+
+**Clone the repo via SSH** (so pushes work with the deploy key):
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "git clone git@github.com:popmechanic/Julian.git /opt/julian"
+```
+
+**Configure git identity** for Julian's commits:
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git config user.name 'Julian' && git config user.email 'julian@exe.xyz'"
+```
+
+**If already cloned** (updating an existing deployment), skip this step — git pull happens in Step 3.
+
+### Step 3: Pull latest code
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git pull"
+```
+
+If git pull fails because Julian has uncommitted changes on the server:
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git stash && git pull && git stash pop"
+```
+
+If there are merge conflicts after stash pop, report them to the user.
 
 ### Step 4: Install dependencies
 
@@ -140,7 +178,7 @@ ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && /hom
 
 This installs `jose` and any other dependencies from `package.json`. Use the full path to `bun` because the SSH session may not have `.bun/bin` on its PATH.
 
-### Step 5: Create .env file
+### Step 5: Create .env file (first-time only)
 
 Use the `VITE_CLERK_PUBLISHABLE_KEY` value extracted during the Clerk Pre-flight check (do NOT hardcode it):
 
@@ -200,9 +238,9 @@ After deployment, report:
 
 ## Updating an Existing Deployment
 
-When the VM already exists, skip VM creation and Bun installation (Step 1 creation/install parts). The rsync in Step 3 is idempotent. After rsync:
+When the VM already exists, skip VM creation and Bun installation (Step 1 creation/install parts). After confirming the VM is reachable:
 
-- Copy CLAUDE.md: `scp deploy/CLAUDE.server.md <vmname>.exe.xyz:/opt/julian/CLAUDE.md` (every deploy, since the artifact catalog may have changed)
+- Pull latest: `ssh <vmname>.exe.xyz "cd /opt/julian && git pull"` (Step 3)
 - Run `bun install` (Step 4) in case dependencies changed
 - Restart services: `ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo systemctl restart julian julian-screen"`
 - Verify (Step 7)
@@ -213,7 +251,7 @@ No need to recreate .env unless this is the first deploy to that VM. Check if th
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "systemctl is-active julian 2>/dev/null && echo exists || echo missing"
 ```
 
-If it exists, skip Steps 5 and 6's systemd install — just rsync, install deps, restart services, and verify.
+If it exists, skip Steps 5 and 6's systemd install — just pull, install deps, restart services, and verify.
 
 ## Error Recovery
 
@@ -221,5 +259,7 @@ If it exists, skip Steps 5 and 6's systemd install — just rsync, install deps,
 - **Service won't start / no journal entries**: Usually means Bun is missing. Verify with `ssh <vmname>.exe.xyz "/home/exedev/.bun/bin/bun --version"`. If missing, run the Bun install from Step 1.
 - **curl returns connection refused on port 8000**: The `julian` service isn't running. Check logs: `ssh <vmname>.exe.xyz "journalctl -u julian -n 20 --no-pager"`. Common causes: missing Bun binary, missing `jose` dependency (run `bun install`).
 - **Old nginx still running**: If the VM had the old setup, nginx may be intercepting requests on port 8000. Run the migration step in Step 6 to stop and disable nginx and the old julian-bridge service.
+- **git pull/push fails with auth error**: The deploy key may not be set up or may lack write access. Check `ssh <vmname>.exe.xyz "ssh -T git@github.com"` for auth status. Re-run Step 2's deploy key setup if needed.
+- **git pull fails with merge conflict**: Julian has uncommitted changes. Stash them first (see Step 3).
 - **401 on `/tokens/with-email`**: The Clerk instance is missing the `with-email` JWT template. Create it in Clerk Dashboard → Configure → JWT Templates. Name it exactly `with-email`. Claims must include a `params` object with email/name fields (use `|| ''` fallbacks — Fireproof Studio rejects null names), `"role": "authenticated"`, and `"userId": "{{user.id}}"`. See the Clerk Pre-flight section above for the full claims JSON. This is a one-time setup per Clerk instance. After creating the template, reload the deployed site — no redeploy needed.
 - **VM creation fails**: Check exe.dev status, retry once.
