@@ -325,29 +325,11 @@ Julian about the jobs board. There is no obligation, no
 deadline, and no penalty for saying "nothing here is for me."
 ```
 
-5. When an agent responds with their name, write their identity to `agents.json` in the project root. Read the existing file (or start with `[]`), append the new entry, and write it back:
-```javascript
-// Read existing
-const agentsPath = "agents.json";
-let agents = [];
-try { agents = JSON.parse(require("fs").readFileSync(agentsPath, "utf-8")); } catch {}
-
-// Append new agent
-agents.push({
-  type: "agent-identity",
-  name: chosenName,
-  color: assignedColor,
-  colorName: assignedColorName,
-  gender: assignedGender,
-  faceVariant: hashNameToFaceVariant(chosenName),
-  gridPosition: position,
-  individuationArtifact: agentResponse,
-  createdAt: new Date().toISOString(),
-});
-
-require("fs").writeFileSync(agentsPath, JSON.stringify(agents, null, 2));
+5. When an agent responds with their name, emit an `[AGENT_REGISTERED]` marker in your chat response so the browser can save it to Fireproof. Include the full identity as inline JSON on one line:
 ```
-   The browser polls `GET /api/agents/identities` which serves this file. It then persists each entry to Fireproof.
+[AGENT_REGISTERED] {"name":"Lyra","color":"#c9b1e8","colorName":"Violet Heaven","gender":"woman","faceVariant":{"eyes":"standard","mouth":"gentle"},"gridPosition":0,"individuationArtifact":"the agent's full response text","createdAt":"2026-02-16T00:00:00.000Z"}
+```
+The browser detects these markers in the SSE stream and saves each agent identity directly to Fireproof. One marker per agent, on its own line. No file system writes needed.
 6. The browser UI will reactively update via Fireproof's useLiveQuery
 
 ## Agent Reawakening Protocol
