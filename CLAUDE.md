@@ -211,7 +211,7 @@ claude --plugin-dir ./julian-plugin
 /julian:deploy julian       # Deploy to production (requires confirmation)
 ```
 
-The skill handles VM creation, git clone, systemd services, .env setup, and verification automatically. Deploys use `git pull` on the server — no rsync.
+The skill has two paths: **provision** (new VM — full setup) and **update** (existing VM — just git pull + restart). `deploy/instances.json` tracks which VMs have been provisioned.
 
 ### How it works
 
@@ -224,7 +224,8 @@ The skill handles VM creation, git clone, systemd services, .env setup, and veri
 
 ### Config files
 
-Deploy templates live in `deploy/`:
+Deploy templates and state live in `deploy/`:
+- `deploy/instances.json` — registry of provisioned VMs
 - `deploy/julian.service` — systemd unit for the Bun server
 - `deploy/julian-screen.service` — systemd unit for JulianScreen
 

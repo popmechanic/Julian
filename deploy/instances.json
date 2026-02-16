@@ -1,0 +1,12 @@
+{
+  "julian": {
+    "url": "https://julian.exe.xyz",
+    "provisioned": "2026-02-10T00:00:00Z",
+    "branch": "main"
+  },
+  "julian-screentest": {
+    "url": "https://julian-screentest.exe.xyz",
+    "provisioned": "2026-02-16T00:00:00Z",
+    "branch": "main"
+  }
+}

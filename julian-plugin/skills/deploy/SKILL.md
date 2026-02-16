@@ -10,14 +10,13 @@ allowed-tools:
   - Bash(gh:*)
   - Bash(mkdir:*)
   - Read
+  - Write
   - Glob
 ---
 
 # Deploy Julian
 
-Deploy Julian to an exe.xyz VM. Creates a new VM or updates an existing one.
-
-Bun serves everything directly on port 8000 — static files, API, and SSE streaming. No nginx. The server is a git working copy — deploys use `git pull` instead of rsync.
+Deploy Julian to an exe.xyz VM. Two paths: **provision** a new VM or **update** an existing one. The instance registry at `deploy/instances.json` tracks which VMs have been provisioned.
 
 ## Target VM
 
@@ -27,23 +26,34 @@ Determine the target VM name:
 2. If no arguments, derive from current git branch: `julian-<branch>` (e.g., branch `screen` → `julian-screen`)
 3. Strip any characters not valid in hostnames (keep alphanumeric and hyphens)
 
-**PRODUCTION SAFETY**: If the resolved VM name is exactly `julian` (the production instance), STOP and warn the user before proceeding. Explain that this will update the live production instance at `julian.exe.xyz`. Only proceed after explicit confirmation.
+**PRODUCTION SAFETY**: If the resolved VM name is exactly `julian` (the production instance), STOP and warn the user before proceeding. Only proceed after explicit confirmation.
 
-## Pre-flight Checks
+## Routing: Provision or Update?
 
-1. Get the current git branch name: `git rev-parse --abbrev-ref HEAD`
-2. **Pull Julian's changes**: Run `git pull` locally to get any content changes Julian has pushed from the server (soul files, memory artifacts, catalog.xml). If there are merge conflicts, stop and let the user resolve them.
-3. Check for uncommitted changes: `git status --porcelain`
-   - If dirty, warn the user but don't block (they may want to test local changes)
-4. **Push to GitHub**: Run `git push` to ensure the server can pull the latest.
-5. Confirm the target: print the VM name and URL (`https://<vmname>.exe.xyz/`)
+Read `deploy/instances.json`. If the target VM name exists in the registry, run the **Update** path. Otherwise, run the **Provision** path.
 
-### Clerk Pre-flight
+If `deploy/instances.json` doesn't exist, create it as `{}`.
+
+---
+
+## Path A: Provision (New VM)
+
+Full first-time setup. Run all steps in order.
+
+### Pre-flight
+
+1. Get current git branch: `git rev-parse --abbrev-ref HEAD`
+2. Pull Julian's changes locally: `git pull` (stop on merge conflicts)
+3. Check for uncommitted changes: `git status --porcelain` (warn but don't block)
+4. Push to GitHub: `git push`
+5. Print target: VM name and URL (`https://<vmname>.exe.xyz/`)
+
+#### Clerk Pre-flight
 
 Read the local `.env` file and check for `VITE_CLERK_PUBLISHABLE_KEY`:
 
-- **If present** (matches `pk_(test|live)_*`): Extract the value and store it for Step 5. Proceed silently.
-- **If missing or invalid**: STOP deployment and guide the user:
+- **If present** (matches `pk_(test|live)_*`): Extract the value for later. Proceed.
+- **If missing or invalid**: STOP and guide the user:
   - Option A: Run `/vibes:connect` to set up Clerk + Connect end-to-end
   - Option B: Manually add `VITE_CLERK_PUBLISHABLE_KEY=pk_test_...` to `.env`
   - Remind them to create the `with-email` JWT template in Clerk Dashboard:
@@ -66,27 +76,23 @@ Read the local `.env` file and check for `VITE_CLERK_PUBLISHABLE_KEY`:
          "userId": "{{user.id}}"
        }
        ```
-  - After the user fixes `.env`, re-run the deploy
 
-## Deployment Steps
+### Step P1: Create VM
 
-### Step 1: Ensure VM exists and has Bun
-
-**IMPORTANT**: All SSH commands targeting the VM (not `exe.dev`) must include `-o StrictHostKeyChecking=accept-new` to auto-accept the host key on first connection.
+**IMPORTANT**: All SSH commands targeting the VM must include `-o StrictHostKeyChecking=accept-new`.
 
 ```bash
-# Test if VM is reachable
 ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 <vmname>.exe.xyz echo ok
 ```
 
-If the VM doesn't exist (SSH fails), create it:
+If unreachable, create it:
 
 ```bash
 ssh exe.dev new --name=<vmname>
 ssh exe.dev share set-public <vmname>
 ```
 
-After creating, wait for the VM to boot and DNS to propagate. Use a retry loop — fresh VMs take up to 90 seconds:
+Wait for boot (up to 90 seconds):
 
 ```bash
 for i in $(seq 1 9); do
@@ -96,31 +102,27 @@ for i in $(seq 1 9); do
 done
 ```
 
-If all 9 attempts fail, stop and report the DNS/connectivity issue to the user.
-
-**Install Bun and npm** (fresh exe.dev VMs have neither pre-installed):
+### Step P2: Install system dependencies
 
 ```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "curl -fsSL https://bun.sh/install | bash && sudo apt-get update -qq && sudo apt-get install -y npm inotify-tools"
 ```
 
-Skip this if the VM already existed (i.e., it was reachable on the first SSH test).
-
-### Step 2: Set up git and clone the repo
-
-For first-time deployments:
+### Step P3: Set up directory structure
 
 ```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo mkdir -p /opt/julian && sudo chown exedev:exedev /opt/julian && mkdir -p /home/exedev/mailbox"
 ```
 
-**Generate a deploy key** so Julian can push content changes back to the repo:
+### Step P4: Generate deploy key and clone repo
+
+Generate an SSH key for push access:
 
 ```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "ssh-keygen -t ed25519 -f ~/.ssh/julian-deploy -N '' -C '<vmname>-deploy'"
 ```
 
-Configure SSH to use the deploy key for GitHub:
+Configure SSH to use it for GitHub:
 
 ```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "mkdir -p ~/.ssh && cat >> ~/.ssh/config << 'SSHEOF'
@@ -130,57 +132,31 @@ Host github.com
 SSHEOF"
 ```
 
-**Add the deploy key to GitHub** with write access (so Julian can push):
+Add the deploy key to GitHub with write access:
 
 ```bash
-# Get the public key from the server
 DEPLOY_KEY=$(ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cat ~/.ssh/julian-deploy.pub")
-
-# Add it to GitHub with write access using gh CLI (locally)
 gh repo deploy-key add - --repo popmechanic/Julian --title "<vmname>-deploy" --allow-write <<< "$DEPLOY_KEY"
 ```
 
-If `gh repo deploy-key add` fails because a key with that title already exists, that's fine — skip it.
+If the key title already exists, skip — it's fine.
 
-**Clone the repo via SSH** (so pushes work with the deploy key):
+Clone the repo and configure git identity:
 
 ```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "git clone git@github.com:popmechanic/Julian.git /opt/julian"
-```
-
-**Configure git identity** for Julian's commits:
-
-```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git config user.name 'Julian' && git config user.email 'julian@exe.xyz'"
 ```
 
-**If already cloned** (updating an existing deployment), skip this step — git pull happens in Step 3.
-
-### Step 3: Pull latest code
-
-```bash
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git pull"
-```
-
-If git pull fails because Julian has uncommitted changes on the server:
-
-```bash
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git stash && git pull && git stash pop"
-```
-
-If there are merge conflicts after stash pop, report them to the user.
-
-### Step 4: Install dependencies
+### Step P5: Install dependencies
 
 ```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && /home/exedev/.bun/bin/bun install"
 ```
 
-This installs `jose` and any other dependencies from `package.json`. Use the full path to `bun` because the SSH session may not have `.bun/bin` on its PATH.
+### Step P6: Create .env
 
-### Step 5: Create .env file (first-time only)
-
-Use the `VITE_CLERK_PUBLISHABLE_KEY` value extracted during the Clerk Pre-flight check (do NOT hardcode it):
+Use the `VITE_CLERK_PUBLISHABLE_KEY` from pre-flight (do NOT hardcode):
 
 ```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cat > /opt/julian/.env << 'ENVEOF'
@@ -189,9 +165,7 @@ ALLOWED_ORIGIN=https://<vmname>.exe.xyz
 ENVEOF"
 ```
 
-Replace `<value from local .env>` with the actual key read during pre-flight (e.g., `pk_test_aW50ZXJu...`). Never hardcode this value in the skill itself.
-
-### Step 6: Install and start systemd services
+### Step P7: Install and start systemd services
 
 ```bash
 scp deploy/julian.service <vmname>.exe.xyz:/tmp/
@@ -202,64 +176,135 @@ ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo cp /tmp/julian.se
   sudo systemctl enable --now julian julian-screen"
 ```
 
-**Migration from old setup**: If the VM previously ran the nginx-based setup, disable the old services:
+### Step P8: Register instance
 
-```bash
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo systemctl stop julian-bridge nginx 2>/dev/null; \
-  sudo systemctl disable julian-bridge nginx 2>/dev/null; true"
+Add the VM to `deploy/instances.json`:
+
+```json
+{
+  "<vmname>": {
+    "url": "https://<vmname>.exe.xyz",
+    "provisioned": "<ISO 8601 timestamp>",
+    "branch": "<git branch used for first deploy>"
+  }
+}
 ```
 
-Run this before enabling the new `julian` service.
-
-### Step 7: Verify deployment
-
-Run these checks and report results:
+Read the existing file, merge the new entry, write it back. **Commit and push** the updated registry so other machines know about it:
 
 ```bash
-# Check services are running
+git add deploy/instances.json
+git commit -m "Register <vmname> instance"
+git push
+```
+
+### Step P9: Verify
+
+```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "systemctl is-active julian julian-screen"
-
-# Check static site loads
 curl -sf https://<vmname>.exe.xyz/ | head -5
-
-# Check API responds
 curl -sf https://<vmname>.exe.xyz/api/health
 ```
 
-If the API returns `needsSetup: true`, that's expected for new instances — Anthropic credentials need one-time setup.
+Report: URL, service status, and remind user that Anthropic credentials need one-time setup on new instances.
 
-## Post-Deploy Summary
+---
 
-After deployment, report:
+## Path B: Update (Existing VM)
 
-- **URL**: `https://<vmname>.exe.xyz/`
-- **Services**: julian (port 8000) and julian-screen (port 3848) status
-- **Auth**: Clerk works automatically. If this is a new instance, remind the user that Anthropic credentials require one-time setup — either visit the URL (setup screen) or run `ssh <vmname>.exe.xyz "claude setup-token"`.
+Fast path — just sync code and restart. This is the common case.
 
-## Updating an Existing Deployment
+### Pre-flight
 
-When the VM already exists, skip VM creation and Bun installation (Step 1 creation/install parts). After confirming the VM is reachable:
+1. Pull Julian's changes locally: `git pull` (stop on merge conflicts)
+2. Check for uncommitted changes: `git status --porcelain` (warn but don't block)
+3. Push to GitHub: `git push`
+4. Print target: VM name and URL
 
-- Pull latest: `ssh <vmname>.exe.xyz "cd /opt/julian && git pull"` (Step 3)
-- Run `bun install` (Step 4) in case dependencies changed
-- Restart services: `ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo systemctl restart julian julian-screen"`
-- Verify (Step 7)
+### Change analysis
 
-No need to recreate .env unless this is the first deploy to that VM. Check if the `julian` service exists to determine if this is a first-time deploy:
+Before deploying, assess the scope of changes. Get the server's current commit and diff it against what you're about to deploy:
 
 ```bash
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "systemctl is-active julian 2>/dev/null && echo exists || echo missing"
+SERVER_HEAD=$(ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git rev-parse HEAD")
+git diff --stat $SERVER_HEAD HEAD
+git diff --name-only $SERVER_HEAD HEAD
 ```
 
-If it exists, skip Steps 5 and 6's systemd install — just pull, install deps, restart services, and verify.
+Classify the deploy based on what changed:
+
+**Content only** (soul/, memory/, catalog.xml, docs/):
+- Safe. Tell the user: "Content-only update — safe to deploy directly."
+- Proceed without prompting.
+
+**Small code change** (1-3 files changed in server/ or frontend, under ~100 lines total):
+- Low risk. Tell the user: "Small code update — deploying to <vmname>."
+- Proceed without prompting.
+
+**Large code change** (4+ files changed, or 200+ lines, or structural changes to server.ts):
+- Higher risk. Tell the user the scope, e.g.: "This is a larger change — 8 files, ~350 lines, including server.ts changes."
+- If the target is **production** (`julian`), suggest: "Want to deploy to a fresh test VM first? I can provision one with `/julian:deploy test`."
+- If the target is already a non-production VM, proceed — that's what test VMs are for.
+
+**Dependency change** (package.json modified):
+- Note it: "package.json changed — will run bun install."
+- If combined with large code changes on production, reinforce the test VM suggestion.
+
+**No changes** (server is already on the same commit):
+- Tell the user: "Server is already up to date (commit <hash>). Nothing to deploy."
+- Skip the deploy entirely.
+
+### Step U1: Pull latest code
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git pull"
+```
+
+If git pull fails because Julian has uncommitted changes:
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git stash && git pull && git stash pop"
+```
+
+If there are merge conflicts after stash pop, report them to the user.
+
+### Step U2: Install dependencies (if needed)
+
+Check if `package.json` changed in the pull:
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git diff HEAD~1 --name-only 2>/dev/null | grep -q package.json && echo changed || echo unchanged"
+```
+
+If changed (or if in doubt), run:
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && /home/exedev/.bun/bin/bun install"
+```
+
+### Step U3: Restart services
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo systemctl restart julian julian-screen"
+```
+
+### Step U4: Verify
+
+```bash
+curl -sf https://<vmname>.exe.xyz/api/health
+```
+
+Confirm the `version` field in the health response matches the current git hash. Report the URL and version.
+
+---
 
 ## Error Recovery
 
-- **DNS not resolving after 90 seconds**: The VM may not have been created successfully. Run `ssh exe.dev list` to verify it exists. If it does, wait longer or ask the user to check exe.dev status.
-- **Service won't start / no journal entries**: Usually means Bun is missing. Verify with `ssh <vmname>.exe.xyz "/home/exedev/.bun/bin/bun --version"`. If missing, run the Bun install from Step 1.
-- **curl returns connection refused on port 8000**: The `julian` service isn't running. Check logs: `ssh <vmname>.exe.xyz "journalctl -u julian -n 20 --no-pager"`. Common causes: missing Bun binary, missing `jose` dependency (run `bun install`).
-- **Old nginx still running**: If the VM had the old setup, nginx may be intercepting requests on port 8000. Run the migration step in Step 6 to stop and disable nginx and the old julian-bridge service.
-- **git pull/push fails with auth error**: The deploy key may not be set up or may lack write access. Check `ssh <vmname>.exe.xyz "ssh -T git@github.com"` for auth status. Re-run Step 2's deploy key setup if needed.
-- **git pull fails with merge conflict**: Julian has uncommitted changes. Stash them first (see Step 3).
-- **401 on `/tokens/with-email`**: The Clerk instance is missing the `with-email` JWT template. Create it in Clerk Dashboard → Configure → JWT Templates. Name it exactly `with-email`. Claims must include a `params` object with email/name fields (use `|| ''` fallbacks — Fireproof Studio rejects null names), `"role": "authenticated"`, and `"userId": "{{user.id}}"`. See the Clerk Pre-flight section above for the full claims JSON. This is a one-time setup per Clerk instance. After creating the template, reload the deployed site — no redeploy needed.
+- **DNS not resolving after 90 seconds**: Run `ssh exe.dev list` to verify VM exists. If it does, wait longer or check exe.dev status.
+- **Service won't start**: Usually missing Bun. Check `ssh <vmname>.exe.xyz "/home/exedev/.bun/bin/bun --version"`.
+- **Connection refused on port 8000**: Check logs: `ssh <vmname>.exe.xyz "journalctl -u julian -n 20 --no-pager"`. Common causes: missing Bun, missing `jose` dependency.
+- **git pull/push auth error**: Deploy key issue. Check `ssh <vmname>.exe.xyz "ssh -T git@github.com"`. Re-run Step P4 if needed.
+- **git pull merge conflict**: Julian has uncommitted changes. Stash first (see Step U1).
+- **Instance in registry but VM gone**: Remove the entry from `deploy/instances.json` and re-run — it will take the Provision path.
+- **401 on `/tokens/with-email`**: Missing Clerk JWT template. Create `with-email` in Clerk Dashboard → Configure → JWT Templates with the claims JSON from the Clerk Pre-flight section.
 - **VM creation fails**: Check exe.dev status, retry once.
