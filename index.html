@@ -286,23 +286,40 @@ function App() {
     }
   }, []);
 
-  const refreshArtifacts = useCallback(async () => {
+  const refreshMenuData = useCallback(async () => {
     try {
       const headers = await getAuthHeaders();
       if (!headers) return;
-      const res = await fetch('/api/artifacts', { headers });
-      if (!res.ok) return;
-      const data = await res.json();
-      setArtifacts(data.files || data);
+
+      const [artifactsRes, skillsRes, agentsRes] = await Promise.allSettled([
+        fetch('/api/artifacts', { headers }),
+        fetch('/api/skills', { headers }),
+        fetch('/api/agents', { headers }),
+      ]);
+
+      if (artifactsRes.status === 'fulfilled' && artifactsRes.value.ok) {
+        const data = await artifactsRes.value.json();
+        const files = data.files || data;
+        setArtifacts(files);
+        if (window.JScreen?.setMenuData) window.JScreen.setMenuData('browser', data);
+      }
+      if (skillsRes.status === 'fulfilled' && skillsRes.value.ok) {
+        const data = await skillsRes.value.json();
+        if (window.JScreen?.setMenuData) window.JScreen.setMenuData('skills', data);
+      }
+      if (agentsRes.status === 'fulfilled' && agentsRes.value.ok) {
+        const data = await agentsRes.value.json();
+        if (window.JScreen?.setMenuData) window.JScreen.setMenuData('agents', data);
+      }
     } catch (err) {
-      console.warn('[Artifacts] refresh failed:', err);
+      console.warn('[Menu] refresh failed:', err);
     }
   }, [getAuthHeaders]);
 
-  // Fetch artifacts on mount
+  // Fetch menu data on mount
   useEffect(() => {
-    refreshArtifacts();
-  }, [refreshArtifacts]);
+    refreshMenuData();
+  }, [refreshMenuData]);
 
   // Handle file selection from JulianScreen menu
   const handleFileSelect = useCallback((filename) => {
@@ -512,7 +529,9 @@ function App() {
     setLiveAssistant(null);
     setStreaming(false);
     setConnected(true);
-  }, [streaming, sessionActive, serverSessionId, database, getAuthHeaders]);
+    // Refresh menu data in case Julian created new artifacts
+    refreshMenuData();
+  }, [streaming, sessionActive, serverSessionId, database, getAuthHeaders, refreshMenuData]);
 
   const startSession = useCallback(async () => {
     if (wakingUp || sessionActive) return;

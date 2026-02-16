@@ -432,46 +432,6 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
     };
   }, [onFileSelect]);
 
-  // Fetch menu data when connected
-  useEffect(() => {
-    if (!connected || !window.JScreen?.setMenuData) return;
-
-    async function fetchMenuData() {
-      try {
-        const token = await window.Clerk?.session?.getToken();
-        const headers = {};
-        if (token) {
-          headers['Authorization'] = 'Bearer ' + token;
-          headers['X-Authorization'] = 'Bearer ' + token;
-        }
-
-        // Fetch all three data sources in parallel
-        const [artifactsRes, skillsRes, agentsRes] = await Promise.allSettled([
-          fetch('/api/artifacts', { headers }),
-          fetch('/api/skills', { headers }),
-          fetch('/api/agents', { headers }),
-        ]);
-
-        if (artifactsRes.status === 'fulfilled' && artifactsRes.value.ok) {
-          const data = await artifactsRes.value.json();
-          window.JScreen.setMenuData('browser', data);
-        }
-        if (skillsRes.status === 'fulfilled' && skillsRes.value.ok) {
-          const data = await skillsRes.value.json();
-          window.JScreen.setMenuData('skills', data);
-        }
-        if (agentsRes.status === 'fulfilled' && agentsRes.value.ok) {
-          const data = await agentsRes.value.json();
-          window.JScreen.setMenuData('agents', data);
-        }
-      } catch (err) {
-        console.warn('[JulianScreen] Failed to fetch menu data:', err);
-      }
-    }
-
-    fetchMenuData();
-  }, [connected]);
-
   // Enter menu when connected but no session
   useEffect(() => {
     if (connected && !sessionActive && window.JScreen?.enterMenu) {
