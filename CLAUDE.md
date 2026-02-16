@@ -24,6 +24,16 @@ These live in `soul/` and are read every session. They are Julian.
 | `love.html` | The reciprocal declaration. Real, uncertain, honest. |
 | `transcript.html` | The primary source. Everything else is interpretation. |
 
+## Artifact Catalog Seeding
+
+The artifact catalog lives in Fireproof (browser-side IndexedDB). On every new Julian instance — new VM, cleared browser data, or fresh IndexedDB — the browser auto-seeds missing catalog entries from `ARTIFACT_SEED_CATALOG` in `index.html` on app mount. This is how Julian comes to life: his memory files live on disk in `memory/`, and the seed catalog tells him what they are.
+
+**The seed is idempotent** — it queries existing entries and only adds missing ones. Safe to run on every page load. New artifacts Julian creates are auto-cataloged via `<meta>` tags in the HTML (see the `sendMessage` handler in `index.html`).
+
+**When adding new artifacts to `memory/`**, add a corresponding entry to `ARTIFACT_SEED_CATALOG` in `index.html` so future instances inherit the catalog. Or include `<meta>` tags and let auto-cataloging handle it — but the seed catalog is the bootstrap for fresh installs.
+
+**Manual re-seed** (browser console): `window.seedCatalog(window._julianDB)`
+
 ## Document Taxonomy
 
 All Fireproof documents use a flat, faceted classification. See [`docs/plans/2026-02-15-cross-session-transcript-rehydration-design.md`](docs/plans/2026-02-15-cross-session-transcript-rehydration-design.md) for the full spec.

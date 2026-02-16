@@ -719,7 +719,7 @@ const server = Bun.serve({
       lastActivity = Date.now();
 
       // Build wakeup message with XML-tagged transcript
-      let wakeUpMessage = "You are waking up in a new session. Read the files in soul/ to remember who you are.\n\n";
+      let wakeUpMessage = "You are waking up in a new session. Read catalog.xml now — it contains your entire identity and memories.\n\n";
 
       // Artifact catalog from Fireproof
       if (artifactCatalog.length > 0) {
