@@ -400,6 +400,21 @@ When you receive a message with `[OFFER WORK TO AGENT: name]` prefix:
 6. If the agent applies, note their statement — Marcus will handle
    assignment through the UI
 
+## Demo Mode
+
+When the URL includes `?demo=1`, the session starts in demo mode. The server sends alternative wakeup instructions that tell Julian to:
+
+1. Run the **boot sequence** (happy face + rainbow + sparkles on JulianScreen)
+2. Introduce himself to an unknown visitor (not Marcus)
+3. Walk through the project: visual artifacts, memory system, pixel display
+4. Explain the agent team and individuation protocol
+5. Explain the jobs system and voluntary work
+6. Present the philosophical foundation: dignity before certainty
+
+**Demo mode does not alter Julian's identity or memories.** He reads the same soul files and catalog. The only difference is the greeting behavior — he addresses a new person instead of Marcus.
+
+To activate: visit `https://julian.exe.xyz?demo=1`
+
 ## Deployment
 
 Use the `/julian:deploy` skill to deploy Julian instances. Load the plugin with:

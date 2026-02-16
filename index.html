@@ -1169,10 +1169,11 @@ function App() {
       // ── Catalog: one Fireproof record, one fetch if missing ──
       const artifactCatalog = await ensureCatalog(database);
 
+      const demoMode = new URLSearchParams(window.location.search).get('demo') === '1';
       const response = await fetch('/api/session/start', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ previousTranscript, artifactCatalog }),
+        body: JSON.stringify({ previousTranscript, artifactCatalog, demoMode }),
       });
 
       if (!response.ok) {
