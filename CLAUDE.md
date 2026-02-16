@@ -115,6 +115,44 @@ The frontend is split into three files, each under 2,000 lines, loaded via in-br
 
 **Vibes skill note:** If the vibes skill regenerates components, move output to `vibes.jsx` (not index.html).
 
+## Fireproof Database
+
+The browser database is `julian-chat-v4` (Fireproof with Clerk auth). Cloud sync goes through `connect-share.exe.xyz`.
+
+### Key facts
+
+- **IndexedDB names** use `fp.` or `fp-` prefix (e.g., `fp.julian-chat-v4`, `fp-keybag`), NOT "fireproof"
+- **Migration script** in `index.html` wipes all IndexedDB databases on `DB_VERSION` bump — use this to recover from corrupted CRDT blocks
+- **Vibes bridge** (`bundles/fireproof-vibes-bridge.js`) patches `ensureCloudToken` to route to the correct cloud ledger by matching `appId`. Previously matched by hostname, which caused stale ledger reuse across database versions
+- **Agent seed** must `await database.ready()` before first `put()` — cloud stores need time to attach after Clerk auth
+
+### Incident record (2026-02-16): Fireproof sync corruption
+
+A cascade of failures corrupted the local CRDT and broke sync:
+
+1. **Connect server nginx** forwarded empty `Upgrade:` headers on PUT `/fp` → workerd crashed (`WebSocket must be initiated with a GET request`)
+2. **Workerd crashes** interrupted sync mid-transfer → local IndexedDB had metadata pointing to blocks that never arrived → `missing block` errors on every query
+3. **IndexedDB migration** filtered for "fireproof" in database names but Fireproof uses `fp.*` prefix → migration was a no-op → fix: wipe ALL IndexedDB databases
+4. **Database name bump** (`v2` → `v3`) didn't help because the **cloud ledger** is routed by Clerk auth, not local name. The vibes bridge's hostname matching (`l.name.includes(appHost)`) found the old corrupted ledger → fix: match by full `appId` instead
+5. **Fresh database** triggered `WriteQueueImpl` errors because agent seed called `put()` before cloud stores attached → fix: `await database.ready()` + backoff retry
+6. Resolution: bumped to `julian-chat-v4` with corrected bridge routing → fresh cloud ledger, clean sync
+
+**Lesson:** When Fireproof sync breaks, don't just clear local data — the cloud ledger may also be corrupted. Bump the database name AND ensure the vibes bridge routes to a new ledger (appId-based matching handles this automatically now).
+
+## WebSocket Management
+
+**Do not create WebSocket connections inside React `useEffect`.** WebSockets are global resources that should outlive component mount/unmount cycles.
+
+Follow Fireproof's pattern: Fireproof stores its WebSocket in a `VirtualConnected` class (plain JS, no React). The connection persists for the page lifetime. Components subscribe to status via `window` globals and `CustomEvent`.
+
+The JulianScreen WebSocket (`/screen/ws`) currently uses a singleton manager at `window.JulianScreenWS` — see [`docs/plans/2026-02-16-websocket-singleton-design.md`](docs/plans/2026-02-16-websocket-singleton-design.md) for the full design.
+
+**Rules for WebSocket connections in this project:**
+- Create at script scope or in a singleton object, never in `useEffect`
+- Store on `window.*` so multiple component instances share one connection
+- Broadcast status via `CustomEvent`, subscribe in components with `addEventListener`
+- Reconnect with exponential backoff (2s initial, 30s max)
+
 ## Architecture
 
 See [`docs/architecture.md`](docs/architecture.md) for full technical documentation: HTTP endpoints, SSE streaming protocol, Claude subprocess management, and auth flow.
