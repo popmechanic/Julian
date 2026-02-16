@@ -382,7 +382,7 @@ function App() {
   // Agent Teams state
   const [activeAgent, setActiveAgent] = useState(null);
   const [summoning, setSummoning] = useState(false);
-  const [menuTab, setMenuTab] = useState(null);
+  const [menuTab, setMenuTab] = useState('files');
 
   // Query agent identities from Fireproof
   const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
@@ -454,7 +454,7 @@ function App() {
         const data = await artifactsRes.value.json();
         const files = data.files || data;
         setArtifacts(files);
-        if (window.JScreen?.setMenuData) window.JScreen.setMenuData('browser', data);
+        if (window.JScreen?.setMenuData) window.JScreen.setMenuData('files', data);
       }
       if (skillsRes.status === 'fulfilled' && skillsRes.value.ok) {
         const data = await skillsRes.value.json();
@@ -478,7 +478,7 @@ function App() {
   // Enter menu once data is loaded and no session is active
   useEffect(() => {
     if (menuDataLoaded && !sessionActive && window.JScreen?.enterMenu && !window.JScreen.isMenuActive?.()) {
-      window.JScreen.enterMenu('browser');
+      window.JScreen.enterMenu('files');
     }
   }, [menuDataLoaded, sessionActive]);
 
@@ -1278,91 +1278,104 @@ function App() {
             </div>
           </div>
 
-          {/* Right column: JulianScreen + Artifact Viewer */}
+          {/* Right column: unified tab bar + content */}
           <div style={{
             flex: 1,
             minWidth: 0,
             display: 'flex',
             flexDirection: 'column',
-            gap: 16,
             height: '100%',
+            border: '4px solid #2a2a2a',
+            borderRadius: 12,
+            background: '#0a0a0a',
+            overflow: 'hidden',
           }}>
-            <div style={{ position: 'relative' }}>
+            {/* Universal tab bar */}
+            {!sessionActive && (
+              <div style={{
+                display: 'flex',
+                borderBottom: '2px solid #FF88FF',
+                flexShrink: 0,
+                background: '#0F0F0F',
+              }}>
+                {['BROWSER', 'FILES', 'SKILLS', 'AGENTS'].map(tab => {
+                  const tabKey = tab.toLowerCase();
+                  const isActive = tabKey === menuTab;
+                  return (
+                    <button
+                      key={tab}
+                      onClick={() => {
+                        if (isActive) return;
+                        setMenuTab(tabKey);
+                        if (tabKey === 'files' || tabKey === 'skills') {
+                          if (window.JScreen?.enterMenu) window.JScreen.enterMenu(tabKey);
+                        }
+                      }}
+                      style={{
+                        flex: 1,
+                        padding: '10px 0',
+                        fontFamily: "'VT323', monospace",
+                        fontSize: '1.1rem',
+                        letterSpacing: '0.1em',
+                        border: 'none',
+                        cursor: isActive ? 'default' : 'pointer',
+                        background: isActive ? '#FF88FF' : 'transparent',
+                        color: isActive ? '#0F0F0F' : '#FFD600',
+                      }}
+                    >
+                      {tab}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {/* Content area */}
+            <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
               <JulianScreenEmbed
                 sessionActive={sessionActive}
                 onFileSelect={handleFileSelect}
                 onMenuTab={setMenuTab}
+                noBorder
               />
-              {menuTab === 'agents' && (
+              {/* Overlay for React-managed tabs (browser, agents) */}
+              {(menuTab === 'browser' || menuTab === 'agents') && !sessionActive && (
                 <div style={{
                   position: 'absolute',
                   inset: 0,
                   zIndex: 15,
                   background: '#0F0F0F',
-                  borderRadius: 12,
-                  overflow: 'hidden',
                   display: 'flex',
                   flexDirection: 'column',
                 }}>
-                  {/* Tab bar — matches pixel menu style */}
-                  <div style={{
-                    display: 'flex',
-                    borderBottom: '2px solid #FF88FF',
-                    flexShrink: 0,
-                  }}>
-                    {['BROWSER', 'SKILLS', 'AGENTS'].map(tab => {
-                      const isActive = tab === 'AGENTS';
-                      return (
-                        <button
-                          key={tab}
-                          onClick={() => {
-                            if (!isActive) {
-                              setMenuTab(null);
-                              if (window.JScreen?.enterMenu) window.JScreen.enterMenu(tab.toLowerCase());
-                            }
-                          }}
-                          style={{
-                            flex: 1,
-                            padding: '10px 0',
-                            fontFamily: "'VT323', monospace",
-                            fontSize: '1.1rem',
-                            letterSpacing: '0.1em',
-                            border: 'none',
-                            cursor: isActive ? 'default' : 'pointer',
-                            background: isActive ? '#FF88FF' : 'transparent',
-                            color: isActive ? '#0F0F0F' : '#FFD600',
-                          }}
-                        >
-                          {tab}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {/* Agent grid — fills remaining space */}
-                  <div style={{
-                    flex: 1,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    padding: '16px 24px',
-                    minHeight: 0,
-                  }}>
-                    <AgentGrid
-                      agents={agents}
-                      activeAgent={activeAgent}
-                      onSelectAgent={handleSelectAgent}
-                      onSummon={handleSummon}
-                      summoning={summoning}
-                      fillContainer
+                  {menuTab === 'agents' && (
+                    <div style={{
+                      flex: 1,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      padding: '16px 24px',
+                      minHeight: 0,
+                    }}>
+                      <AgentGrid
+                        agents={agents}
+                        activeAgent={activeAgent}
+                        onSelectAgent={handleSelectAgent}
+                        onSummon={handleSummon}
+                        summoning={summoning}
+                        fillContainer
+                      />
+                    </div>
+                  )}
+                  {menuTab === 'browser' && (
+                    <ArtifactViewer
+                      activeArtifact={activeArtifact}
+                      artifacts={artifacts}
+                      onSelect={setActiveArtifact}
+                      embedded
                     />
-                  </div>
+                  )}
                 </div>
               )}
             </div>
-            <ArtifactViewer
-              activeArtifact={activeArtifact}
-              artifacts={artifacts}
-              onSelect={setActiveArtifact}
-            />
           </div>
         </div>
       )}

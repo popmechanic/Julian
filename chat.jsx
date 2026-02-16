@@ -764,7 +764,7 @@ function StatusDots({ ok }) {
 
 /* ── JulianScreen Embed ──────────────────────────────────────────────────── */
 
-function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab }) {
+function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab, noBorder }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
@@ -785,6 +785,9 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab }) 
     window.JScreen.init(canvas);
     if (window.JScreen.initInput) {
       window.JScreen.initInput(canvas);
+    }
+    if (window.JScreen.setExternalTabBar) {
+      window.JScreen.setExternalTabBar(true);
     }
   }, []);
 
@@ -812,7 +815,7 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab }) 
         if (window.JScreen) {
           window.JScreen.sendFeedback = function(event) {
             // Handle FILE_SELECT in the browser tab — open in artifact viewer
-            if (event.type === 'FILE_SELECT' && event.tab === 'browser') {
+            if (event.type === 'FILE_SELECT' && event.tab === 'files') {
               const filename = event.file;
               const artifactUrl = '/api/artifacts/' + encodeURIComponent(filename);
               document.dispatchEvent(new CustomEvent('julian-file-select', {
@@ -914,16 +917,16 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab }) 
       maxWidth: '100%',
       maxHeight: '100%',
       width: '100%',
-      background: '#0a0a0a',
-      border: '4px solid #2a2a2a',
-      borderRadius: 12,
+      background: noBorder ? 'transparent' : '#0a0a0a',
+      border: noBorder ? 'none' : '4px solid #2a2a2a',
+      borderRadius: noBorder ? 0 : 12,
       overflow: 'hidden',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
     }} ref={containerRef}>
       {/* CRT scanline overlay */}
-      <div style={{
+      {!noBorder && <div style={{
         position: 'absolute',
         inset: 0,
         background: 'linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,0.1) 50%), linear-gradient(90deg, rgba(255,0,0,0.06), rgba(0,255,0,0.02), rgba(0,0,255,0.06))',
@@ -932,7 +935,7 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab }) 
         pointerEvents: 'none',
         zIndex: 10,
         borderRadius: 12,
-      }} />
+      }} />}
 
       {/* Connection status dot */}
       <div style={{
@@ -1583,7 +1586,7 @@ function ChatInput({ onSend, disabled }) {
 
 /* ── Artifact Viewer (retro themed) ──────────────────────────────────────── */
 
-function ArtifactViewer({ activeArtifact, artifacts, onSelect }) {
+function ArtifactViewer({ activeArtifact, artifacts, onSelect, embedded }) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
 
@@ -1601,15 +1604,15 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect }) {
     <div className="flex flex-col" style={{
       flex: 1,
       minHeight: 0,
-      background: '#0F0F0F',
-      border: '4px solid #2a2a2a',
-      borderRadius: 12,
+      background: embedded ? 'transparent' : '#0F0F0F',
+      border: embedded ? 'none' : '4px solid #2a2a2a',
+      borderRadius: embedded ? 0 : 12,
       overflow: 'hidden',
-      boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
+      boxShadow: embedded ? 'none' : 'inset 0 2px 10px rgba(0,0,0,0.5)',
       position: 'relative',
     }}>
       {/* CRT overlay */}
-      <div style={{
+      {!embedded && <div style={{
         position: 'absolute',
         inset: 0,
         background: 'linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,0.1) 50%), linear-gradient(90deg, rgba(255,0,0,0.06), rgba(0,255,0,0.02), rgba(0,0,255,0.06))',
@@ -1618,7 +1621,7 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect }) {
         pointerEvents: 'none',
         zIndex: 20,
         borderRadius: 12,
-      }} />
+      }} />}
 
       {/* Header bar */}
       <div style={{

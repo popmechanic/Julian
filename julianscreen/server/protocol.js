@@ -23,7 +23,7 @@ const VALID_TILES = [
 
 const VALID_LISTEN_TYPES = ['btn', 'tap', 'tick'];
 
-const VALID_MENU_TABS = ['browser', 'skills', 'agents'];
+const VALID_MENU_TABS = ['browser', 'files', 'skills', 'agents'];
 
 function clamp(val, min, max) {
   return Math.max(min, Math.min(max, val));

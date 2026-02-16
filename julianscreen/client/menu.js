@@ -15,12 +15,13 @@
 
   const state = {
     active: false,
-    tab: 'browser',        // 'browser' | 'skills' | 'agents'
+    tab: 'files',          // 'browser' | 'files' | 'skills' | 'agents'
     path: [],              // current directory path segments
     items: [],             // current visible items: [{ name, type: 'folder'|'file' }]
     scrollOffset: 0,       // rows scrolled (0-based)
+    externalTabBar: false, // true when React renders the tab bar
     data: {
-      browser: null,       // { files: [{ name, modified }] }
+      files: null,         // { files: [{ name, modified }] }
       skills: null,        // { entries: [{ name, type, children? }] }
       agents: null,        // { teams: [{ name, members: [{ name, agentType }] }] }
     }
@@ -43,9 +44,10 @@
   const SCROLLBAR_W = 8;
 
   const TABS = [
-    { id: 'browser', label: 'BROWSER', x: 0, w: 214 },
-    { id: 'skills',  label: 'SKILLS',  x: 214, w: 213 },
-    { id: 'agents',  label: 'AGENTS',  x: 427, w: 213 },
+    { id: 'browser', label: 'BROWSER', x: 0, w: 160 },
+    { id: 'files',   label: 'FILES',   x: 160, w: 160 },
+    { id: 'skills',  label: 'SKILLS',  x: 320, w: 160 },
+    { id: 'agents',  label: 'AGENTS',  x: 480, w: 160 },
   ];
 
   // ── Icon sprites (loaded from items.json) ───────────────────────────────
@@ -78,11 +80,26 @@
     // Clear UI layer
     uiCtx.clearRect(0, 0, S.SCREEN_W, S.SCREEN_H);
 
-    renderTabBar(uiCtx);
+    if (state.externalTabBar) {
+      // Shift content up into the tab bar area since React handles the tabs
+      drawCtx.save();
+      uiCtx.save();
+      drawCtx.translate(0, -TAB_HEIGHT);
+      uiCtx.translate(0, -TAB_HEIGHT);
+    }
+
+    if (!state.externalTabBar) {
+      renderTabBar(uiCtx);
+    }
     renderSeparator(uiCtx);
     renderBreadcrumb(uiCtx);
     renderGrid(drawCtx);
     renderScrollbar(uiCtx);
+
+    if (state.externalTabBar) {
+      drawCtx.restore();
+      uiCtx.restore();
+    }
   }
 
   function renderTabBar(ctx) {
@@ -115,7 +132,7 @@
   function renderBreadcrumb(ctx) {
     let text;
     if (state.path.length === 0) {
-      if (state.tab === 'browser') text = 'memory/';
+      if (state.tab === 'files') text = 'memory/';
       else if (state.tab === 'skills') text = 'skills/';
       else text = 'teams/';
     } else {
@@ -245,7 +262,7 @@
     const tabData = state.data[state.tab];
     if (!tabData) return [];
 
-    if (state.tab === 'browser') return getBrowserItems(tabData);
+    if (state.tab === 'files') return getBrowserItems(tabData);
     if (state.tab === 'skills') return getSkillItems(tabData);
     return getAgentItems(tabData);
   }
@@ -303,8 +320,13 @@
   function handleMenuClick(cx, cy) {
     if (!state.active) return false;
 
-    // Tab bar
-    if (cy < TAB_HEIGHT) {
+    // When React renders the tab bar, shift click coords to match translated content
+    if (state.externalTabBar) {
+      cy += TAB_HEIGHT;
+    }
+
+    // Tab bar (skip when React handles it)
+    if (!state.externalTabBar && cy < TAB_HEIGHT) {
       for (const tab of TABS) {
         if (cx >= tab.x && cx < tab.x + tab.w) {
           if (tab.id !== state.tab) {
@@ -403,7 +425,7 @@
 
   S.registerHandler('MENU', function(cmd) {
     state.active = true;
-    state.tab = cmd.tab || 'browser';
+    state.tab = cmd.tab || 'files';
     state.path = [];
     updateItems();
     render();
@@ -437,7 +459,7 @@
   };
 
   S.enterMenu = function(tab) {
-    S.enqueueCommands([{ type: 'MENU', tab: tab || 'browser' }]);
+    S.enqueueCommands([{ type: 'MENU', tab: tab || 'files' }]);
   };
 
   S.exitMenu = function() {
@@ -446,6 +468,11 @@
 
   S.menuNavigate = function(path) {
     S.enqueueCommands([{ type: 'MENU_NAV', path: path }]);
+  };
+
+  S.setExternalTabBar = function(val) {
+    state.externalTabBar = !!val;
+    if (state.active) render();
   };
 
   S.isMenuActive = function() {
