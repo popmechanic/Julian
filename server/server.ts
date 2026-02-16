@@ -258,6 +258,7 @@ const PROCESS_KILL_WAIT_MS = 300;
 const MAX_MESSAGE_SIZE = 100_000;
 let sessionId: string | null = null;
 const AGENT_NAME = process.env.AGENT_NAME || "Julian";
+const FORCE_DEMO_MODE = process.env.DEMO_MODE === "1";
 
 function spawnClaude() {
   sessionId = crypto.randomUUID();
@@ -713,10 +714,10 @@ const server = Bun.serve({
         if (Array.isArray(body.artifactCatalog)) {
           artifactCatalog = body.artifactCatalog;
         }
-        if (body.demoMode === true) {
+        if (body.demoMode === true || FORCE_DEMO_MODE) {
           demoMode = true;
         }
-        console.log("[Session] Body parsed — demoMode:", body.demoMode, "→", demoMode);
+        console.log("[Session] Body parsed — demoMode:", body.demoMode, "force:", FORCE_DEMO_MODE, "→", demoMode);
       } catch (e) {
         console.error("[Session] Body parse failed:", e);
       } // No body or invalid JSON — proceed without transcript
