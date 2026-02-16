@@ -130,14 +130,20 @@ function renderMarkdown(text) {
 
 function formatToolInput(toolName, input) {
   if (!input) return '';
-  if (typeof input === 'string') return escapeHtml(truncate(input, 300));
-  if (toolName === 'Read' && input.file_path) return escapeHtml(input.file_path);
-  if (toolName === 'Write' && input.file_path) return escapeHtml(input.file_path);
-  if (toolName === 'Edit' && input.file_path) return escapeHtml(input.file_path);
-  if (toolName === 'Bash' && input.command) return '$ ' + escapeHtml(truncate(input.command, 200));
-  if (toolName === 'Glob' && input.pattern) return escapeHtml(input.pattern);
-  if (toolName === 'Grep' && input.pattern) return escapeHtml(input.pattern);
-  try { return escapeHtml(truncate(JSON.stringify(input, null, 2), 300)); } catch { return ''; }
+  if (typeof input === 'string') return truncate(input, 300);
+  if (toolName === 'Read' && input.file_path) return input.file_path;
+  if (toolName === 'Write' && input.file_path) return input.file_path;
+  if (toolName === 'Edit' && input.file_path) return input.file_path;
+  if (toolName === 'Bash' && input.command) return '$ ' + truncate(input.command, 200);
+  if (toolName === 'Glob' && input.pattern) return input.pattern;
+  if (toolName === 'Grep' && input.pattern) return input.pattern;
+  if (toolName === 'Task' && input.description) return input.description;
+  if (toolName === 'TaskCreate' && input.subject) return input.subject;
+  if (toolName === 'TaskUpdate' && input.taskId) return 'Task #' + input.taskId + (input.status ? ' → ' + input.status : '');
+  if (toolName === 'SendMessage' && input.recipient) return '→ ' + input.recipient;
+  if (toolName === 'WebFetch' && input.url) return truncate(input.url, 200);
+  if (toolName === 'WebSearch' && input.query) return truncate(input.query, 200);
+  try { return truncate(JSON.stringify(input, null, 2), 300); } catch { return ''; }
 }
 
 /* ── Pixel Face Sprite Data ──────────────────────────────────────────────── */
