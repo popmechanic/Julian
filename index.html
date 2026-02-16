@@ -623,6 +623,7 @@ function App() {
         const headers = await getAuthHeaders();
         if (!headers) { agentSeedRef.current = false; return; }
         const res = await fetch('/api/agents/identities', { headers });
+        if (!res.ok) { agentSeedRef.current = false; return; } // endpoint may not exist yet
         const data = await res.json();
         if (data.agents && data.agents.length > 0) {
           for (const agent of data.agents) {
@@ -783,6 +784,7 @@ function App() {
           await new Promise(r => setTimeout(r, delay));
           try {
             const res = await fetch('/api/agents/identities', { headers });
+            if (!res.ok) continue; // endpoint may not exist yet
             const data = await res.json();
             if (data.agents && data.agents.length > 0) {
               // Save each agent to Fireproof if not already present
@@ -796,7 +798,7 @@ function App() {
               return;
             }
           } catch (err) {
-            console.error('[Summon] Poll error:', err);
+            console.debug('[Summon] Poll attempt failed:', err.message);
           }
         }
       };
