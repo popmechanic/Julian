@@ -494,6 +494,22 @@ function App() {
     refreshMenuData();
   }, [refreshMenuData]);
 
+  // Auto-seed artifact catalog from catalog.xml on fresh Fireproof instances
+  const catalogSeedRef = useRef(false);
+  useEffect(() => {
+    if (!database || catalogSeedRef.current) return;
+    catalogSeedRef.current = true;
+    (async () => {
+      try {
+        await database.ready();
+        await ensureCatalog(database);
+      } catch (err) {
+        console.warn('[CatalogSeed] Failed to seed catalog:', err);
+        catalogSeedRef.current = false;
+      }
+    })();
+  }, [database]);
+
   // Auto-seed agent identities from server if Fireproof is empty
   const agentSeedRef = useRef(false);
   const agentSeedAttempts = useRef(0);
