@@ -459,6 +459,20 @@
         e.stopImmediatePropagation();
       }
     });
+    // Scroll wheel handler for menu
+    canvas.addEventListener('wheel', function(e) {
+      if (!state.active) return;
+      const totalRows = Math.ceil(state.items.length / GRID_COLS);
+      if (totalRows <= GRID_ROWS) return;
+      e.preventDefault();
+      const maxScroll = totalRows - GRID_ROWS;
+      if (e.deltaY > 0) {
+        state.scrollOffset = Math.min(maxScroll, state.scrollOffset + 1);
+      } else if (e.deltaY < 0) {
+        state.scrollOffset = Math.max(0, state.scrollOffset - 1);
+      }
+      render();
+    }, { passive: false });
     // Original input.js handler
     if (prevInitInput) prevInitInput(canvas);
   };
