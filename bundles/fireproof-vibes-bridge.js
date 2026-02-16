@@ -37,24 +37,15 @@ export function useFireproofClerk(name, opts) {
         return _origEnsure(req);
       }
 
-      // Slow path: discover via listLedgersByUser (covers owner case)
+      // Slow path: discover via listLedgersByUser
+      // Match by appId (precise) rather than hostname (ambiguous) to avoid
+      // routing to stale/corrupted ledgers from a previous database version.
       return dashApi.listLedgersByUser({}).then(function (rLedgers) {
         if (rLedgers.isOk()) {
           var ledgers = rLedgers.Ok().ledgers || [];
-          var appHost = typeof window !== 'undefined' ? window.location.hostname : '';
-          var qpSub = typeof window !== 'undefined'
-            ? new URLSearchParams(window.location.search).get('subdomain')
-            : null;
-
-          var matched = ledgers.find(function (l) {
-            if (!l.name) return false;
-            if (appHost && l.name.includes(appHost)) return true;
-            if (qpSub) {
-              var workerName = appHost.split('.')[0];
-              if (l.name.includes(workerName + '-' + qpSub)) return true;
-            }
-            return false;
-          }) || ledgers[0];
+          var matched = req.appId
+            ? ledgers.find(function (l) { return l.name && l.name.includes(req.appId); })
+            : undefined;
 
           if (matched) {
             if (typeof window !== 'undefined') window.__VIBES_SHARED_LEDGER__ = matched.ledgerId;
