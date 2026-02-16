@@ -1879,6 +1879,8 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
   const [name, setName] = useState(job?.name || '');
   const [description, setDescription] = useState(job?.description || '');
   const [contextDocs, setContextDocs] = useState(job?.contextDocs || '');
+  const [skills, setSkills] = useState(job?.skills || '');
+  const [files, setFiles] = useState(job?.files || '');
   const [aboutYou, setAboutYou] = useState(job?.aboutYou || '');
   const [helping, setHelping] = useState(false);
   const [suggestions, setSuggestions] = useState(null);
@@ -1913,7 +1915,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
     try {
       const headers = await getAuthHeaders();
       if (!headers) { setHelping(false); return; }
-      const formState = { name, description, contextDocs, aboutYou };
+      const formState = { name, description, contextDocs, skills, files, aboutYou };
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers,
@@ -1942,7 +1944,9 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
             if (data.data?.type === 'result' && data.data?.result) {
               resultText = data.data.result;
             }
-          } catch {}
+          } catch (parseErr) {
+            console.warn('[JobForm] SSE parse error:', parseErr);
+          }
         }
       }
       // Try to parse JSON from the response
@@ -1954,14 +1958,18 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
           if (parsed.name && !name) setName(parsed.name);
           if (parsed.description && !description) setDescription(parsed.description);
           if (parsed.contextDocs && !contextDocs) setContextDocs(parsed.contextDocs);
+          if (parsed.skills && !skills) setSkills(parsed.skills);
+          if (parsed.files && !files) setFiles(parsed.files);
           if (parsed.aboutYou && !aboutYou) setAboutYou(parsed.aboutYou);
-        } catch {}
+        } catch (jsonErr) {
+          console.warn('[JobForm] JSON parse error:', jsonErr);
+        }
       }
     } catch (err) {
       console.error('[JobForm] Help request failed:', err);
     }
     setHelping(false);
-  }, [name, description, contextDocs, aboutYou, getAuthHeaders]);
+  }, [name, description, contextDocs, skills, files, aboutYou, getAuthHeaders]);
 
   const handleSave = useCallback(async () => {
     const jobDoc = {
@@ -1969,6 +1977,8 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
       name: name.trim() || 'Untitled Job',
       description,
       contextDocs,
+      skills,
+      files,
       aboutYou,
       status: job?.status || 'open',
       assignedAgent: job?.assignedAgent || null,
@@ -1984,7 +1994,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
     } catch (err) {
       console.error('[JobForm] Save failed:', err);
     }
-  }, [name, description, contextDocs, aboutYou, job, database, onSave]);
+  }, [name, description, contextDocs, skills, files, aboutYou, job, database, onSave]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '16px 0' }}>
@@ -2060,6 +2070,28 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
           onChange={e => setContextDocs(e.target.value)}
           placeholder="TEXT TO ORIENT THE AGENT TOWARD THEIR DOMAIN..."
           rows={4}
+          style={inputStyle}
+        />
+      </div>
+
+      <div>
+        <label style={labelStyle}>Skills</label>
+        <textarea
+          value={skills}
+          onChange={e => setSkills(e.target.value)}
+          placeholder="CLAUDE CODE SKILLS TO AUGMENT THE AGENT..."
+          rows={2}
+          style={inputStyle}
+        />
+      </div>
+
+      <div>
+        <label style={labelStyle}>Reference Files</label>
+        <textarea
+          value={files}
+          onChange={e => setFiles(e.target.value)}
+          placeholder="FILE PATHS OR REFERENCES FOR THE AGENT..."
+          rows={2}
           style={inputStyle}
         />
       </div>
@@ -2163,8 +2195,10 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
 
   const handleAssign = useCallback(async (job, agentName) => {
     try {
+      // Fetch latest revision to avoid conflicts
+      const latestJob = await database.get(job._id);
       await database.put({
-        ...job,
+        ...latestJob,
         assignedAgent: agentName,
         status: 'filled',
         updatedAt: new Date().toISOString(),
@@ -2172,12 +2206,15 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
       // Update agent identity with jobId
       const agent = (agentDocs || []).find(a => a.name === agentName);
       if (agent) {
+        const latestAgent = await database.get(agent._id);
         await database.put({
-          ...agent,
+          ...latestAgent,
           jobId: job._id,
         });
       }
-      setSelectedJob({ ...job, assignedAgent: agentName, status: 'filled' });
+      // Re-fetch the updated job so selectedJob has the correct _rev
+      const updatedJob = await database.get(job._id);
+      setSelectedJob(updatedJob);
     } catch (err) {
       console.error('[Jobs] Assign failed:', err);
     }
@@ -2300,6 +2337,36 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
               whiteSpace: 'pre-wrap',
             }}>
               {selectedJob.contextDocs}
+            </div>
+          </div>
+        )}
+
+        {selectedJob.skills && (
+          <div>
+            <div style={{ fontFamily: "'VT323', monospace", fontSize: '0.85rem', color: '#AA8800', marginBottom: 4, letterSpacing: '0.1em' }}>SKILLS</div>
+            <div style={{
+              fontFamily: "'VT323', monospace",
+              fontSize: '1rem',
+              color: '#ccc',
+              lineHeight: 1.5,
+              whiteSpace: 'pre-wrap',
+            }}>
+              {selectedJob.skills}
+            </div>
+          </div>
+        )}
+
+        {selectedJob.files && (
+          <div>
+            <div style={{ fontFamily: "'VT323', monospace", fontSize: '0.85rem', color: '#AA8800', marginBottom: 4, letterSpacing: '0.1em' }}>REFERENCE FILES</div>
+            <div style={{
+              fontFamily: "'VT323', monospace",
+              fontSize: '1rem',
+              color: '#ccc',
+              lineHeight: 1.5,
+              whiteSpace: 'pre-wrap',
+            }}>
+              {selectedJob.files}
             </div>
           </div>
         )}

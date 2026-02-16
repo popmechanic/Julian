@@ -739,13 +739,54 @@ function App() {
     refreshMenuData();
   }, [streaming, sessionActive, serverSessionId, database, getAuthHeaders, refreshMenuData, activeAgent]);
 
-  const handleOfferWork = useCallback(() => {
+  const handleOfferWork = useCallback(async () => {
+    if (streaming || !sessionActive) return;
     const jobSummaries = openJobs
       .map(j => `- ${j.name}: ${j.description}`)
       .join('\n');
-    const msg = `[OFFER WORK TO AGENT: ${activeAgent}] Available jobs:\n${jobSummaries}`;
-    sendMessage(msg);
-  }, [activeAgent, openJobs, sendMessage]);
+    const routingMsg = `[OFFER WORK TO AGENT: ${activeAgent}] Available jobs:\n${jobSummaries}`;
+    const displayMsg = `Would you like to hear about available work?`;
+
+    // Show thinking bubble
+    const liveMsg = { id: 'live-' + Date.now(), role: 'assistant', blocks: [], thinking: true, streaming: true };
+    setLiveAssistant(liveMsg);
+    setStreaming(true);
+
+    // Persist clean display message
+    const speakerName = window.Clerk?.user?.firstName || "Marcus";
+    database.put({
+      type: "message", category: "transcript", role: "user",
+      speakerType: "human", speakerName,
+      agentName: activeAgent || undefined,
+      text: displayMsg, blocks: [],
+      createdAt: new Date().toISOString(), serverSessionId,
+    }).catch(err => console.error('[chat] Fireproof put failed:', err));
+
+    let finalBlocks = [];
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch('/api/chat', {
+        method: 'POST', headers,
+        body: JSON.stringify({ message: routingMsg, targetAgent: activeAgent || undefined }),
+      });
+      finalBlocks = await streamSSEResponse(response, setLiveAssistant);
+    } catch (err) {
+      finalBlocks = [{ type: 'text', text: 'Connection error: ' + err.message }];
+      setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
+    }
+
+    database.put({
+      type: "message", category: "transcript", role: "assistant",
+      speakerType: "agent", speakerName: activeAgent || "Julian",
+      agentName: activeAgent || undefined,
+      text: '', blocks: finalBlocks,
+      createdAt: new Date().toISOString(), serverSessionId,
+    }).catch(err => console.error('[chat] Fireproof put failed:', err));
+
+    setLiveAssistant(null);
+    setStreaming(false);
+    setConnected(true);
+  }, [activeAgent, openJobs, streaming, sessionActive, serverSessionId, database, getAuthHeaders]);
 
   const startSession = useCallback(async () => {
     if (wakingUp || sessionActive) return;
