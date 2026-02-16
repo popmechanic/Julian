@@ -227,6 +227,46 @@
       .screen-panel-scroll::-webkit-scrollbar-button {
         display: none;
       }
+
+      /* ── Button press feedback ─────────────────────────────────────────── */
+      button {
+        touch-action: manipulation;
+      }
+      button:active {
+        transform: scale(0.97);
+      }
+
+      /* ── Message entrance animation ────────────────────────────────────── */
+      @keyframes message-enter {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .message-enter {
+        animation: message-enter 200ms cubic-bezier(0.165, 0.84, 0.44, 1);
+      }
+
+      /* ── Reduced motion ────────────────────────────────────────────────── */
+      @media (prefers-reduced-motion: reduce) {
+        .screen-icon-glow { animation: none; }
+        .screen-grid-item:hover .screen-icon-glow { transform: none; }
+        .message-enter { animation: none; }
+        button:active { transform: none; }
+      }
+
+      /* ── Hover effects only on hover-capable devices ───────────────────── */
+      .screen-grid-item:hover .screen-icon-glow,
+      .screen-grid-item:hover .screen-grid-label {
+        /* Default: already defined above */
+      }
+      @media (hover: none) {
+        .screen-grid-item:hover .screen-icon-glow {
+          opacity: 0.8 !important;
+          transform: none;
+        }
+        .screen-grid-item:hover .screen-grid-label {
+          color: rgba(255,255,255,0.4) !important;
+        }
+      }
     </style>
   </head>
   <body>
@@ -245,7 +285,8 @@
           "@ipld/dag-json": "https://esm.sh/stable/@ipld/dag-json@10.2.3?external=multiformats",
           "@clerk/clerk-react": "https://esm.sh/stable/@clerk/clerk-react@5.59.2?external=react,react-dom",
           "use-fireproof": "/bundles/fireproof-vibes-bridge.js",
-          "@fireproof/clerk": "/bundles/fireproof-vibes-bridge.js"
+          "@fireproof/clerk": "/bundles/fireproof-vibes-bridge.js",
+          "framer-motion": "https://esm.sh/stable/framer-motion@11?external=react,react-dom"
         }
       }
     </script>
@@ -263,6 +304,13 @@
       import * as React from "react";
       window.React = React;
     </script>
+    <!-- Load Framer Motion for UI animations -->
+    <script type="module">
+      import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
+      window.motion = motion;
+      window.AnimatePresence = AnimatePresence;
+      window.useReducedMotion = useReducedMotion;
+    </script>
     <!-- Vibes component library (auto-generated, rarely changes) -->
     <script type="text/babel" src="/vibes.jsx"></script>
     <!-- Chat UI components (PixelFace, MessageBubble, SetupScreen, etc.) -->
@@ -279,7 +327,10 @@
               PixelFace, ConfigError, LoadingError,
               AgentGrid, AgentFaceHeader, EggHatch,
               hashNameToFaceVariant, AGENT_COLORS,
-              JobsPanel, ScreenGridPanel } = window;
+              JobsPanel, ScreenGridPanel,
+              motion: _motion, AnimatePresence: _AP } = window;
+      const motion = _motion || { div: 'div' };
+      const AnimatePresence = _AP || (({ children }) => children);
 
 /* ── Artifact catalog ─────────────────────────────────────────────────────
  * Julian's memory catalog is a single XML document (catalog.xml) containing
@@ -1575,7 +1626,7 @@ function App() {
                       letterSpacing: '0.15em',
                       color: isActive ? '#000' : 'rgba(255,255,255,0.5)',
                       cursor: isActive ? 'default' : 'pointer',
-                      transition: 'all 500ms',
+                      transition: 'background 300ms ease, color 300ms ease, border-color 300ms ease, box-shadow 300ms ease',
                       boxShadow: isActive ? '0 0 15px rgba(0,175,209,0.3)' : 'none',
                     }}
                     onMouseEnter={e => { if (!isActive) { e.target.style.background = '#00afd1'; e.target.style.color = '#000'; e.target.style.borderColor = '#00afd1'; }}}
@@ -1594,67 +1645,76 @@ function App() {
                 onMenuTab={setMenuTab}
                 noBorder
               />
-              {/* Overlay for React-managed tabs */}
-              {menuTab !== 'screen' && (
-                <div style={{
-                  position: 'absolute',
-                  inset: 0,
-                  zIndex: 15,
-                  background: '#0c0c0c',
-                  display: 'flex',
-                  flexDirection: 'column',
-                }}>
-                  {menuTab === 'files' && (
-                    <ScreenGridPanel
-                      data={filesData}
-                      rootLabel="memory"
-                      onFileSelect={handleFileSelect}
-                    />
-                  )}
-                  {menuTab === 'skills' && (
-                    <ScreenGridPanel
-                      data={skillsData}
-                      rootLabel="skills"
-                      onFileSelect={handleFileSelect}
-                    />
-                  )}
-                  {menuTab === 'agents' && (
-                    <div style={{
-                      flex: 1,
+              {/* Overlay for React-managed tabs — AnimatePresence crossfade */}
+              <AnimatePresence mode="wait">
+                {menuTab !== 'screen' && (
+                  <motion.div
+                    key={menuTab}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -6 }}
+                    transition={{ duration: 0.2, ease: [0.165, 0.84, 0.44, 1] }}
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      zIndex: 15,
+                      background: '#0c0c0c',
                       display: 'flex',
                       flexDirection: 'column',
-                      padding: '16px 24px',
-                      minHeight: 0,
-                      background: '#0c0c0c',
-                      backgroundImage: 'radial-gradient(circle at 50% 0%, #1f1f1f 0%, #0c0c0c 100%)',
-                    }}>
-                      <AgentGrid
-                        agents={agents}
-                        activeAgent={activeAgent}
-                        onSelectAgent={handleSelectAgent}
-                        onSummon={handleSummon}
-                        summoning={summoning}
-                        fillContainer
+                    }}
+                  >
+                    {menuTab === 'files' && (
+                      <ScreenGridPanel
+                        data={filesData}
+                        rootLabel="memory"
+                        onFileSelect={handleFileSelect}
                       />
-                    </div>
-                  )}
-                  {menuTab === 'jobs' && (
-                    <JobsPanel
-                      database={database}
-                      useLiveQuery={useLiveQuery}
-                      getAuthHeaders={getAuthHeaders}
-                    />
-                  )}
-                  {menuTab === 'browser' && (
-                    <ArtifactViewer
-                      activeArtifact={activeArtifact}
-                      artifacts={artifacts}
-                      onSelect={setActiveArtifact}
-                      embedded
-                    />
-                  )}
-                </div>
-              )}
+                    )}
+                    {menuTab === 'skills' && (
+                      <ScreenGridPanel
+                        data={skillsData}
+                        rootLabel="skills"
+                        onFileSelect={handleFileSelect}
+                      />
+                    )}
+                    {menuTab === 'agents' && (
+                      <div style={{
+                        flex: 1,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        padding: '16px 24px',
+                        minHeight: 0,
+                        background: '#0c0c0c',
+                        backgroundImage: 'radial-gradient(circle at 50% 0%, #1f1f1f 0%, #0c0c0c 100%)',
+                      }}>
+                        <AgentGrid
+                          agents={agents}
+                          activeAgent={activeAgent}
+                          onSelectAgent={handleSelectAgent}
+                          onSummon={handleSummon}
+                          summoning={summoning}
+                          fillContainer
+                        />
+                      </div>
+                    )}
+                    {menuTab === 'jobs' && (
+                      <JobsPanel
+                        database={database}
+                        useLiveQuery={useLiveQuery}
+                        getAuthHeaders={getAuthHeaders}
+                      />
+                    )}
+                    {menuTab === 'browser' && (
+                      <ArtifactViewer
+                        activeArtifact={activeArtifact}
+                        artifacts={artifacts}
+                        onSelect={setActiveArtifact}
+                        embedded
+                      />
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
         </div>

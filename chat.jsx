@@ -101,6 +101,8 @@
 
 /* ── React hooks destructured from window.React for bare-name usage ──── */
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
+const motion = window.motion || { div: 'div' };
+const AnimatePresence = window.AnimatePresence || (({ children }) => children);
 
 /* ── Utilities ───────────────────────────────────────────────────────────── */
 
@@ -693,7 +695,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
             cursor: summoning ? 'default' : 'pointer',
             letterSpacing: '0.15em',
             textTransform: 'uppercase',
-            transition: 'all 300ms',
+            transition: 'background 300ms ease, color 300ms ease, border-color 300ms ease, box-shadow 300ms ease',
             boxShadow: summoning ? 'none' : '0 0 12px rgba(0,175,209,0.3)',
           }}
         >
@@ -1080,7 +1082,7 @@ function ToolCallBlock({ name, input }) {
 function MessageBubble({ message }) {
   if (message.role === 'user') {
     return (
-      <div style={{
+      <div className="message-enter" style={{
         padding: '4px 0',
         fontSize: '1.1rem',
         fontFamily: "'VT323', monospace",
@@ -1094,7 +1096,7 @@ function MessageBubble({ message }) {
   }
 
   return (
-    <div style={{ padding: '4px 0' }}>
+    <div className="message-enter" style={{ padding: '4px 0' }}>
       {message.thinking && <ThinkingDots />}
       {message.blocks && message.blocks.map((block, i) => {
         if (block.type === 'text') {
@@ -1738,20 +1740,28 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, embedded }) {
             </span>
           </button>
 
+          <AnimatePresence>
           {dropdownOpen && artifacts.length > 0 && (
-            <div style={{
-              position: 'absolute',
-              top: '100%',
-              left: 0,
-              right: 0,
-              marginTop: 4,
-              background: '#0c0c0c',
-              border: '1px solid #333',
-              borderRadius: 4,
-              zIndex: 50,
-              maxHeight: 300,
-              overflowY: 'auto',
-            }}>
+            <motion.div
+              initial={{ opacity: 0, scaleY: 0.95 }}
+              animate={{ opacity: 1, scaleY: 1 }}
+              exit={{ opacity: 0, scaleY: 0.95 }}
+              transition={{ duration: 0.15, ease: [0.165, 0.84, 0.44, 1] }}
+              style={{
+                position: 'absolute',
+                top: '100%',
+                left: 0,
+                right: 0,
+                marginTop: 4,
+                background: '#0c0c0c',
+                border: '1px solid #333',
+                borderRadius: 4,
+                zIndex: 50,
+                maxHeight: 300,
+                overflowY: 'auto',
+                transformOrigin: 'top',
+              }}
+            >
               {artifacts.map(f => (
                 <button
                   key={f.name}
@@ -1776,8 +1786,9 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, embedded }) {
                   {f.name}
                 </button>
               ))}
-            </div>
+            </motion.div>
           )}
+          </AnimatePresence>
         </div>
 
         {/* Open in new tab */}
@@ -1879,7 +1890,7 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, embedded }) {
 
 function ScreenFolderIcon() {
   return (
-    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" className="screen-icon-glow" style={{ transition: 'all 500ms', opacity: 0.8 }}>
+    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" className="screen-icon-glow" style={{ transition: 'opacity 500ms ease, transform 500ms ease', opacity: 0.8 }}>
       <path d="M2 5H10L12 7H22V19H2V5Z" stroke="#FAD601" strokeWidth="1" fill="none" />
       <path d="M2 7H22" stroke="#FAD601" strokeWidth="1" />
       <rect x="5" y="10" width="4" height="3" fill="#333" />
@@ -1889,7 +1900,7 @@ function ScreenFolderIcon() {
 
 function ScreenFileIcon() {
   return (
-    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" className="screen-icon-glow" style={{ transition: 'all 500ms', opacity: 0.8 }}>
+    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" className="screen-icon-glow" style={{ transition: 'opacity 500ms ease, transform 500ms ease', opacity: 0.8 }}>
       <path d="M5 2H15L20 7V22H5V2Z" fill="#262626" stroke="#FAD601" strokeWidth="1" />
       <path d="M15 2V7H20" fill="#1a1a1a" stroke="#FAD601" strokeWidth="1" />
       <rect x="8" y="10" width="8" height="1" fill="#666" />
@@ -1987,18 +1998,31 @@ function ScreenGridPanel({ data, rootLabel = 'memory', onFileSelect }) {
             {rootLabel === 'memory' ? 'No files found' : rootLabel === 'skills' ? 'No skills found' : 'Empty'}
           </div>
         ) : (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
-            rowGap: 80,
-            columnGap: 32,
-            maxWidth: '64rem',
-            margin: '0 auto',
-          }}>
+          <motion.div
+            key={path.join('/')}
+            initial="hidden"
+            animate="visible"
+            variants={{
+              hidden: {},
+              visible: { transition: { staggerChildren: 0.03 } },
+            }}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, 1fr)',
+              rowGap: 80,
+              columnGap: 32,
+              maxWidth: '64rem',
+              margin: '0 auto',
+            }}
+          >
             {items.map((item) => (
-              <div
+              <motion.div
                 key={item.name}
                 className="screen-grid-item"
+                variants={{
+                  hidden: { opacity: 0, y: 12 },
+                  visible: { opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.165, 0.84, 0.44, 1] } },
+                }}
                 onClick={() => handleItemClick(item)}
                 style={{
                   display: 'flex',
@@ -2015,13 +2039,13 @@ function ScreenGridPanel({ data, rootLabel = 'memory', onFileSelect }) {
                   letterSpacing: '0.2em',
                   textTransform: 'uppercase',
                   color: 'rgba(255,255,255,0.4)',
-                  transition: 'color 300ms',
+                  transition: 'color 300ms ease',
                 }}>
                   {truncLabel(item.name)}
                 </span>
-              </div>
+              </motion.div>
             ))}
-          </div>
+          </motion.div>
         )}
       </div>
     </div>
@@ -2042,7 +2066,7 @@ function JobCard({ job, onClick }) {
         borderRadius: 8,
         cursor: 'pointer',
         marginBottom: 8,
-        transition: 'all 300ms',
+        transition: 'border-color 300ms ease, background 300ms ease',
       }}
       onMouseEnter={e => { e.currentTarget.style.borderColor = '#00afd1'; e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
       onMouseLeave={e => { e.currentTarget.style.borderColor = '#333'; e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
