@@ -568,6 +568,7 @@ function App() {
           setConnected(false);
           setStreaming(false);
           setServerSessionId(null);
+          setMenuTab('files');
         } else if (data.sessionId && !serverSessionId) {
           // Multi-device: pick up sessionId from running process
           setServerSessionId(data.sessionId);
@@ -906,6 +907,7 @@ function App() {
     setSessionActive(true);
     setConnected(true);
     setWakingUp(false);
+    setMenuTab('screen');
   }, [wakingUp, sessionActive, serverSessionId, database, getAuthHeaders]);
 
   const endSession = useCallback(async () => {
@@ -916,6 +918,7 @@ function App() {
     setSessionActive(false);
     setConnected(false);
     setServerSessionId(null);
+    setMenuTab('files');
     refreshMenuData();
   }, [getAuthHeaders, refreshMenuData]);
 
@@ -1420,45 +1423,46 @@ function App() {
             background: '#0a0a0a',
             overflow: 'hidden',
           }}>
-            {/* Universal tab bar */}
-            {!sessionActive && (
-              <div style={{
-                display: 'flex',
-                borderBottom: '2px solid #FF88FF',
-                flexShrink: 0,
-                background: '#0F0F0F',
-              }}>
-                {['BROWSER', 'FILES', 'SKILLS', 'AGENTS', 'JOBS'].map(tab => {
-                  const tabKey = tab.toLowerCase();
-                  const isActive = tabKey === menuTab;
-                  return (
-                    <button
-                      key={tab}
-                      onClick={() => {
-                        if (isActive) return;
-                        setMenuTab(tabKey);
-                        if (tabKey === 'files' || tabKey === 'skills') {
-                          if (window.JScreen?.enterMenu) window.JScreen.enterMenu(tabKey);
-                        }
-                      }}
-                      style={{
-                        flex: 1,
-                        padding: '10px 0',
-                        fontFamily: "'VT323', monospace",
-                        fontSize: '1.1rem',
-                        letterSpacing: '0.1em',
-                        border: 'none',
-                        cursor: isActive ? 'default' : 'pointer',
-                        background: isActive ? '#FF88FF' : 'transparent',
-                        color: isActive ? '#0F0F0F' : '#FFD600',
-                      }}
-                    >
-                      {tab}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            {/* Universal tab bar — always visible */}
+            <div style={{
+              display: 'flex',
+              borderBottom: '2px solid #FF88FF',
+              flexShrink: 0,
+              background: '#0F0F0F',
+            }}>
+              {['SCREEN', 'BROWSER', 'FILES', 'SKILLS', 'AGENTS', 'JOBS'].map(tab => {
+                const tabKey = tab.toLowerCase();
+                const isActive = tabKey === menuTab;
+                return (
+                  <button
+                    key={tab}
+                    onClick={() => {
+                      if (isActive) return;
+                      setMenuTab(tabKey);
+                      if (tabKey === 'files' || tabKey === 'skills') {
+                        if (window.JScreen?.exitMenu) window.JScreen.exitMenu();
+                        if (window.JScreen?.enterMenu) window.JScreen.enterMenu(tabKey);
+                      } else if (tabKey === 'screen') {
+                        if (window.JScreen?.exitMenu) window.JScreen.exitMenu();
+                      }
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: '10px 0',
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1.1rem',
+                      letterSpacing: '0.1em',
+                      border: 'none',
+                      cursor: isActive ? 'default' : 'pointer',
+                      background: isActive ? '#FF88FF' : 'transparent',
+                      color: isActive ? '#0F0F0F' : '#FFD600',
+                    }}
+                  >
+                    {tab}
+                  </button>
+                );
+              })}
+            </div>
             {/* Content area */}
             <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
               <JulianScreenEmbed
@@ -1468,7 +1472,7 @@ function App() {
                 noBorder
               />
               {/* Overlay for React-managed tabs (browser, agents, jobs) */}
-              {(menuTab === 'browser' || menuTab === 'agents' || menuTab === 'jobs') && !sessionActive && (
+              {(menuTab === 'browser' || menuTab === 'agents' || menuTab === 'jobs') && (
                 <div style={{
                   position: 'absolute',
                   inset: 0,

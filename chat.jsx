@@ -898,11 +898,14 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab, no
     };
   }, []);
 
-  // Exit menu when a session becomes active; show default scene
+  // Initialize default scene when session becomes active (tab bar handles visibility)
   useEffect(() => {
-    if (connected && sessionActive && window.JScreen?.exitMenu && window.JScreen.isMenuActive?.()) {
-      window.JScreen.exitMenu();
-      // Initialize default scene so the screen isn't blank after menu exit
+    if (connected && sessionActive) {
+      // Exit menu mode so the canvas shows Julian's live display
+      if (window.JScreen?.exitMenu && window.JScreen.isMenuActive?.()) {
+        window.JScreen.exitMenu();
+      }
+      // Set up default scene
       if (window.JScreen?.enqueueCommands) {
         window.JScreen.enqueueCommands([
           { type: 'SCENE', scene: 'home' },
