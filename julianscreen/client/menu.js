@@ -138,9 +138,9 @@
     } else {
       text = '< ' + state.path[state.path.length - 1] + '/';
     }
-    // Truncate to fit screen width (small font at 8px per char, ~79 chars)
-    if (text.length > 75) text = text.substring(0, 74) + '/';
-    if (S.drawText) S.drawText(ctx, text, 4, BREADCRUMB_Y + 3, 1, 'small');
+    // Truncate to fit screen width (large font at 12px per char, ~53 chars)
+    if (text.length > 50) text = text.substring(0, 49) + '/';
+    if (S.drawText) S.drawText(ctx, text, 4, BREADCRUMB_Y + 1, 1, 'large');
   }
 
   function renderGrid(ctx) {
@@ -169,14 +169,14 @@
           renderSprite(ctx, sprite, iconX, iconY);
         }
 
-        // Draw label centered below icon (small font)
+        // Draw label centered below icon (large font)
         if (S.drawText) {
-          const label = truncateLabel(item.name, 14);
-          const metrics = S._fontMetrics ? S._fontMetrics('small') : { charW: 8 };
+          const label = truncateLabel(item.name, 12);
+          const metrics = S._fontMetrics ? S._fontMetrics('large') : { charW: 12 };
           const labelW = label.length * metrics.charW;
           const labelX = cellX + Math.floor((COL_W - labelW) / 2);
           const labelY = iconY + ICON_SIZE + 4;
-          S.drawText(ctx, label, labelX, labelY, 1, 'small');
+          S.drawText(ctx, label, labelX, labelY, 1, 'large');
         }
       }
     }
