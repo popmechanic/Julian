@@ -1,67 +1,3 @@
-      // === useAI Hook ===
-      // AI hook for proxied OpenRouter calls with metering
-      function useAI() {
-        const [loading, setLoading] = React.useState(false);
-        const [error, setError] = React.useState(null);
-
-        const callAI = React.useCallback(async (options) => {
-          setLoading(true);
-          setError(null);
-
-          try {
-            // Get auth token if Clerk is available (sell apps)
-            let authHeader = {};
-            if (typeof window !== 'undefined' && window.Clerk?.session) {
-              const token = await window.Clerk.session.getToken();
-              if (token) {
-                authHeader = { 'Authorization': 'Bearer ' + token };
-              }
-            }
-
-            const response = await fetch('/api/ai/chat', {
-              method: 'POST',
-              headers: Object.assign({ 'Content-Type': 'application/json' }, authHeader),
-              body: JSON.stringify(Object.assign({
-                model: options.model || 'anthropic/claude-sonnet-4',
-                messages: options.messages
-              }, options))
-            });
-
-            // Handle limit exceeded (402 from OpenRouter)
-            if (response.status === 402) {
-              const err = { code: 'LIMIT_EXCEEDED', message: 'AI usage limit reached for this month.' };
-              setError(err);
-              throw err;
-            }
-
-            // Handle other errors
-            if (!response.ok) {
-              const errorData = await response.json().catch(function() { return {}; });
-              const err = {
-                code: 'API_ERROR',
-                message: (errorData.error && errorData.error.message) || ('API error: ' + response.status),
-                status: response.status
-              };
-              setError(err);
-              throw err;
-            }
-
-            return await response.json();
-
-          } catch (err) {
-            if (!error) {
-              setError({ code: 'NETWORK_ERROR', message: err.message || 'Network error' });
-            }
-            throw err;
-          } finally {
-            setLoading(false);
-          }
-        }, [error]);
-
-        return { callAI: callAI, loading: loading, error: error, clearError: function() { setError(null); } };
-      }
-      window.useAI = useAI;
-
       // === Shared Error Components ===
       function ConfigError({ message }) {
         // Use AuthScreen if available, fallback to simple div
@@ -342,8 +278,11 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
   const reconnectRef = useRef(null);
+  const onFileSelectRef = useRef(onFileSelect);
   const [connected, setConnected] = useState(false);
   const [scale, setScale] = useState(1);
+
+  useEffect(() => { onFileSelectRef.current = onFileSelect; }, [onFileSelect]);
 
   // Initialize JulianScreen on canvas mount
   useEffect(() => {
@@ -391,7 +330,7 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
                 detail: { filename, url: artifactUrl }
               }));
               // Also call callback prop if provided
-              if (onFileSelect) onFileSelect(filename, artifactUrl);
+              if (onFileSelectRef.current) onFileSelectRef.current(filename, artifactUrl);
             }
             // Forward all events to server for agent consumption
             if (ws.readyState === WebSocket.OPEN) {
@@ -440,7 +379,7 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
         wsRef.current = null;
       }
     };
-  }, [onFileSelect]);
+  }, []);
 
   // Exit menu when a session becomes active
   useEffect(() => {
@@ -1317,7 +1256,7 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect }) {
             borderRadius: '0 0 8px 8px',
           }}
           title={activeArtifact}
-          sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+          sandbox="allow-scripts allow-popups"
         />
       ) : (
         <div style={{

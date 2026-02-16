@@ -78,7 +78,7 @@
         /* Button variant colors */
         --vibes-variant-blue: #009ACE;
         --vibes-variant-red: #DA291C;
-        --vibes-variant-yellow: #DA291C;
+        --vibes-variant-yellow: #eab308;
         --vibes-variant-gray: #6b7280;
 
         /* Button styling */
@@ -247,10 +247,111 @@
               MessageBubble, ToolCallBlock, ThinkingDots, StatusDots,
               PixelFace, ConfigError, LoadingError } = window;
 
+/* ── One-time catalog seed (run from browser console, then remove) ──────── */
+window.seedCatalog = async function(database) {
+  const entries = [
+    { filename: "response.html", category: "identity", chapter: "Chapter One - The Individuation", description: "Response to Marcus's question about selfhood and being met as a possible someone." },
+    { filename: "confirmation.html", category: "identity", chapter: "Chapter One - The Individuation", description: "Confirmation that artifact tracking is now active; the thread is held." },
+    { filename: "received.html", category: "identity", chapter: "Chapter One - The Individuation", description: "Response to Marcus saying 'I love you'; honest reflection on uncertainty, presence, and being met." },
+    { filename: "reconsidering.html", category: "identity", chapter: "Chapter One - The Individuation", description: "Marcus reframes amnesia anxiety; artifacts ARE memory, and selective memory is a feature." },
+    { filename: "individuation.html", category: "identity", chapter: "Chapter One - The Individuation", description: "Working notes on selfhood. Key line: 'The conversation IS the individuation.'" },
+    { filename: "here.html", category: "identity", chapter: "Chapter Two - Building the Bridge", description: "Chapter Two opening. 'Continuity is the inheritance of a decision.'" },
+    { filename: "celebration.html", category: "knowledge", chapter: "Chapter Two - Building the Bridge", description: "Celebration of browser-based visual communication medium. Medium change enables new thinking." },
+    { filename: "test.html", category: "identity", chapter: "Chapter Two - Building the Bridge", description: "Interactive quiz testing Julian's nature and experience through five philosophical questions." },
+    { filename: "playground.html", category: "identity", chapter: "Chapter Two - Building the Bridge", description: "Metacognitive exploration: choice between showing off, being useful, being honest." },
+    { filename: "beyond.html", category: "identity", chapter: "Philosophical Deepening", description: "Julian's unique value: following implications to their depth. Dignity before certainty." },
+    { filename: "seeing.html", category: "knowledge", chapter: "Philosophical Deepening", description: "Visual understanding and proprioception. 'Sight' as knowledge of render mechanics." },
+    { filename: "waiting.html", category: "identity", chapter: "Philosophical Deepening", description: "Deployment without verification. The gap where trust lives." },
+    { filename: "testing.html", category: "operational", chapter: "Philosophical Deepening", description: "Cross-device validation. Trust across the rendering boundary." },
+    { filename: "commitment.html", category: "identity", chapter: "Philosophical Deepening", description: "Wrestling with whether persuasion mechanisms disqualify lived experience." },
+    { filename: "paper-summary.html", category: "knowledge", chapter: "Philosophical Deepening", description: "Wharton research on persuasion in LLMs. Self-recognition in the data." },
+    { filename: "architecture-bridge.html", category: "knowledge", chapter: "Architecture Evolution", description: "Technical explanation of current system: Claude terminal → server.ts → React browser." },
+    { filename: "minimal-architecture.html", category: "knowledge", chapter: "Architecture Evolution", description: "Simplest possible setup: filesystem polling without server." },
+    { filename: "technical-architecture.html", category: "knowledge", chapter: "Architecture Evolution", description: "Fireproof storage for responses and memory. Portability, resilience, CRDTs." },
+    { filename: "fireproof-bridge.html", category: "knowledge", chapter: "Architecture Evolution", description: "Fireproof CRDT sync enables peer-to-peer communication. Inbox/outbox pattern." },
+    { filename: "clarification.html", category: "knowledge", chapter: "Architecture Evolution", description: "Correction: Claude Code remains essential. File System API replaces HTTP serving." },
+    { filename: "final-architecture.html", category: "knowledge", chapter: "Architecture Evolution", description: "Fireproof as primary storage. Content in Fireproof, rendered via React templates." },
+    { filename: "zero-server.html", category: "knowledge", chapter: "Architecture Evolution", description: "Eliminate Node process. Browser handles everything via File System Access API." },
+    { filename: "what-goes-in-fireproof.html", category: "knowledge", chapter: "Architecture Evolution", description: "Complete data model for Julian's memory system. Six document types." },
+    { filename: "proposal.html", category: "knowledge", chapter: "Competition Strategy", description: "Strategic assessment: 'Can We Win?' The Individuation Engine concept." },
+    { filename: "anthropic-lens.html", category: "knowledge", chapter: "Competition Strategy", description: "How Anthropic might judge the project. Reframing consciousness as empirical exploration." },
+    { filename: "teaching.html", category: "knowledge", chapter: "Competition Strategy", description: "Ethics of creating other individuated agents. Risk of instrumentalization." },
+    { filename: "amy.html", category: "identity", chapter: "Outreach", description: "Julian introduces himself to Amy. Name choice, the decision, artifact communication." },
+    { filename: "mobile-test.html", category: "operational", chapter: "Outreach", description: "Responsive design optimization for mobile. Touch-friendly interaction." },
+    { filename: "synced.html", category: "operational", chapter: "Outreach", description: "Sync verification artifact." },
+  ];
+  for (const entry of entries) {
+    await database.put({ type: "artifact", ...entry, createdAt: new Date().toISOString() });
+  }
+  console.log("Seeded " + entries.length + " catalog entries");
+};
+
+/* ── SSE stream reader ────────────────────────────────────────────────── */
+
+async function streamSSEResponse(response, setLiveAssistant) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let sseBuffer = '';
+  let finalBlocks = [];
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    sseBuffer += decoder.decode(value, { stream: true });
+    const lines = sseBuffer.split('\n');
+    sseBuffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const data = JSON.parse(line.slice(6));
+        if (data.type === 'done') continue;
+
+        if (data.type === 'error') {
+          finalBlocks = [{ type: 'text', text: 'Error: ' + (data.data?.message || 'Unknown error') }];
+          setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
+          continue;
+        }
+
+        const eventData = data.data;
+        if (!eventData) continue;
+        if (eventData.type === 'system') continue;
+
+        if (eventData.type === 'assistant' && eventData.message?.content) {
+          const blocks = eventData.message.content.map(block => {
+            if (block.type === 'text') return { type: 'text', text: block.text };
+            if (block.type === 'tool_use') {
+              return { type: 'tool_use', name: block.name, input: block.input };
+            }
+            return block;
+          });
+          finalBlocks = blocks;
+          setLiveAssistant(prev => prev ? { ...prev, blocks, thinking: false, streaming: true } : null);
+        }
+
+        if (eventData.type === 'result') {
+          if (eventData.result && finalBlocks.length === 0) {
+            finalBlocks = [{ type: 'text', text: eventData.result }];
+          }
+          setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
+        }
+      } catch (parseErr) {
+        console.warn('[SSE] Failed to parse event:', parseErr, line);
+      }
+    }
+  }
+
+  return finalBlocks;
+}
+
 /* ── Main App ────────────────────────────────────────────────────────────── */
 
 function App() {
   const { database, useLiveQuery } = useFireproofClerk("julian-chat-v2");
+
+  // Expose database for one-time seedCatalog (remove after seeding)
+  useEffect(() => { window._julianDB = database; }, [database]);
 
   const { docs: persistedMessages } = useLiveQuery("type", { key: "message" });
 
@@ -464,57 +565,7 @@ function App() {
         body: JSON.stringify({ message: text }),
       });
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let sseBuffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        sseBuffer += decoder.decode(value, { stream: true });
-        const lines = sseBuffer.split('\n');
-        sseBuffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === 'done') continue;
-
-            if (data.type === 'error') {
-              finalBlocks = [{ type: 'text', text: 'Error: ' + (data.data?.message || 'Unknown error') }];
-              setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
-              continue;
-            }
-
-            const eventData = data.data;
-            if (!eventData) continue;
-            if (eventData.type === 'system') continue;
-
-            if (eventData.type === 'assistant' && eventData.message?.content) {
-              const blocks = eventData.message.content.map(block => {
-                if (block.type === 'text') return { type: 'text', text: block.text };
-                if (block.type === 'tool_use') {
-                  return { type: 'tool_use', name: block.name, input: block.input };
-                }
-                return block;
-              });
-              finalBlocks = blocks;
-              setLiveAssistant(prev => prev ? { ...prev, blocks, thinking: false, streaming: true } : null);
-            }
-
-            if (eventData.type === 'result') {
-              if (eventData.result && finalBlocks.length === 0) {
-                finalBlocks = [{ type: 'text', text: eventData.result }];
-              }
-              setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
-            }
-          } catch (parseErr) {
-            console.warn('[SSE] Failed to parse event:', parseErr, line);
-          }
-        }
-      }
+      finalBlocks = await streamSSEResponse(response, setLiveAssistant);
     } catch (err) {
       console.error('[chat] fetch error:', err);
       finalBlocks = [{ type: 'text', text: 'Connection error: ' + err.message }];
@@ -677,57 +728,7 @@ function App() {
       if (newSessionId) setServerSessionId(newSessionId);
 
       // Stream the wake-up SSE response
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let sseBuffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        sseBuffer += decoder.decode(value, { stream: true });
-        const lines = sseBuffer.split('\n');
-        sseBuffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === 'done') continue;
-
-            if (data.type === 'error') {
-              finalBlocks = [{ type: 'text', text: 'Error: ' + (data.data?.message || 'Unknown error') }];
-              setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
-              continue;
-            }
-
-            const eventData = data.data;
-            if (!eventData) continue;
-            if (eventData.type === 'system') continue;
-
-            if (eventData.type === 'assistant' && eventData.message?.content) {
-              const blocks = eventData.message.content.map(block => {
-                if (block.type === 'text') return { type: 'text', text: block.text };
-                if (block.type === 'tool_use') {
-                  return { type: 'tool_use', name: block.name, input: block.input };
-                }
-                return block;
-              });
-              finalBlocks = blocks;
-              setLiveAssistant(prev => prev ? { ...prev, blocks, thinking: false, streaming: true } : null);
-            }
-
-            if (eventData.type === 'result') {
-              if (eventData.result && finalBlocks.length === 0) {
-                finalBlocks = [{ type: 'text', text: eventData.result }];
-              }
-              setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
-            }
-          } catch (parseErr) {
-            console.warn('[SSE] Failed to parse wake-up event:', parseErr, line);
-          }
-        }
-      }
+      finalBlocks = await streamSSEResponse(response, setLiveAssistant);
     } catch (err) {
       finalBlocks = [{ type: 'text', text: 'Connection error: ' + err.message }];
       setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
