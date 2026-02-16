@@ -60,6 +60,53 @@
     <script src="/julianscreen/client/effects.js"></script>
     <script src="/julianscreen/client/face.js"></script>
     <script src="/julianscreen/client/menu.js"></script>
+    <script>
+      // ── SoundManager singleton ─────────────────────────────────────────
+      // Plain JS, no React. Lives on window.SFX for global access.
+      // Follows the same pattern as JulianScreenWS — script-scope singleton.
+      (function() {
+        var SOUNDS = [
+          'boot','shutdown','level-up','click','notification','success',
+          'error','open','close','select','navigate','tab',
+          'toggle-on','toggle-off','delete'
+        ];
+        function SoundManager(basePath) {
+          this._muted = localStorage.getItem('julian-sfx-muted') === 'true';
+          this._sounds = {};
+          for (var i = 0; i < SOUNDS.length; i++) {
+            var audio = new Audio(basePath + SOUNDS[i] + '.mp3');
+            audio.preload = 'auto';
+            this._sounds[SOUNDS[i]] = audio;
+          }
+        }
+        SoundManager.prototype.play = function(name) {
+          if (this._muted) return;
+          var source = this._sounds[name];
+          if (!source) return;
+          var clone = source.cloneNode();
+          clone.volume = source.volume;
+          clone.play().catch(function() {});
+        };
+        SoundManager.prototype.mute = function() {
+          this._muted = !this._muted;
+          localStorage.setItem('julian-sfx-muted', String(this._muted));
+          document.dispatchEvent(new CustomEvent('julian-sfx-mute-changed', {
+            detail: { muted: this._muted }
+          }));
+          return this._muted;
+        };
+        Object.defineProperty(SoundManager.prototype, 'isMuted', {
+          get: function() { return this._muted; }
+        });
+        // Boot sound — plays once per page load, requires user gesture
+        SoundManager.prototype.playBoot = function() {
+          if (this._bootPlayed) return;
+          this._bootPlayed = true;
+          this.play('boot');
+        };
+        window.SFX = new SoundManager('/sfx/');
+      })();
+    </script>
     <style>
       :root {
         /* Core colors */
@@ -332,6 +379,7 @@ async function streamSSEResponse(response, setLiveAssistant) {
   const decoder = new TextDecoder();
   let sseBuffer = '';
   let finalBlocks = [];
+  let notifiedArrival = false;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -348,6 +396,7 @@ async function streamSSEResponse(response, setLiveAssistant) {
         if (data.type === 'done') continue;
 
         if (data.type === 'error') {
+          window.SFX?.play('error');
           finalBlocks = [{ type: 'text', text: 'Error: ' + (data.data?.message || 'Unknown error') }];
           setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
           continue;
@@ -366,6 +415,7 @@ async function streamSSEResponse(response, setLiveAssistant) {
             return block;
           });
           finalBlocks = blocks;
+          if (!notifiedArrival) { window.SFX?.play('notification'); notifiedArrival = true; }
           setLiveAssistant(prev => prev ? { ...prev, blocks, thinking: false, streaming: true } : null);
         }
 
@@ -373,6 +423,7 @@ async function streamSSEResponse(response, setLiveAssistant) {
           if (eventData.result && finalBlocks.length === 0) {
             finalBlocks = [{ type: 'text', text: eventData.result }];
           }
+          window.SFX?.play('success');
           setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
         }
       } catch (parseErr) {
@@ -413,6 +464,12 @@ function App() {
   const [activeAgent, setActiveAgent] = useState(null);
   const [summoning, setSummoning] = useState(false);
   const [menuTab, setMenuTab] = useState('files');
+  const [sfxMuted, setSfxMuted] = useState(window.SFX?.isMuted ?? false);
+  useEffect(() => {
+    const handler = (e) => setSfxMuted(e.detail.muted);
+    document.addEventListener('julian-sfx-mute-changed', handler);
+    return () => document.removeEventListener('julian-sfx-mute-changed', handler);
+  }, []);
 
   // Query agent identities from Fireproof
   const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
@@ -681,6 +738,7 @@ function App() {
   const handleSummon = useCallback(async () => {
     if (summoning) return;
     setSummoning(true);
+    window.SFX?.play('open');
     try {
       const headers = await getAuthHeaders();
       if (!headers) return;
@@ -766,10 +824,12 @@ function App() {
                       try {
                         const existing = await database.get(hatchId);
                         await database.put({ ...existing, ...agent, type: 'agent-identity', hatching: false });
+                        window.SFX?.play('select');
                         console.log('[Summon] Hatched agent:', agent.name, 'at position', agent.gridPosition);
                       } catch (e) {
                         // Fallback: create new doc if hatching doc was lost
                         await database.put({ ...agent, type: 'agent-identity' });
+                        window.SFX?.play('select');
                         console.log('[Summon] Saved agent (fallback):', agent.name, 'at position', agent.gridPosition);
                       }
                     } else {
@@ -777,6 +837,7 @@ function App() {
                       const existingPositions = (agentDocs || []).map(d => d.gridPosition);
                       if (!existingPositions.includes(agent.gridPosition)) {
                         await database.put({ ...agent, type: 'agent-identity' });
+                        window.SFX?.play('select');
                         console.log('[Summon] Saved agent:', agent.name, 'at position', agent.gridPosition);
                       }
                     }
@@ -800,6 +861,7 @@ function App() {
   const handleWake = useCallback(async () => {
     if (summoning) return;
     setSummoning(true);
+    window.SFX?.play('navigate');
     try {
       const headers = await getAuthHeaders();
       if (!headers) return;
@@ -900,6 +962,7 @@ function App() {
     if (!sessionActive) return;
 
     // Show thinking bubble immediately
+    window.SFX?.play('click');
     const liveMsg = { id: 'live-' + Date.now(), role: 'assistant', blocks: [], thinking: true, streaming: true };
     setLiveAssistant(liveMsg);
     setStreaming(true);
@@ -932,6 +995,7 @@ function App() {
       finalBlocks = await streamSSEResponse(response, setLiveAssistant);
     } catch (err) {
       console.error('[chat] fetch error:', err);
+      window.SFX?.play('error');
       finalBlocks = [{ type: 'text', text: 'Connection error: ' + err.message }];
       setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
     }
@@ -1043,6 +1107,7 @@ function App() {
   const startSession = useCallback(async () => {
     if (wakingUp || sessionActive) return;
     setWakingUp(true);
+    window.SFX?.play('level-up');
 
     // Create a live assistant message for the wake-up response
     const liveMsg = { id: 'wakeup-' + Date.now(), role: 'assistant', blocks: [], thinking: true, streaming: true };
@@ -1163,6 +1228,7 @@ function App() {
   }, [wakingUp, sessionActive, serverSessionId, database, getAuthHeaders]);
 
   const endSession = useCallback(async () => {
+    window.SFX?.play('shutdown');
     try {
       const headers = await getAuthHeaders();
       await fetch('/api/session/end', { method: 'POST', headers });
@@ -1686,6 +1752,7 @@ function App() {
                     key={tab}
                     onClick={() => {
                       if (isActive) return;
+                      window.SFX?.play('tab');
                       setMenuTab(tabKey);
                       // Always exit canvas menu when switching tabs
                       if (window.JScreen?.exitMenu) window.JScreen.exitMenu();
@@ -1717,6 +1784,29 @@ function App() {
                 );
               })}
               <div style={{ flex: 1 }} />
+              <button
+                onClick={() => { if (window.SFX) window.SFX.mute(); }}
+                title={sfxMuted ? 'Sound off' : 'Sound on'}
+                style={{
+                  height: 32,
+                  width: 32,
+                  padding: 0,
+                  borderRadius: 9999,
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  background: 'transparent',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 14,
+                  color: sfxMuted ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.6)',
+                  cursor: 'pointer',
+                  transition: 'background 300ms ease, color 300ms ease, border-color 300ms ease',
+                }}
+                onMouseEnter={e => { e.target.style.background = 'rgba(255,255,255,0.1)'; e.target.style.color = '#fff'; }}
+                onMouseLeave={e => { e.target.style.background = 'transparent'; e.target.style.color = sfxMuted ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.6)'; }}
+              >
+                {sfxMuted ? '🔇' : '🔊'}
+              </button>
               <button
                 onClick={() => { document.dispatchEvent(new CustomEvent('vibes-sync-disable')); document.dispatchEvent(new CustomEvent('vibes-logout-request')); }}
                 style={{

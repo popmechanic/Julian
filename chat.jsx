@@ -1762,7 +1762,7 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, embedded }) {
         {/* Dropdown selector */}
         <div style={{ position: 'relative', flex: 1 }} ref={dropdownRef}>
           <button
-            onClick={() => setDropdownOpen(!dropdownOpen)}
+            onClick={() => { window.SFX?.play(dropdownOpen ? 'close' : 'open'); setDropdownOpen(!dropdownOpen); }}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -2490,6 +2490,7 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
 
   const handleDelete = useCallback(async (job) => {
     if (!confirm('Delete this job?')) return;
+    window.SFX?.play('delete');
     try {
       await database.del(job._id);
       setSelectedJob(null);
