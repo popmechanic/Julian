@@ -23,6 +23,8 @@ const VALID_TILES = [
 
 const VALID_LISTEN_TYPES = ['btn', 'tap', 'tick'];
 
+const VALID_MENU_TABS = ['browser', 'skills', 'agents'];
+
 function clamp(val, min, max) {
   return Math.max(min, Math.min(max, val));
 }
@@ -77,7 +79,7 @@ export function parseCommand(line) {
         console.error(`[protocol] Invalid position: ${rest}`);
         return null;
       }
-      return { type: 'POS', tx: clamp(tx, 0, 7), ty: clamp(ty, 0, 5) };
+      return { type: 'POS', tx: clamp(tx, 0, 19), ty: clamp(ty, 0, 14) };
     }
 
     // T <text> — Show speech bubble (empty = clear)
@@ -98,7 +100,7 @@ export function parseCommand(line) {
     // B <row> <t0> <t1> ... — Set tile row
     case 'B': {
       const row = parseInt10(args[0]);
-      if (row === null || row < 0 || row > 5) {
+      if (row === null || row < 0 || row > 14) {
         console.error(`[protocol] Invalid tile row: ${args[0]}`);
         return null;
       }
@@ -118,7 +120,7 @@ export function parseCommand(line) {
         console.error(`[protocol] Invalid item: ${rest}`);
         return null;
       }
-      return { type: 'ITEM', sprite, tx: clamp(tx, 0, 7), ty: clamp(ty, 0, 5) };
+      return { type: 'ITEM', sprite, tx: clamp(tx, 0, 19), ty: clamp(ty, 0, 14) };
     }
 
     // F <effect> — Trigger screen effect
@@ -141,7 +143,7 @@ export function parseCommand(line) {
         console.error(`[protocol] Invalid button: ${rest}`);
         return null;
       }
-      return { type: 'BTN', id, tx: clamp(tx, 0, 7), ty: clamp(ty, 0, 5), label: label || id };
+      return { type: 'BTN', id, tx: clamp(tx, 0, 19), ty: clamp(ty, 0, 14), label: label || id };
     }
 
     // PROG <x> <y> <w> <pct> — Progress bar
@@ -232,6 +234,26 @@ export function parseCommand(line) {
       return { type: 'CLRITM' };
     }
 
+    // MENU <tab> — Enter menu mode
+    case 'MENU': {
+      const tab = args[0]?.toLowerCase();
+      if (!tab || !VALID_MENU_TABS.includes(tab)) {
+        console.error(`[protocol] Invalid menu tab: ${args[0]}`);
+        return null;
+      }
+      return { type: 'MENU', tab };
+    }
+
+    // MENU_EXIT — Exit menu mode
+    case 'MENU_EXIT': {
+      return { type: 'MENU_EXIT' };
+    }
+
+    // MENU_NAV <path> — Navigate to path within current tab
+    case 'MENU_NAV': {
+      return { type: 'MENU_NAV', path: rest };
+    }
+
     default:
       console.error(`[protocol] Unknown command: ${prefix}`);
       return null;
@@ -240,5 +262,6 @@ export function parseCommand(line) {
 
 export {
   VALID_STATES, VALID_EVENTS, VALID_EFFECTS,
-  VALID_SCENES, VALID_TILES, VALID_LISTEN_TYPES
+  VALID_SCENES, VALID_TILES, VALID_LISTEN_TYPES,
+  VALID_MENU_TABS
 };

@@ -39,9 +39,9 @@
       const py = btn.ty * S.TILE_SIZE;
 
       // Measure label width
-      const labelW = btn.label.length * 6 + 3; // 6px per char + padding
+      const labelW = btn.label.length * 8 + 6; // 8px per char (small font) + padding
       const btnW = Math.max(labelW, S.TILE_SIZE);
-      const btnH = 11; // 7px font + 4px padding
+      const btnH = 22; // 9px font + padding
       const bx = px;
       const by = py + S.TILE_SIZE - btnH;
 
@@ -62,7 +62,7 @@
 
       // Label text (use JScreen.drawText if available)
       if (S.drawText) {
-        S.drawText(ctx, btn.label, bx + 2, by + 2, 1);
+        S.drawText(ctx, btn.label, bx + 3, by + 6, 1, 'small');
       }
 
       // Store hit rect for click detection
@@ -125,7 +125,7 @@
   // Progress bar
   function handleProgress(cmd) {
     const ctx = S.uiLayer.ctx;
-    const barH = 4;
+    const barH = 8;
     // Background
     ctx.fillStyle = S.PALETTE[12]; // dark gray
     ctx.fillRect(cmd.x, cmd.y, cmd.w, barH);

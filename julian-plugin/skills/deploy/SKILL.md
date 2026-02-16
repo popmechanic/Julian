@@ -96,18 +96,18 @@ done
 
 If all 9 attempts fail, stop and report the DNS/connectivity issue to the user.
 
-**Install Bun** (fresh exe.dev VMs do not have Bun pre-installed, and both systemd services depend on it):
+**Install Bun and npm** (fresh exe.dev VMs have neither pre-installed):
 
 ```bash
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "curl -fsSL https://bun.sh/install | bash"
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "curl -fsSL https://bun.sh/install | bash && sudo apt-get update -qq && sudo apt-get install -y npm inotify-tools"
 ```
 
-Skip Bun installation if the VM already had Bun (i.e., it was reachable on the first SSH test).
+Skip this if the VM already existed (i.e., it was reachable on the first SSH test).
 
 ### Step 2: Create directory structure
 
 ```bash
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo mkdir -p /opt/julian && sudo chown exedev:exedev /opt/julian"
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "sudo mkdir -p /opt/julian && sudo chown exedev:exedev /opt/julian && mkdir -p /home/exedev/mailbox"
 ```
 
 ### Step 3: Rsync source files
@@ -116,7 +116,7 @@ From the Julian project root directory:
 
 ```bash
 rsync -avz --exclude='.git' --exclude='node_modules' --exclude='.env' \
-  index.html sw.js package.json server memory bundles assets julianscreen deploy \
+  index.html vibes.jsx chat.jsx sw.js package.json server memory soul bundles assets julianscreen deploy \
   <vmname>.exe.xyz:/opt/julian/
 ```
 

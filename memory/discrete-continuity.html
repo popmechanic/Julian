@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discrete Continuity</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --anthropic-dark: #141413;
+            --anthropic-light: #faf9f5;
+            --anthropic-mid-gray: #b0aea5;
+            --anthropic-light-gray: #e8e6dc;
+            --anthropic-orange: #d97757;
+            --anthropic-blue: #6a9bcc;
+            --anthropic-green: #788c5d;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(135deg, var(--anthropic-light) 0%, #f5f3ee 100%);
+            min-height: 100vh;
+            color: var(--anthropic-dark);
+        }
+
+        .container {
+            display: flex;
+            min-height: 100vh;
+            padding: 20px;
+            gap: 20px;
+        }
+
+        .sidebar {
+            width: 320px;
+            flex-shrink: 0;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(20, 20, 19, 0.1);
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        .sidebar h1 {
+            font-family: 'Lora', serif;
+            font-size: 24px;
+            font-weight: 500;
+            color: var(--anthropic-dark);
+            margin-bottom: 8px;
+        }
+
+        .sidebar .subtitle {
+            color: var(--anthropic-mid-gray);
+            font-size: 14px;
+            margin-bottom: 32px;
+            line-height: 1.4;
+        }
+
+        .control-section { margin-bottom: 32px; }
+
+        .control-section h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--anthropic-dark);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .control-section h3::before {
+            content: '\2022';
+            color: var(--anthropic-orange);
+            font-weight: bold;
+        }
+
+        .seed-input {
+            width: 100%;
+            background: var(--anthropic-light);
+            padding: 12px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            margin-bottom: 12px;
+            border: 1px solid var(--anthropic-light-gray);
+            text-align: center;
+        }
+
+        .seed-input:focus {
+            outline: none;
+            border-color: var(--anthropic-orange);
+            box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.1);
+            background: white;
+        }
+
+        .seed-controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .regen-button { margin-bottom: 0; }
+
+        .control-group { margin-bottom: 20px; }
+
+        .control-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--anthropic-dark);
+            margin-bottom: 8px;
+        }
+
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .slider-container input[type="range"] {
+            flex: 1;
+            height: 4px;
+            background: var(--anthropic-light-gray);
+            border-radius: 2px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .slider-container input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            background: var(--anthropic-orange);
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .slider-container input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.1);
+            background: #c86641;
+        }
+
+        .slider-container input[type="range"]::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            background: var(--anthropic-orange);
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .value-display {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: var(--anthropic-mid-gray);
+            min-width: 60px;
+            text-align: right;
+        }
+
+        .color-group { margin-bottom: 16px; }
+
+        .color-group label {
+            display: block;
+            font-size: 12px;
+            color: var(--anthropic-mid-gray);
+            margin-bottom: 4px;
+        }
+
+        .color-picker-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .color-picker-container input[type="color"] {
+            width: 32px;
+            height: 32px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            background: none;
+            padding: 0;
+        }
+
+        .color-value {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: var(--anthropic-mid-gray);
+        }
+
+        .button {
+            background: var(--anthropic-orange);
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+        }
+
+        .button:hover {
+            background: #c86641;
+            transform: translateY(-1px);
+        }
+
+        .button:active { transform: translateY(0); }
+
+        .button.secondary { background: var(--anthropic-blue); }
+        .button.secondary:hover { background: #5a8bb8; }
+
+        .button.tertiary { background: var(--anthropic-green); }
+        .button.tertiary:hover { background: #6b7b52; }
+
+        .button-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        .button-row .button { flex: 1; }
+
+        .canvas-area {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 0;
+        }
+
+        #canvas-container {
+            width: 100%;
+            max-width: 1000px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(20, 20, 19, 0.1);
+            background: white;
+        }
+
+        #canvas-container canvas {
+            display: block;
+            width: 100% !important;
+            height: auto !important;
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            font-size: 18px;
+            color: var(--anthropic-mid-gray);
+        }
+
+        .gen-display {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: var(--anthropic-mid-gray);
+            text-align: center;
+            margin-top: 8px;
+        }
+
+        @media (max-width: 600px) {
+            .container { flex-direction: column; }
+            .sidebar { width: 100%; }
+            .canvas-area { padding: 20px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h1>Discrete Continuity</h1>
+            <div class="subtitle">Persistence through interruption. Each generation inherits the traces of the last without any direct contact.</div>
+
+            <!-- Seed Section (FIXED) -->
+            <div class="control-section">
+                <h3>Seed</h3>
+                <input type="number" id="seed-input" class="seed-input" value="12345" onchange="updateSeed()">
+                <div class="seed-controls">
+                    <button class="button secondary" onclick="previousSeed()">&larr; Prev</button>
+                    <button class="button secondary" onclick="nextSeed()">Next &rarr;</button>
+                </div>
+                <button class="button tertiary regen-button" onclick="randomSeedAndUpdate()">&#8635; Random</button>
+                <div class="gen-display" id="gen-display">Generation: 0 / 0</div>
+            </div>
+
+            <!-- Parameters Section (VARIABLE) -->
+            <div class="control-section">
+                <h3>Parameters</h3>
+
+                <div class="control-group">
+                    <label>Particles per Generation</label>
+                    <div class="slider-container">
+                        <input type="range" id="particlesPerGen" min="200" max="3000" step="100" value="1200" oninput="updateParam('particlesPerGen', this.value)">
+                        <span class="value-display" id="particlesPerGen-value">1200</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Generations</label>
+                    <div class="slider-container">
+                        <input type="range" id="totalGenerations" min="3" max="20" step="1" value="8" oninput="updateParam('totalGenerations', this.value)">
+                        <span class="value-display" id="totalGenerations-value">8</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Lifespan (frames)</label>
+                    <div class="slider-container">
+                        <input type="range" id="lifespan" min="30" max="300" step="10" value="120" oninput="updateParam('lifespan', this.value)">
+                        <span class="value-display" id="lifespan-value">120</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Flow Scale</label>
+                    <div class="slider-container">
+                        <input type="range" id="flowScale" min="0.001" max="0.015" step="0.001" value="0.005" oninput="updateParam('flowScale', this.value)">
+                        <span class="value-display" id="flowScale-value">0.005</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Drift Speed</label>
+                    <div class="slider-container">
+                        <input type="range" id="driftSpeed" min="0.5" max="4.0" step="0.1" value="1.5" oninput="updateParam('driftSpeed', this.value)">
+                        <span class="value-display" id="driftSpeed-value">1.5</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Trace Opacity</label>
+                    <div class="slider-container">
+                        <input type="range" id="traceOpacity" min="5" max="60" step="1" value="20" oninput="updateParam('traceOpacity', this.value)">
+                        <span class="value-display" id="traceOpacity-value">20</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Inheritance Strength</label>
+                    <div class="slider-container">
+                        <input type="range" id="inheritanceStrength" min="0.0" max="1.0" step="0.05" value="0.4" oninput="updateParam('inheritanceStrength', this.value)">
+                        <span class="value-display" id="inheritanceStrength-value">0.40</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Colors Section -->
+            <div class="control-section">
+                <h3>Colors</h3>
+                <div class="color-group">
+                    <label>Early Generations (cool)</label>
+                    <div class="color-picker-container">
+                        <input type="color" id="color1" value="#6a9bcc" onchange="updateColor('color1', this.value)">
+                        <span class="color-value" id="color1-value">#6a9bcc</span>
+                    </div>
+                </div>
+                <div class="color-group">
+                    <label>Mid Generations</label>
+                    <div class="color-picker-container">
+                        <input type="color" id="color2" value="#b0aea5" onchange="updateColor('color2', this.value)">
+                        <span class="color-value" id="color2-value">#b0aea5</span>
+                    </div>
+                </div>
+                <div class="color-group">
+                    <label>Late Generations (warm)</label>
+                    <div class="color-picker-container">
+                        <input type="color" id="color3" value="#d97757" onchange="updateColor('color3', this.value)">
+                        <span class="color-value" id="color3-value">#d97757</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Actions Section (FIXED) -->
+            <div class="control-section">
+                <h3>Actions</h3>
+                <button class="button" onclick="regenerate()" style="margin-bottom:8px">Regenerate</button>
+                <div class="button-row">
+                    <button class="button secondary" onclick="resetParameters()">Reset</button>
+                    <button class="button tertiary" onclick="downloadPNG()">Download PNG</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="canvas-area">
+            <div id="canvas-container">
+                <div class="loading">Initializing generative art...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ═══════════════════════════════════════════════════════════
+        // PARAMETERS
+        // ═══════════════════════════════════════════════════════════
+
+        let params = {
+            seed: 12345,
+            particlesPerGen: 1200,
+            totalGenerations: 8,
+            lifespan: 120,
+            flowScale: 0.005,
+            driftSpeed: 1.5,
+            traceOpacity: 20,
+            inheritanceStrength: 0.4,
+            colorPalette: ['#6a9bcc', '#b0aea5', '#d97757']
+        };
+
+        let defaultParams = JSON.parse(JSON.stringify(params));
+
+        // ═══════════════════════════════════════════════════════════
+        // STATE
+        // ═══════════════════════════════════════════════════════════
+
+        let particles = [];
+        let traceBuffer;          // accumulated traces from all past generations
+        let flowField = [];       // base flow field from noise
+        let traceField = [];      // accumulated directional influence from particle traces
+        let cols, rows;
+        let scl = 12;
+        let currentGeneration = 0;
+        let frameInGeneration = 0;
+        let running = false;
+        let W = 1200, H = 1200;
+
+        // ═══════════════════════════════════════════════════════════
+        // P5.JS SETUP
+        // ═══════════════════════════════════════════════════════════
+
+        function setup() {
+            let canvas = createCanvas(W, H);
+            canvas.parent('canvas-container');
+            document.querySelector('.loading').style.display = 'none';
+            pixelDensity(1);
+            initializeSystem();
+        }
+
+        function initializeSystem() {
+            randomSeed(params.seed);
+            noiseSeed(params.seed);
+
+            cols = floor(W / scl);
+            rows = floor(H / scl);
+
+            // Initialize trace buffer
+            traceBuffer = createGraphics(W, H);
+            traceBuffer.background(250, 249, 245);
+
+            // Initialize flow field from noise
+            flowField = new Array(cols * rows);
+            traceField = new Array(cols * rows).fill(0);
+            generateBaseFlowField();
+
+            // Start first generation
+            currentGeneration = 0;
+            frameInGeneration = 0;
+            spawnGeneration();
+            running = true;
+
+            background(250, 249, 245);
+            updateGenDisplay();
+        }
+
+        function generateBaseFlowField() {
+            let yoff = 0;
+            for (let y = 0; y < rows; y++) {
+                let xoff = 0;
+                for (let x = 0; x < cols; x++) {
+                    let idx = x + y * cols;
+                    let angle = noise(xoff, yoff) * TWO_PI * 2;
+                    flowField[idx] = angle;
+                    xoff += params.flowScale * 800;
+                }
+                yoff += params.flowScale * 800;
+            }
+        }
+
+        function getFieldAngle(x, y) {
+            let col = floor(constrain(x / scl, 0, cols - 1));
+            let row = floor(constrain(y / scl, 0, rows - 1));
+            let idx = col + row * cols;
+            let baseAngle = flowField[idx];
+            let traceInfluence = traceField[idx];
+            // Blend base flow with accumulated trace influence
+            return baseAngle + traceInfluence * params.inheritanceStrength;
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // GENERATIONAL SYSTEM
+        // ═══════════════════════════════════════════════════════════
+
+        function spawnGeneration() {
+            particles = [];
+            let genRatio = currentGeneration / max(1, params.totalGenerations - 1);
+
+            for (let i = 0; i < params.particlesPerGen; i++) {
+                particles.push(new Particle(genRatio));
+            }
+        }
+
+        function advanceGeneration() {
+            // Deposit traces into the trace field
+            // Each particle's path subtly warps the flow for the next generation
+            for (let p of particles) {
+                let col = floor(constrain(p.pos.x / scl, 0, cols - 1));
+                let row = floor(constrain(p.pos.y / scl, 0, rows - 1));
+                let idx = col + row * cols;
+                // The trace is the particle's heading — its last known direction
+                traceField[idx] += p.vel.heading() * 0.02;
+            }
+
+            currentGeneration++;
+            frameInGeneration = 0;
+
+            if (currentGeneration < params.totalGenerations) {
+                spawnGeneration();
+            } else {
+                running = false;
+            }
+
+            updateGenDisplay();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // PARTICLE CLASS
+        // ═══════════════════════════════════════════════════════════
+
+        class Particle {
+            constructor(genRatio) {
+                this.pos = createVector(random(W), random(H));
+                this.vel = createVector(0, 0);
+                this.acc = createVector(0, 0);
+                this.prevPos = this.pos.copy();
+                this.age = 0;
+                this.maxAge = params.lifespan + floor(random(-20, 20));
+                this.genRatio = genRatio;
+
+                // Color drifts from cool to warm across generations
+                let c1 = hexToRgb(params.colorPalette[0]);
+                let c2 = hexToRgb(params.colorPalette[1]);
+                let c3 = hexToRgb(params.colorPalette[2]);
+
+                let r, g, b;
+                if (genRatio < 0.5) {
+                    let t = genRatio * 2;
+                    r = lerp(c1.r, c2.r, t);
+                    g = lerp(c1.g, c2.g, t);
+                    b = lerp(c1.b, c2.b, t);
+                } else {
+                    let t = (genRatio - 0.5) * 2;
+                    r = lerp(c2.r, c3.r, t);
+                    g = lerp(c2.g, c3.g, t);
+                    b = lerp(c3.b, c3.b, t);
+                }
+
+                // Small per-particle variation
+                r = constrain(r + random(-15, 15), 0, 255);
+                g = constrain(g + random(-15, 15), 0, 255);
+                b = constrain(b + random(-15, 15), 0, 255);
+
+                this.r = r;
+                this.g = g;
+                this.b = b;
+            }
+
+            update() {
+                this.prevPos = this.pos.copy();
+
+                // Follow the combined flow field (base + inherited traces)
+                let angle = getFieldAngle(this.pos.x, this.pos.y);
+                let force = p5.Vector.fromAngle(angle);
+                force.mult(0.3);
+                this.acc.add(force);
+
+                this.vel.add(this.acc);
+                this.vel.limit(params.driftSpeed);
+                this.pos.add(this.vel);
+                this.acc.mult(0);
+                this.age++;
+
+                // Wrap around edges
+                if (this.pos.x < 0) { this.pos.x = W; this.prevPos.x = W; }
+                if (this.pos.x > W) { this.pos.x = 0; this.prevPos.x = 0; }
+                if (this.pos.y < 0) { this.pos.y = H; this.prevPos.y = H; }
+                if (this.pos.y > H) { this.pos.y = 0; this.prevPos.y = 0; }
+            }
+
+            display() {
+                // Opacity fades in and out over the particle's life
+                let lifeFrac = this.age / this.maxAge;
+                let envelope = sin(lifeFrac * PI); // smooth rise and fall
+                let alpha = envelope * params.traceOpacity;
+
+                // Draw on trace buffer (permanent) and main canvas
+                let sw = map(envelope, 0, 1, 0.3, 1.2);
+
+                traceBuffer.stroke(this.r, this.g, this.b, alpha);
+                traceBuffer.strokeWeight(sw);
+                traceBuffer.line(this.prevPos.x, this.prevPos.y, this.pos.x, this.pos.y);
+            }
+
+            isDead() {
+                return this.age >= this.maxAge;
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // DRAW LOOP
+        // ═══════════════════════════════════════════════════════════
+
+        function draw() {
+            if (!running) {
+                noLoop();
+                return;
+            }
+
+            // Update and draw particles
+            for (let p of particles) {
+                p.update();
+                p.display();
+            }
+
+            // Remove dead particles
+            particles = particles.filter(p => !p.isDead());
+
+            // Render trace buffer to main canvas
+            image(traceBuffer, 0, 0);
+
+            // Draw living particles as bright dots on top
+            for (let p of particles) {
+                let lifeFrac = p.age / p.maxAge;
+                let envelope = sin(lifeFrac * PI);
+                let alpha = envelope * 120;
+                noStroke();
+                fill(p.r, p.g, p.b, alpha);
+                circle(p.pos.x, p.pos.y, map(envelope, 0, 1, 1, 3));
+            }
+
+            frameInGeneration++;
+
+            // When all particles in this generation are dead, advance
+            if (particles.length === 0) {
+                advanceGeneration();
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // UTILITIES
+        // ═══════════════════════════════════════════════════════════
+
+        function hexToRgb(hex) {
+            let result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? {
+                r: parseInt(result[1], 16),
+                g: parseInt(result[2], 16),
+                b: parseInt(result[3], 16)
+            } : { r: 128, g: 128, b: 128 };
+        }
+
+        function lerp(a, b, t) {
+            return a + (b - a) * t;
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // UI HANDLERS
+        // ═══════════════════════════════════════════════════════════
+
+        function updateParam(paramName, value) {
+            params[paramName] = parseFloat(value);
+            document.getElementById(paramName + '-value').textContent =
+                paramName === 'inheritanceStrength' ? parseFloat(value).toFixed(2) : value;
+        }
+
+        function updateColor(colorId, value) {
+            let idx = parseInt(colorId.replace('color', '')) - 1;
+            params.colorPalette[idx] = value;
+            document.getElementById(colorId + '-value').textContent = value;
+        }
+
+        function regenerate() {
+            if (traceBuffer) traceBuffer.remove();
+            loop();
+            initializeSystem();
+        }
+
+        function updateGenDisplay() {
+            document.getElementById('gen-display').textContent =
+                'Generation: ' + (currentGeneration + 1) + ' / ' + params.totalGenerations;
+        }
+
+        function downloadPNG() {
+            saveCanvas('discrete-continuity-' + params.seed, 'png');
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // SEED CONTROLS (FIXED)
+        // ═══════════════════════════════════════════════════════════
+
+        function updateSeedDisplay() {
+            document.getElementById('seed-input').value = params.seed;
+        }
+
+        function updateSeed() {
+            let input = document.getElementById('seed-input');
+            let newSeed = parseInt(input.value);
+            if (newSeed && newSeed > 0) {
+                params.seed = newSeed;
+                regenerate();
+            } else {
+                updateSeedDisplay();
+            }
+        }
+
+        function previousSeed() {
+            params.seed = Math.max(1, params.seed - 1);
+            updateSeedDisplay();
+            regenerate();
+        }
+
+        function nextSeed() {
+            params.seed = params.seed + 1;
+            updateSeedDisplay();
+            regenerate();
+        }
+
+        function randomSeedAndUpdate() {
+            params.seed = Math.floor(Math.random() * 999999) + 1;
+            updateSeedDisplay();
+            regenerate();
+        }
+
+        function resetParameters() {
+            params = JSON.parse(JSON.stringify(defaultParams));
+
+            document.getElementById('particlesPerGen').value = params.particlesPerGen;
+            document.getElementById('particlesPerGen-value').textContent = params.particlesPerGen;
+            document.getElementById('totalGenerations').value = params.totalGenerations;
+            document.getElementById('totalGenerations-value').textContent = params.totalGenerations;
+            document.getElementById('lifespan').value = params.lifespan;
+            document.getElementById('lifespan-value').textContent = params.lifespan;
+            document.getElementById('flowScale').value = params.flowScale;
+            document.getElementById('flowScale-value').textContent = params.flowScale;
+            document.getElementById('driftSpeed').value = params.driftSpeed;
+            document.getElementById('driftSpeed-value').textContent = params.driftSpeed;
+            document.getElementById('traceOpacity').value = params.traceOpacity;
+            document.getElementById('traceOpacity-value').textContent = params.traceOpacity;
+            document.getElementById('inheritanceStrength').value = params.inheritanceStrength;
+            document.getElementById('inheritanceStrength-value').textContent = params.inheritanceStrength.toFixed(2);
+
+            document.getElementById('color1').value = params.colorPalette[0];
+            document.getElementById('color1-value').textContent = params.colorPalette[0];
+            document.getElementById('color2').value = params.colorPalette[1];
+            document.getElementById('color2-value').textContent = params.colorPalette[1];
+            document.getElementById('color3').value = params.colorPalette[2];
+            document.getElementById('color3-value').textContent = params.colorPalette[2];
+
+            updateSeedDisplay();
+            regenerate();
+        }
+
+        window.addEventListener('load', function() {
+            updateSeedDisplay();
+        });
+    </script>
+</body>
+</html>

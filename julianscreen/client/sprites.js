@@ -1,7 +1,7 @@
 // JulianScreen — sprite engine + avatar + items
 // Reads palette-indexed frame arrays from JSON, renders to spriteLayer
 
-const TILE = 16;
+const TILE = 32;
 
 // Sprite sheet cache
 const sheetCache = {};
@@ -14,14 +14,14 @@ async function loadSpriteSheet(url) {
   return data;
 }
 
-// Draw a palette-indexed 16x16 frame onto a canvas context at (x, y)
+// Draw a palette-indexed 32x32 frame onto a canvas context at (x, y)
 function renderSprite(ctx, frameData, x, y) {
   const palette = window.JScreen.PALETTE;
-  for (let i = 0; i < 256; i++) {
+  for (let i = 0; i < 1024; i++) {
     const idx = frameData[i];
     if (idx === 0) continue; // transparent
-    const px = x + (i % 16);
-    const py = y + Math.floor(i / 16);
+    const px = x + (i % 32);
+    const py = y + Math.floor(i / 32);
     ctx.fillStyle = palette[idx] || palette[1];
     ctx.fillRect(px, py, 1, 1);
   }

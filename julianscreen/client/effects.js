@@ -18,7 +18,7 @@
   // Sparkle: random yellow pixels flash
   function renderSparkle(ctx, progress) {
     const intensity = 1 - progress; // fade out
-    const count = Math.floor(30 * intensity);
+    const count = Math.floor(150 * intensity);
     ctx.fillStyle = S.PALETTE[1]; // yellow
     for (let i = 0; i < count; i++) {
       const x = Math.floor(Math.random() * S.SCREEN_W);
@@ -39,7 +39,7 @@
     const numHearts = 5;
     ctx.fillStyle = S.PALETTE[4]; // red
     for (let h = 0; h < numHearts; h++) {
-      const baseX = 15 + h * 25;
+      const baseX = 75 + h * 125;
       const baseY = S.SCREEN_H - progress * (S.SCREEN_H + 20) + h * 8;
       for (let row = 0; row < 5; row++) {
         for (let col = 0; col < 5; col++) {
@@ -78,7 +78,7 @@
   function renderRain(ctx, progress) {
     ctx.fillStyle = S.PALETTE[6]; // blue
     const offset = Math.floor(progress * 20);
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 200; i++) {
       const x = (i * 7 + 3) % S.SCREEN_W;
       const y = ((i * 13 + offset * 5) % (S.SCREEN_H + 8)) - 4;
       ctx.fillRect(x, y, 1, 3);
@@ -89,7 +89,7 @@
   function renderSnow(ctx, progress) {
     ctx.fillStyle = S.PALETTE[3]; // white
     const offset = progress * 50;
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 125; i++) {
       const x = (i * 11 + Math.sin(i + offset) * 3 + S.SCREEN_W) % S.SCREEN_W;
       const y = ((i * 7 + offset * 2) % (S.SCREEN_H + 4)) - 2;
       ctx.fillRect(Math.round(x), Math.round(y), 1, 1);

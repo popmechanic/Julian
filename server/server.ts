@@ -241,9 +241,18 @@ let activeListener: ((event: any) => void) | null = null;
 let turnResolve: (() => void) | null = null;
 let processAlive = false;
 let lastActivity = 0;
-const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+const HEARTBEAT_INTERVAL_MS = 5_000;
+const TURN_INACTIVITY_MS = 120_000;
+const TURN_INACTIVITY_CHECK_MS = 10_000;
+const MAX_TURN_TIMEOUT_MS = 5 * 60 * 1000;
+const PROCESS_KILL_WAIT_MS = 300;
+const MAX_MESSAGE_SIZE = 100_000;
+let sessionId: string | null = null;
+const AGENT_NAME = process.env.AGENT_NAME || "Julian";
 
 function spawnClaude() {
+  sessionId = crypto.randomUUID();
   const authEnv = loadAuthEnv();
   console.log("[Claude] Spawning process...", Object.keys(authEnv).length ? `(with ${Object.keys(authEnv).join(", ")})` : "(no auth env)");
 
@@ -315,7 +324,9 @@ function spawnClaude() {
         const text = decoder.decode(value, { stream: true });
         if (text.trim()) console.error("[Claude stderr]", text.trim());
       }
-    } catch {} finally {
+    } catch (err) {
+      console.debug("[Claude stderr] Read error:", err);
+    } finally {
       reader.releaseLock();
     }
   })();
@@ -325,6 +336,7 @@ function spawnClaude() {
     console.log(`[Claude] Process exited (code ${code})`);
     processAlive = false;
     claudeProc = null;
+    sessionId = null;
     if (activeListener) {
       activeListener({ type: "error", message: `Claude process exited (code ${code})` });
     }
@@ -334,7 +346,7 @@ function spawnClaude() {
     }
   });
 
-  console.log(`[Claude] PID ${proc.pid}`);
+  console.log(`[Claude] PID ${proc.pid}, sessionId ${sessionId}`);
   return proc;
 }
 
@@ -378,12 +390,12 @@ function writeTurn(message: string): ReadableStream {
         try {
           controller.enqueue(new TextEncoder().encode(":heartbeat\n\n"));
         } catch {}
-      }, 5000);
+      }, HEARTBEAT_INTERVAL_MS);
 
-      // Safety timeout: if no events for 120s, send error
+      // Safety timeout: if no events for TURN_INACTIVITY_MS, send error
       const inactivityCheck = setInterval(() => {
-        if (Date.now() - lastEventTime > 120_000) {
-          send({ type: "error", data: { message: "No response from Claude for 120 seconds" } });
+        if (Date.now() - lastEventTime > TURN_INACTIVITY_MS) {
+          send({ type: "error", data: { message: `No response from Claude for ${TURN_INACTIVITY_MS / 1000} seconds` } });
           clearInterval(heartbeat);
           clearInterval(inactivityCheck);
           activeListener = null;
@@ -391,7 +403,7 @@ function writeTurn(message: string): ReadableStream {
           controller.close();
           releaseLock();
         }
-      }, 10_000);
+      }, TURN_INACTIVITY_CHECK_MS);
 
       // Write JSONL user message to Claude's stdin
       const jsonl = JSON.stringify({
@@ -412,16 +424,16 @@ function writeTurn(message: string): ReadableStream {
         return;
       }
 
-      // Wait for the result event, with a 5-minute max timeout
+      // Wait for the result event, with a max timeout
       const maxTimeout = new Promise<void>((resolve) => {
         setTimeout(() => {
           if (turnResolve) {
-            send({ type: "error", data: { message: "Turn exceeded 5 minute maximum" } });
+            send({ type: "error", data: { message: `Turn exceeded ${MAX_TURN_TIMEOUT_MS / 60_000} minute maximum` } });
             turnResolve();
             turnResolve = null;
           }
           resolve();
-        }, 5 * 60 * 1000);
+        }, MAX_TURN_TIMEOUT_MS);
       });
 
       await Promise.race([turnDone, maxTimeout]);
@@ -443,7 +455,78 @@ function corsHeaders() {
     "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
     "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Authorization",
+    "Access-Control-Expose-Headers": "X-Session-Id",
   };
+}
+
+// ── Skill directory walker ────────────────────────────────────────────────
+function walkSkillDirs(baseDir: string): Array<{name: string, type: string, children?: any[]}> {
+  const results: Array<{name: string, type: string, children?: any[]}> = [];
+  if (!existsSync(baseDir)) return results;
+
+  try {
+    // Look for plugin directories that contain skills/
+    const entries = readdirSync(baseDir);
+    for (const entry of entries) {
+      const pluginPath = join(baseDir, entry);
+      if (!statSync(pluginPath).isDirectory()) continue;
+
+      // Check for skills/ directly
+      const skillsDir = join(pluginPath, 'skills');
+      if (existsSync(skillsDir) && statSync(skillsDir).isDirectory()) {
+        const skills = readdirSync(skillsDir)
+          .filter(s => {
+            const sp = join(skillsDir, s);
+            return statSync(sp).isDirectory();
+          })
+          .map(s => ({ name: s, type: 'file' as const }));
+        if (skills.length > 0) {
+          results.push({ name: entry, type: 'folder', children: skills });
+        }
+      }
+
+      // Also check nested: cache/<marketplace>/<plugin>/<version>/skills/
+      // Walk one more level for cache directory structure
+      try {
+        const subEntries = readdirSync(pluginPath);
+        for (const sub of subEntries) {
+          const subPath = join(pluginPath, sub);
+          if (!statSync(subPath).isDirectory()) continue;
+          // Check for versioned plugin dirs
+          const versionDirs = readdirSync(subPath).filter(v => {
+            return statSync(join(subPath, v)).isDirectory();
+          });
+          for (const ver of versionDirs) {
+            const verSkillsDir = join(subPath, ver, 'skills');
+            if (existsSync(verSkillsDir) && statSync(verSkillsDir).isDirectory()) {
+              const skills = readdirSync(verSkillsDir)
+                .filter(s => statSync(join(verSkillsDir, s)).isDirectory())
+                .map(s => ({ name: s, type: 'file' as const }));
+              if (skills.length > 0) {
+                // Use the plugin name (sub) as the namespace, avoid duplicates
+                const existing = results.find(r => r.name === sub);
+                if (existing && existing.children) {
+                  for (const sk of skills) {
+                    if (!existing.children.find((c: any) => c.name === sk.name)) {
+                      existing.children.push(sk);
+                    }
+                  }
+                } else {
+                  results.push({ name: sub, type: 'folder', children: skills });
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.debug("[Skills] Error scanning nested plugin dir:", entry, err);
+      }
+    }
+  } catch (err) {
+    console.debug("[Skills] Error scanning plugin base dir:", baseDir, err);
+  }
+
+  return results;
 }
 
 // ── Kill Claude session after 15 minutes of inactivity ───────────────────
@@ -462,8 +545,18 @@ const server = Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
 
-    // WebSocket upgrade for JulianScreen proxy
+    // WebSocket upgrade for JulianScreen proxy (authenticated via query param)
     if (url.pathname === '/screen/ws') {
+      const wsToken = url.searchParams.get('token');
+      if (JWKS && wsToken) {
+        try {
+          await jwtVerify(wsToken, JWKS, { clockTolerance: 10 });
+        } catch {
+          return new Response('Unauthorized', { status: 401 });
+        }
+      } else if (JWKS && !wsToken) {
+        return new Response('Unauthorized — token query param required', { status: 401 });
+      }
       const upgraded = server.upgrade(req, { data: {} });
       if (upgraded) return undefined;
       return new Response('WebSocket upgrade failed', { status: 400 });
@@ -479,6 +572,7 @@ const server = Bun.serve({
       return Response.json({
         status: "ok",
         sessionActive: processAlive && claudeProc !== null,
+        sessionId,
         needsSetup: await needsSetup(),
         authMethod: getAuthMethod(),
       }, { headers: corsHeaders() });
@@ -511,6 +605,9 @@ const server = Bun.serve({
 
     // OAuth start: generate PKCE auth URL directly (no subprocess)
     if (url.pathname === "/api/oauth/start" && req.method === "GET") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
       const state = randomBytes(32).toString("hex");
       const verifier = generateCodeVerifier();
       const challenge = generateCodeChallenge(verifier);
@@ -533,6 +630,9 @@ const server = Bun.serve({
 
     // OAuth exchange: POST authorization code to token endpoint directly
     if (url.pathname === "/api/oauth/exchange" && req.method === "POST") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
       const body = (await req.json()) as { code?: string; state?: string };
       if (!body.code || !body.state) {
         return Response.json({ error: "code and state required" }, { status: 400, headers: corsHeaders() });
@@ -602,16 +702,50 @@ const server = Bun.serve({
       // Proactively refresh token before spawning Claude
       await refreshTokenIfNeeded();
 
+      // Parse previousTranscript and artifactCatalog from POST body (if any)
+      let previousTranscript: Array<{ role: string; speakerType: string; speakerName: string; text: string }> = [];
+      let artifactCatalog: Array<{ filename: string; category: string; description: string; chapter?: string }> = [];
+      try {
+        const body = await req.json() as { previousTranscript?: any[], artifactCatalog?: any[] };
+        if (Array.isArray(body.previousTranscript)) {
+          previousTranscript = body.previousTranscript;
+        }
+        if (Array.isArray(body.artifactCatalog)) {
+          artifactCatalog = body.artifactCatalog;
+        }
+      } catch {} // No body or invalid JSON — proceed without transcript
+
       spawnClaude();
       lastActivity = Date.now();
 
-      // Send wake-up message and stream Julian's response
-      const wakeUpMessage = "You are waking up in a new session. Read your CLAUDE.md and artifacts to remember who you are. Then greet Marcus briefly.";
+      // Build wakeup message with XML-tagged transcript
+      let wakeUpMessage = "You are waking up in a new session. Read catalog.xml now — it contains your entire identity and memories.\n\n";
+
+      // Artifact catalog from Fireproof
+      if (artifactCatalog.length > 0) {
+        const lines = artifactCatalog
+          .map((a: any) => `- ${a.filename} [${a.category}] — ${a.description}`)
+          .join("\n");
+        wakeUpMessage += `<memory category="catalog" document-count="${artifactCatalog.length}">\n${lines}\n</memory>\n\n`;
+      }
+
+      if (previousTranscript.length > 0) {
+        const ended = new Date().toISOString();
+        const lines = previousTranscript.map(msg =>
+          `[${msg.speakerType || "human"} — ${msg.speakerName || "Unknown"}]: ${msg.text}`
+        ).join("\n");
+        wakeUpMessage += `<previous-session category="transcript" session-id="rehydrated" message-count="${previousTranscript.length}" ended="${ended}">\n${lines}\n</previous-session>\n\n`;
+        wakeUpMessage += "Greet Marcus briefly, acknowledging continuity with your previous conversation.";
+      } else {
+        wakeUpMessage += "Then greet Marcus briefly.";
+      }
+
       return new Response(writeTurn(wakeUpMessage), {
         headers: {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           "Connection": "keep-alive",
+          "X-Session-Id": sessionId || "",
           ...corsHeaders(),
         },
       });
@@ -625,10 +759,11 @@ const server = Bun.serve({
       if (claudeProc && processAlive) {
         claudeProc.kill();
         // Wait briefly for cleanup
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise(r => setTimeout(r, PROCESS_KILL_WAIT_MS));
       }
       claudeProc = null;
       processAlive = false;
+      sessionId = null;
       return Response.json({ ok: true }, { headers: corsHeaders() });
     }
 
@@ -642,8 +777,8 @@ const server = Bun.serve({
       }
       lastActivity = Date.now();
       const { message } = (await req.json()) as { message?: string };
-      if (!message || typeof message !== 'string' || message.length > 100_000) {
-        return Response.json({ error: "Message required (max 100KB)" }, { status: 400, headers: corsHeaders() });
+      if (!message || typeof message !== 'string' || message.length > MAX_MESSAGE_SIZE) {
+        return Response.json({ error: `Message required (max ${MAX_MESSAGE_SIZE / 1000}KB)` }, { status: 400, headers: corsHeaders() });
       }
       return new Response(writeTurn(message), {
         headers: {
@@ -663,13 +798,24 @@ const server = Bun.serve({
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
       }
       const memoryDir = join(WORKING_DIR, "memory");
+      const soulDir = join(WORKING_DIR, "soul");
       try {
-        const entries = readdirSync(memoryDir)
+        const memoryEntries = readdirSync(memoryDir)
           .filter(f => f.endsWith(".html"))
           .map(name => {
             const st = statSync(join(memoryDir, name));
-            return { name, modified: st.mtimeMs };
-          })
+            return { name, modified: st.mtimeMs, dir: "memory" };
+          });
+        let soulEntries: Array<{ name: string; modified: number; dir: string }> = [];
+        try {
+          soulEntries = readdirSync(soulDir)
+            .filter(f => f.endsWith(".html"))
+            .map(name => {
+              const st = statSync(join(soulDir, name));
+              return { name, modified: st.mtimeMs, dir: "soul" };
+            });
+        } catch {}
+        const entries = [...memoryEntries, ...soulEntries]
           .sort((a, b) => b.modified - a.modified);
         return Response.json({ files: entries }, { headers: corsHeaders() });
       } catch (err) {
@@ -684,7 +830,10 @@ const server = Bun.serve({
       if (!filename || filename.includes("/") || filename.includes("\\") || filename.includes("..") || !filename.endsWith(".html")) {
         return new Response("Bad Request", { status: 400, headers: corsHeaders() });
       }
-      const filePath = join(WORKING_DIR, "memory", filename);
+      let filePath = join(WORKING_DIR, "memory", filename);
+      if (!existsSync(filePath)) {
+        filePath = join(WORKING_DIR, "soul", filename);
+      }
       try {
         const content = readFileSync(filePath, "utf-8");
         return new Response(content, {
@@ -692,6 +841,115 @@ const server = Bun.serve({
         });
       } catch {
         return new Response("Not Found", { status: 404, headers: corsHeaders() });
+      }
+    }
+
+    // ── Skills endpoint ──────────────────────────────────────────────────
+
+    if (url.pathname === "/api/skills" && req.method === "GET") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
+      try {
+        const allEntries: Array<{name: string, type: string, children?: any[]}> = [];
+
+        // 1. Project-level plugins: WORKING_DIR/.claude/plugins/
+        const projectPlugins = join(WORKING_DIR, ".claude", "plugins");
+        const projectResults = walkSkillDirs(projectPlugins);
+        for (const r of projectResults) {
+          const existing = allEntries.find(e => e.name === r.name);
+          if (existing && existing.children && r.children) {
+            for (const c of r.children) {
+              if (!existing.children.find((ec: any) => ec.name === c.name)) {
+                existing.children.push(c);
+              }
+            }
+          } else {
+            allEntries.push(r);
+          }
+        }
+
+        // 2. User-level plugins: ~/.claude/plugins/
+        const userPlugins = join(homedir(), ".claude", "plugins");
+        const userResults = walkSkillDirs(userPlugins);
+        for (const r of userResults) {
+          const existing = allEntries.find(e => e.name === r.name);
+          if (existing && existing.children && r.children) {
+            for (const c of r.children) {
+              if (!existing.children.find((ec: any) => ec.name === c.name)) {
+                existing.children.push(c);
+              }
+            }
+          } else {
+            allEntries.push(r);
+          }
+        }
+
+        // 3. Project-level julian-plugin/skills/ (direct skill directory)
+        const julianPluginSkills = join(WORKING_DIR, "julian-plugin", "skills");
+        if (existsSync(julianPluginSkills) && statSync(julianPluginSkills).isDirectory()) {
+          const skills = readdirSync(julianPluginSkills)
+            .filter(s => {
+              const sp = join(julianPluginSkills, s);
+              return statSync(sp).isDirectory();
+            })
+            .map(s => ({ name: s, type: 'file' as const }));
+          if (skills.length > 0) {
+            const existing = allEntries.find(e => e.name === "julian-plugin");
+            if (existing && existing.children) {
+              for (const sk of skills) {
+                if (!existing.children.find((c: any) => c.name === sk.name)) {
+                  existing.children.push(sk);
+                }
+              }
+            } else {
+              allEntries.push({ name: "julian-plugin", type: "folder", children: skills });
+            }
+          }
+        }
+
+        return Response.json({ entries: allEntries }, { headers: corsHeaders() });
+      } catch (err) {
+        console.debug("[Skills] Error listing skills:", err);
+        return Response.json({ entries: [] }, { headers: corsHeaders() });
+      }
+    }
+
+    // ── Agents endpoint ──────────────────────────────────────────────────
+
+    if (url.pathname === "/api/agents" && req.method === "GET") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
+      const teamsDir = join(homedir(), ".claude", "teams");
+      try {
+        if (!existsSync(teamsDir)) {
+          return Response.json({ teams: [] }, { headers: corsHeaders() });
+        }
+        const teamDirs = readdirSync(teamsDir).filter(d => {
+          return statSync(join(teamsDir, d)).isDirectory();
+        });
+        const teams = [];
+        for (const dir of teamDirs) {
+          const configPath = join(teamsDir, dir, "config.json");
+          if (!existsSync(configPath)) continue;
+          try {
+            const config = JSON.parse(readFileSync(configPath, "utf-8"));
+            teams.push({
+              name: config.name || dir,
+              members: (config.members || []).map((m: any) => ({
+                name: m.name || "unknown",
+                agentType: m.agent_type || m.agentType || "unknown",
+              })),
+            });
+          } catch (err) {
+            console.debug("[Agents] Error parsing team config:", dir, err);
+          }
+        }
+        return Response.json({ teams }, { headers: corsHeaders() });
+      } catch (err) {
+        console.debug("[Agents] Error listing teams:", err);
+        return Response.json({ teams: [] }, { headers: corsHeaders() });
       }
     }
 
@@ -708,6 +966,13 @@ const server = Bun.serve({
 
     // Serve files from WORKING_DIR (replaces nginx static serving)
     const requestedPath = decodeURIComponent(url.pathname);
+
+    // Block sensitive files/directories from being served
+    const BLOCKED_PREFIXES = ['/.env', '/claude-auth.env', '/.git', '/server/', '/deploy/', '/node_modules/', '/CLAUDE.md', '/.claude/', '/docs/', '/julian-plugin/'];
+    if (BLOCKED_PREFIXES.some(p => requestedPath === p || requestedPath.startsWith(p))) {
+      return new Response("Not Found", { status: 404 });
+    }
+
     const safePath = resolve(WORKING_DIR, requestedPath.slice(1)); // strip leading /
     if (safePath.startsWith(resolve(WORKING_DIR))) {
       const file = Bun.file(safePath);

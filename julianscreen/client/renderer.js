@@ -1,10 +1,10 @@
 // JulianScreen — 4-layer canvas compositing engine + command dispatcher
 
-const SCREEN_W = 128;
-const SCREEN_H = 96;
-const TILE_SIZE = 16;
-const COLS = 8;
-const ROWS = 6;
+const SCREEN_W = 640;
+const SCREEN_H = 480;
+const TILE_SIZE = 32;
+const COLS = 20;
+const ROWS = 15;
 
 // Palette (indexed colors)
 const PALETTE = [
