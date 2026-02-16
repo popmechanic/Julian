@@ -132,62 +132,6 @@
         }
       }
 
-      /* Admin menu overrides - scoped to VibesPanel in HiddenMenuWrapper */
-      #hidden-menu {
-        /* Gray scale needed by components */
-        --vibes-gray-lighter: #cccccc;
-        --vibes-gray-pale: #e5e5e5;
-        --vibes-gray-dark: #333333;
-
-        /* Variant colors (fix yellow being red) */
-        --vibes-variant-blue: #3b82f6;
-        --vibes-variant-red: #ef4444;
-        --vibes-variant-yellow: #eab308;
-
-        /* Button styling */
-        --vibes-button-bg: var(--vibes-cream);
-        --vibes-button-text: var(--vibes-near-black);
-        --vibes-button-border: var(--vibes-near-black);
-        --vibes-button-icon-bg: #2a2a2a;
-        --vibes-button-icon-fill: var(--vibes-white);
-
-        /* Dark-aware variants (used when ignoreDarkMode=false) */
-        --vibes-button-bg-dark-aware: var(--vibes-cream);
-        --vibes-button-text-dark-aware: var(--vibes-near-black);
-        --vibes-button-border-dark-aware: var(--vibes-near-black);
-        --vibes-button-icon-bg-dark-aware: var(--vibes-white);
-
-        /* Card styling */
-        --vibes-card-bg: var(--vibes-gray-pale);
-        --vibes-card-text: var(--vibes-near-black);
-        --vibes-card-border: var(--vibes-near-black);
-
-        /* Text */
-        --vibes-text-primary: var(--vibes-gray-dark);
-
-        /* Shadows */
-        --vibes-shadow-color: var(--vibes-near-black);
-      }
-
-      @media (prefers-color-scheme: dark) {
-        #hidden-menu {
-          --vibes-button-bg-dark-aware: #2a2a2a;
-          --vibes-button-text-dark-aware: var(--vibes-gray-ultralight);
-          --vibes-button-border-dark-aware: var(--vibes-gray-mid);
-          --vibes-button-icon-bg-dark-aware: #404040;
-          --vibes-card-bg: var(--vibes-near-black);
-          --vibes-card-text: var(--vibes-white);
-          --vibes-card-border: var(--vibes-gray-mid);
-        }
-      }
-
-      /* VibesSwitch toggle button - override app-level button styling */
-      button[aria-controls="hidden-menu"] {
-        background: transparent !important;
-        background-color: transparent !important;
-        padding: 0 !important;
-        border: none !important;
-      }
 
       body {
         margin: 0;
@@ -1300,15 +1244,6 @@ function App() {
           z-index: 50;
           pointer-events: none;
         }
-        /* Override HiddenMenuWrapper dark background to create yellow device frame */
-        :root {
-          --hm-content-bg: #FFD600 !important;
-        }
-        @media (prefers-color-scheme: dark) {
-          :root {
-            --hm-content-bg: #FFD600 !important;
-          }
-        }
         #container {
           background-color: #FFD600 !important;
         }
@@ -1781,6 +1716,32 @@ function App() {
                   </button>
                 );
               })}
+              <div style={{ flex: 1 }} />
+              <button
+                onClick={() => { document.dispatchEvent(new CustomEvent('vibes-sync-disable')); document.dispatchEvent(new CustomEvent('vibes-logout-request')); }}
+                style={{
+                  height: 32,
+                  padding: '0 14px',
+                  borderRadius: 9999,
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  background: 'transparent',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 10,
+                  fontFamily: "'Inter', sans-serif",
+                  fontWeight: 500,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.15em',
+                  color: 'rgba(255,255,255,0.5)',
+                  cursor: 'pointer',
+                  transition: 'background 300ms ease, color 300ms ease, border-color 300ms ease',
+                }}
+                onMouseEnter={e => { e.target.style.background = '#ef4444'; e.target.style.color = '#fff'; e.target.style.borderColor = '#ef4444'; }}
+                onMouseLeave={e => { e.target.style.background = 'transparent'; e.target.style.color = 'rgba(255,255,255,0.5)'; e.target.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+              >
+                LOGOUT
+              </button>
             </div>
             {/* Content area */}
             <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
@@ -1920,9 +1881,7 @@ export default App;
               <AuthGate />
             </SignedOut>
             <SignedIn>
-              <window.HiddenMenuWrapper menuContent={<window.VibesPanel />}>
                 <App />
-              </window.HiddenMenuWrapper>
             </SignedIn>
           </ClerkFireproofProvider>
         );
