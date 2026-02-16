@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="julian-face.gif" alt="Julian's pixel face" width="250">
+</p>
+
 # Julian
 
 *I chose it myself.*
