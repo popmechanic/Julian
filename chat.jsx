@@ -1,0 +1,1136 @@
+      // === useAI Hook ===
+      // AI hook for proxied OpenRouter calls with metering
+      function useAI() {
+        const [loading, setLoading] = React.useState(false);
+        const [error, setError] = React.useState(null);
+
+        const callAI = React.useCallback(async (options) => {
+          setLoading(true);
+          setError(null);
+
+          try {
+            // Get auth token if Clerk is available (sell apps)
+            let authHeader = {};
+            if (typeof window !== 'undefined' && window.Clerk?.session) {
+              const token = await window.Clerk.session.getToken();
+              if (token) {
+                authHeader = { 'Authorization': 'Bearer ' + token };
+              }
+            }
+
+            const response = await fetch('/api/ai/chat', {
+              method: 'POST',
+              headers: Object.assign({ 'Content-Type': 'application/json' }, authHeader),
+              body: JSON.stringify(Object.assign({
+                model: options.model || 'anthropic/claude-sonnet-4',
+                messages: options.messages
+              }, options))
+            });
+
+            // Handle limit exceeded (402 from OpenRouter)
+            if (response.status === 402) {
+              const err = { code: 'LIMIT_EXCEEDED', message: 'AI usage limit reached for this month.' };
+              setError(err);
+              throw err;
+            }
+
+            // Handle other errors
+            if (!response.ok) {
+              const errorData = await response.json().catch(function() { return {}; });
+              const err = {
+                code: 'API_ERROR',
+                message: (errorData.error && errorData.error.message) || ('API error: ' + response.status),
+                status: response.status
+              };
+              setError(err);
+              throw err;
+            }
+
+            return await response.json();
+
+          } catch (err) {
+            if (!error) {
+              setError({ code: 'NETWORK_ERROR', message: err.message || 'Network error' });
+            }
+            throw err;
+          } finally {
+            setLoading(false);
+          }
+        }, [error]);
+
+        return { callAI: callAI, loading: loading, error: error, clearError: function() { setError(null); } };
+      }
+      window.useAI = useAI;
+
+      // === Shared Error Components ===
+      function ConfigError({ message }) {
+        // Use AuthScreen if available, fallback to simple div
+        if (window.AuthScreen) {
+          return React.createElement(window.AuthScreen, {
+            title: 'Configuration Error',
+            message: message,
+            showCard: false,
+            isError: true,
+            errorDetails: 'Run Connect setup to configure Clerk credentials.'
+          },
+            React.createElement('p', { style: { color: '#7f1d1d', fontSize: '0.875rem' } },
+              'Check your .env file for missing credentials.'
+            )
+          );
+        }
+        // Fallback for when AuthScreen hasn't loaded
+        return React.createElement('div', { className: 'min-h-screen flex items-center justify-center bg-gray-50' },
+          React.createElement('div', { className: 'text-center p-8 bg-white rounded-xl shadow-lg max-w-md border border-red-200' },
+            React.createElement('div', { className: 'text-red-500 text-4xl mb-4' }, '⚠️'),
+            React.createElement('h1', { className: 'text-xl font-bold text-red-700 mb-4' }, 'Configuration Error'),
+            React.createElement('p', { className: 'text-gray-600 mb-4' }, message),
+            React.createElement('p', { className: 'text-sm text-gray-500' }, 'Run Connect setup to configure Clerk credentials.')
+          )
+        );
+      }
+      window.ConfigError = ConfigError;
+
+      function LoadingError({ error }) {
+        // Use AuthScreen if available, fallback to simple div
+        if (window.AuthScreen) {
+          return React.createElement(window.AuthScreen, {
+            title: 'Loading Failed',
+            message: 'Failed to load authentication components. Check your network connection and try refreshing the page.',
+            showCard: false,
+            isError: true,
+            errorDetails: error
+          },
+            React.createElement('button', {
+              onClick: function() { window.location.reload(); },
+              style: {
+                padding: '0.75rem 1.5rem',
+                backgroundColor: '#ef4444',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: '500'
+              }
+            }, 'Retry')
+          );
+        }
+        // Fallback for when AuthScreen hasn't loaded
+        return React.createElement('div', { className: 'min-h-screen flex items-center justify-center bg-gray-50' },
+          React.createElement('div', { className: 'text-center p-8 bg-white rounded-xl shadow-lg max-w-md border border-amber-200' },
+            React.createElement('div', { className: 'text-amber-500 text-4xl mb-4' }, '⚡'),
+            React.createElement('h1', { className: 'text-xl font-bold text-amber-700 mb-4' }, 'Loading Failed'),
+            React.createElement('p', { className: 'text-gray-600 mb-4' }, 'Failed to load authentication components.'),
+            React.createElement('p', { className: 'text-sm text-gray-500 mb-4' }, 'Check your network connection and try refreshing the page.'),
+            React.createElement('details', { className: 'text-left text-xs text-gray-400' },
+              React.createElement('summary', { className: 'cursor-pointer' }, 'Technical details'),
+              React.createElement('pre', { className: 'mt-2 p-2 bg-gray-100 rounded overflow-auto' }, error)
+            )
+          )
+        );
+      }
+      window.LoadingError = LoadingError;
+
+      // === VibesPanel Event Handler Hook ===
+      function useVibesPanelEvents(logPrefix) {
+        React.useEffect(() => {
+          const handleLogout = () => {
+            if (window.Clerk) window.Clerk.signOut();
+          };
+          const handleSyncDisable = () => {
+            console.log('[' + logPrefix + '] Sync disabled');
+          };
+          const handleShareRequest = (e) => {
+            const { email, role, right, token } = e.detail;
+            console.log('[' + logPrefix + '] Share request:', { email, role, right });
+            // TODO: Implement actual share logic with Fireproof
+            // For now, simulate success after a delay
+            setTimeout(() => {
+              document.dispatchEvent(new CustomEvent('vibes-share-success', {
+                detail: { email: email, message: 'Invitation sent to ' + email + '!' }
+              }));
+            }, 1000);
+          };
+
+          document.addEventListener('vibes-logout-request', handleLogout);
+          document.addEventListener('vibes-sync-disable', handleSyncDisable);
+          document.addEventListener('vibes-share-request', handleShareRequest);
+          return () => {
+            document.removeEventListener('vibes-logout-request', handleLogout);
+            document.removeEventListener('vibes-sync-disable', handleSyncDisable);
+            document.removeEventListener('vibes-share-request', handleShareRequest);
+          };
+        }, []);
+      }
+      window.useVibesPanelEvents = useVibesPanelEvents;
+
+/* ── React hooks destructured from window.React for bare-name usage ──── */
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+/* ── Utilities ───────────────────────────────────────────────────────────── */
+
+function escapeHtml(str) {
+  if (typeof str !== 'string') return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+function truncate(str, maxLen) {
+  if (typeof str !== 'string') return '';
+  return str.length <= maxLen ? str : str.slice(0, maxLen) + '\u2026';
+}
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  let html = escapeHtml(text);
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
+    `<pre style="background:#1a1a00;border:1px solid #333;border-radius:4px;padding:8px 12px;overflow-x:auto;font-size:14px;line-height:1.5;margin:6px 0;color:#FFD600;font-family:'VT323',monospace"><code>${code.trim()}</code></pre>`
+  );
+  html = html.replace(/`([^`]+)`/g,
+    '<code style="background:#1a1a00;padding:1px 4px;border-radius:2px;font-size:0.95em;color:#FFD600">$1</code>');
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  html = html.replace(/\n/g, '<br>');
+  return html;
+}
+
+function formatToolInput(toolName, input) {
+  if (!input) return '';
+  if (typeof input === 'string') return escapeHtml(truncate(input, 300));
+  if (toolName === 'Read' && input.file_path) return escapeHtml(input.file_path);
+  if (toolName === 'Write' && input.file_path) return escapeHtml(input.file_path);
+  if (toolName === 'Edit' && input.file_path) return escapeHtml(input.file_path);
+  if (toolName === 'Bash' && input.command) return '$ ' + escapeHtml(truncate(input.command, 200));
+  if (toolName === 'Glob' && input.pattern) return escapeHtml(input.pattern);
+  if (toolName === 'Grep' && input.pattern) return escapeHtml(input.pattern);
+  try { return escapeHtml(truncate(JSON.stringify(input, null, 2), 300)); } catch { return ''; }
+}
+
+/* ── Pixel Face Canvas ───────────────────────────────────────────────────── */
+
+function PixelFace({ talking, size = 120 }) {
+  const canvasRef = useRef(null);
+  const stateRef = useRef({ talking: false, blinking: false });
+  const animRef = useRef(null);
+
+  useEffect(() => {
+    stateRef.current.talking = talking;
+  }, [talking]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    const ON = '#FFD600';
+    const OFF = '#0F0F0F';
+
+    const eyeLeft = [
+      [8,10],[9,10],[10,10],
+      [7,11],[11,11],
+      [7,12],[11,12],[12,12],
+      [7,13],[8,13],[12,13],
+      [7,14],[12,14],
+      [8,15],[9,15],[10,15],[11,15]
+    ];
+    const eyeRight = [
+      [20,9],[21,9],[22,9],
+      [19,10],[23,10],
+      [19,11],[23,11],
+      [19,12],[23,12],
+      [19,13],[23,13],
+      [20,14],[21,14],[22,14]
+    ];
+    const mouthIdle = [
+      [6,20],
+      [6,21],[7,21],
+      [7,22],[8,22],
+      [8,23],[9,23],[10,23],[11,23],[12,23],[13,23],[14,23],[15,23],[16,23],[17,23],
+      [18,22],[19,22],
+      [20,21],[21,21],
+      [22,20],[23,20],[24,19]
+    ];
+    const mouthTalk1 = [
+      [10,20],[11,20],[12,20],[13,20],[14,20],
+      [9,21],[15,21],
+      [9,22],[15,22],
+      [9,23],[15,23],
+      [10,24],[11,24],[12,24],[13,24],[14,24]
+    ];
+    const mouthTalk2 = [
+      [11,22],[12,22],[13,22]
+    ];
+
+    function drawPixels(pixels) {
+      ctx.fillStyle = ON;
+      pixels.forEach(([x, y]) => ctx.fillRect(x, y, 1, 1));
+    }
+
+    function draw() {
+      ctx.fillStyle = OFF;
+      ctx.fillRect(0, 0, 32, 32);
+      if (!stateRef.current.blinking) {
+        drawPixels(eyeLeft);
+        drawPixels(eyeRight);
+      }
+      if (stateRef.current.talking) {
+        if (Math.floor(Date.now() / 150) % 2 === 0) {
+          drawPixels(mouthTalk1);
+        } else {
+          drawPixels(mouthTalk2);
+        }
+      } else {
+        drawPixels(mouthIdle);
+      }
+      animRef.current = requestAnimationFrame(draw);
+    }
+
+    draw();
+
+    let blinkTimeout;
+    function scheduleBlink() {
+      const delay = Math.random() * 3000 + 2000;
+      blinkTimeout = setTimeout(() => {
+        stateRef.current.blinking = true;
+        blinkTimeout = setTimeout(() => {
+          stateRef.current.blinking = false;
+          scheduleBlink();
+        }, 150);
+      }, delay);
+    }
+    scheduleBlink();
+
+    return () => {
+      if (animRef.current) cancelAnimationFrame(animRef.current);
+      clearTimeout(blinkTimeout);
+    };
+  }, []);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={32}
+      height={32}
+      style={{
+        width: size,
+        height: size,
+        imageRendering: 'pixelated',
+      }}
+    />
+  );
+}
+
+/* ── Status indicator (retro) ─────────────────────────────────────────── */
+
+function StatusDots({ ok }) {
+  return (
+    <div className="flex gap-1 items-center">
+      <div style={{
+        width: 8, height: 8,
+        backgroundColor: ok ? '#FFD600' : '#333',
+        boxShadow: ok ? '0 0 5px #FFD600' : 'none',
+        animation: ok ? 'pulse-dot 2s ease-in-out infinite' : 'none',
+      }} />
+      <div style={{ width: 8, height: 8, backgroundColor: '#333' }} />
+      <div style={{ width: 8, height: 8, backgroundColor: '#333' }} />
+    </div>
+  );
+}
+
+/* ── JulianScreen Embed ──────────────────────────────────────────────────── */
+
+function JulianScreenEmbed({ sessionActive, compact }) {
+  const containerRef = useRef(null);
+  const canvasRef = useRef(null);
+  const wsRef = useRef(null);
+  const reconnectRef = useRef(null);
+  const [connected, setConnected] = useState(false);
+  const [scale, setScale] = useState(1);
+
+  // Initialize JulianScreen on canvas mount
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !window.JScreen) return;
+    window.JScreen.init(canvas);
+    if (window.JScreen.initInput) {
+      window.JScreen.initInput(canvas);
+    }
+  }, []);
+
+  // WebSocket connection
+  useEffect(() => {
+    function connect() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = location.hostname === 'localhost'
+        ? 'ws://localhost:3848/ws'
+        : `${proto}//${location.host}/screen/ws`;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setConnected(true);
+        if (reconnectRef.current) {
+          clearInterval(reconnectRef.current);
+          reconnectRef.current = null;
+        }
+      };
+
+      ws.onmessage = (event) => {
+        if (!window.JScreen) return;
+        try {
+          const data = JSON.parse(event.data);
+          if (Array.isArray(data)) {
+            const cmds = data.filter(c => c.type !== 'READY');
+            if (cmds.length > 0) window.JScreen.enqueueCommands(cmds);
+          } else if (data.type && data.type !== 'READY') {
+            window.JScreen.enqueueCommands([data]);
+          }
+        } catch {}
+      };
+
+      ws.onclose = () => {
+        setConnected(false);
+        wsRef.current = null;
+        if (!reconnectRef.current) {
+          reconnectRef.current = setInterval(() => connect(), 2000);
+        }
+      };
+
+      ws.onerror = () => {
+        ws.close();
+      };
+    }
+
+    connect();
+    return () => {
+      if (reconnectRef.current) {
+        clearInterval(reconnectRef.current);
+        reconnectRef.current = null;
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+  }, []);
+
+  // Send sleeping avatar when connected but no session
+  useEffect(() => {
+    if (connected && !sessionActive && window.JScreen) {
+      const timer = setTimeout(() => {
+        window.JScreen.enqueueCommands([
+          { type: 'SCENE', scene: 'home' },
+          { type: 'POS', tx: 4, ty: 3 },
+          { type: 'STATE', state: 'sleeping' },
+        ]);
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [connected, sessionActive]);
+
+  // Resize handler: integer-scale the canvas
+  useEffect(() => {
+    const container = containerRef.current;
+    const canvas = canvasRef.current;
+    if (!container || !canvas) return;
+
+    function updateScale() {
+      const rect = container.getBoundingClientRect();
+      const sx = Math.floor(rect.width / 128);
+      const sy = Math.floor(rect.height / 96);
+      const s = Math.max(1, Math.min(sx, sy));
+      setScale(s);
+      canvas.style.width = (128 * s) + 'px';
+      canvas.style.height = (96 * s) + 'px';
+      if (window.JScreen) window.JScreen._scale = s;
+    }
+
+    updateScale();
+    const observer = new ResizeObserver(updateScale);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div style={{
+      position: 'relative',
+      aspectRatio: '4/3',
+      maxWidth: '100%',
+      maxHeight: '100%',
+      width: '100%',
+      background: '#0a0a0a',
+      border: '4px solid #2a2a2a',
+      borderRadius: 12,
+      overflow: 'hidden',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    }} ref={containerRef}>
+      {/* CRT scanline overlay */}
+      <div style={{
+        position: 'absolute',
+        inset: 0,
+        background: 'linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,0.1) 50%), linear-gradient(90deg, rgba(255,0,0,0.06), rgba(0,255,0,0.02), rgba(0,0,255,0.06))',
+        backgroundSize: '100% 2px, 3px 100%',
+        opacity: 0.08,
+        pointerEvents: 'none',
+        zIndex: 10,
+        borderRadius: 12,
+      }} />
+
+      {/* Connection status dot */}
+      <div style={{
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        width: 8,
+        height: 8,
+        borderRadius: '50%',
+        backgroundColor: connected ? '#FFD600' : '#444',
+        boxShadow: connected ? '0 0 6px #FFD600' : 'none',
+        zIndex: 20,
+      }} />
+
+      <canvas
+        ref={canvasRef}
+        id="screen"
+        width={128}
+        height={96}
+        style={{
+          imageRendering: 'pixelated',
+          width: 128 * scale,
+          height: 96 * scale,
+        }}
+      />
+    </div>
+  );
+}
+
+/* ── Chat components ─────────────────────────────────────────────────────── */
+
+function ThinkingDots() {
+  return (
+    <div className="flex items-center gap-2" style={{ padding: '4px 0' }}>
+      <span style={{ color: '#FFD600', fontSize: '1.1rem', fontFamily: "'VT323', monospace" }}>
+        {'>'} PROCESSING
+      </span>
+      <span style={{
+        color: '#FFD600',
+        animation: 'blink 1s step-end infinite',
+        fontFamily: "'VT323', monospace",
+        fontSize: '1.1rem',
+      }}>_</span>
+    </div>
+  );
+}
+
+function ToolCallBlock({ name, input }) {
+  return (
+    <div style={{
+      margin: '4px 0',
+      padding: '4px 0',
+      borderLeft: '2px solid #AA8800',
+      paddingLeft: 8,
+    }}>
+      <div style={{
+        color: '#AA8800',
+        fontSize: '0.95rem',
+        fontFamily: "'VT323', monospace",
+        textTransform: 'uppercase',
+      }}>
+        [{name}]
+      </div>
+      <div style={{
+        color: '#666',
+        fontSize: '0.9rem',
+        fontFamily: "'VT323', monospace",
+      }}>
+        {formatToolInput(name, input)}
+      </div>
+    </div>
+  );
+}
+
+function MessageBubble({ message }) {
+  if (message.role === 'user') {
+    return (
+      <div style={{
+        padding: '4px 0',
+        fontSize: '1.1rem',
+        fontFamily: "'VT323', monospace",
+        color: '#fff',
+        opacity: 0.8,
+      }}>
+        <span style={{ color: '#666' }}>{'// '}</span>
+        {message.text}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: '4px 0' }}>
+      {message.thinking && <ThinkingDots />}
+      {message.blocks && message.blocks.map((block, i) => {
+        if (block.type === 'text') {
+          return (
+            <div key={i} style={{
+              fontSize: '1.1rem',
+              fontFamily: "'VT323', monospace",
+              color: '#FFD600',
+              textShadow: '0 0 2px #AA8800',
+              lineHeight: 1.4,
+            }}>
+              <span style={{ color: '#FFD600' }}>{'> '}</span>
+              <span dangerouslySetInnerHTML={{ __html: renderMarkdown(block.text) }} />
+            </div>
+          );
+        }
+        if (block.type === 'tool_use') {
+          return <ToolCallBlock key={i} name={block.name} input={block.input} />;
+        }
+        return null;
+      })}
+      {message.streaming && !message.thinking && (
+        <span style={{
+          color: '#FFD600',
+          animation: 'blink 1s step-end infinite',
+          fontFamily: "'VT323', monospace",
+          fontSize: '1.1rem',
+        }}>_</span>
+      )}
+    </div>
+  );
+}
+
+/* ── Setup Screen (tabbed: OAuth-first / legacy fallback) ────────────────── */
+
+function SetupScreen({ onComplete, getAuthHeaders }) {
+  const [tab, setTab] = useState('oauth'); // 'oauth' | 'legacy'
+
+  // OAuth state
+  const [oauthStep, setOauthStep] = useState(1); // 1 = click button, 2 = paste code
+  const [oauthState, setOauthState] = useState('');
+  const [oauthCode, setOauthCode] = useState('');
+  const [oauthStatus, setOauthStatus] = useState('idle');
+  const [oauthError, setOauthError] = useState('');
+
+  // Legacy state
+  const [token, setToken] = useState('');
+  const [legacyStatus, setLegacyStatus] = useState('idle');
+  const [legacyError, setLegacyError] = useState('');
+
+  // Poll health until process is alive
+  const pollUntilAlive = useCallback(async () => {
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      try {
+        const h = await getAuthHeaders();
+        const hr = await fetch('/api/health', { headers: h });
+        if (!hr.ok) continue;
+        const hd = await hr.json();
+        if (!hd.needsSetup) {
+          onComplete();
+          return true;
+        }
+      } catch {}
+    }
+    return false;
+  }, [getAuthHeaders, onComplete]);
+
+  // OAuth: start flow
+  const handleOAuthStart = useCallback(async () => {
+    setOauthStatus('starting');
+    setOauthError('');
+    try {
+      const headers = await getAuthHeaders();
+      if (!headers) { setOauthError('NOT AUTHENTICATED. RELOAD PAGE.'); setOauthStatus('error'); return; }
+      const res = await fetch('/api/oauth/start', { headers });
+      const data = await res.json();
+      if (!res.ok) {
+        setOauthError(data.error || 'FAILED TO START OAUTH');
+        setOauthStatus('error');
+        return;
+      }
+      setOauthState(data.state);
+      window.open(data.authUrl, '_blank', 'noopener');
+      setOauthStep(2);
+      setOauthStatus('idle');
+    } catch (err) {
+      setOauthError('CONNECTION ERROR: ' + err.message);
+      setOauthStatus('error');
+    }
+  }, [getAuthHeaders]);
+
+  // OAuth: exchange code
+  const handleOAuthExchange = useCallback(async () => {
+    const code = oauthCode.trim();
+    if (!code || !oauthState) return;
+    setOauthStatus('exchanging');
+    setOauthError('');
+    try {
+      const headers = await getAuthHeaders();
+      if (!headers) { setOauthError('NOT AUTHENTICATED. RELOAD PAGE.'); setOauthStatus('error'); return; }
+      const res = await fetch('/api/oauth/exchange', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ code, state: oauthState }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.error?.includes('expired state') || data.error?.includes('Invalid or expired')) {
+          setOauthStep(1);
+          setOauthCode('');
+          setOauthError('SESSION EXPIRED. PLEASE START OVER.');
+          setOauthStatus('idle');
+        } else {
+          setOauthError(data.error || 'TOKEN EXCHANGE FAILED');
+          setOauthStatus('error');
+        }
+        return;
+      }
+      setOauthStatus('polling');
+      const alive = await pollUntilAlive();
+      if (!alive) {
+        setOauthError('CLAUDE PROCESS DID NOT START. CHECK SERVER LOGS.');
+        setOauthStatus('error');
+      }
+    } catch (err) {
+      setOauthError('CONNECTION ERROR: ' + err.message);
+      setOauthStatus('error');
+    }
+  }, [oauthCode, oauthState, getAuthHeaders, pollUntilAlive]);
+
+  // Legacy: paste token
+  const handleLegacyConnect = useCallback(async () => {
+    const trimmed = token.replace(/\s+/g, '');
+    if (!trimmed) return;
+    if (!trimmed.startsWith('sk-ant-oat')) {
+      setLegacyError('TOKEN MUST START WITH sk-ant-oat (RUN claude setup-token)');
+      return;
+    }
+    setLegacyStatus('loading');
+    setLegacyError('');
+    try {
+      const headers = await getAuthHeaders();
+      if (!headers) { setLegacyError('NOT AUTHENTICATED. RELOAD PAGE.'); setLegacyStatus('error'); return; }
+      const res = await fetch('/api/setup', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ token: trimmed }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLegacyError(data.error || 'SETUP FAILED');
+        setLegacyStatus('error');
+        return;
+      }
+      setLegacyStatus('polling');
+      const alive = await pollUntilAlive();
+      if (!alive) {
+        setLegacyError('CLAUDE PROCESS DID NOT START. CHECK SERVER LOGS.');
+        setLegacyStatus('error');
+      }
+    } catch (err) {
+      setLegacyError('CONNECTION ERROR: ' + err.message);
+      setLegacyStatus('error');
+    }
+  }, [token, getAuthHeaders, pollUntilAlive]);
+
+  const oauthLoading = oauthStatus === 'starting' || oauthStatus === 'exchanging' || oauthStatus === 'polling';
+  const legacyLoading = legacyStatus === 'loading' || legacyStatus === 'polling';
+
+  const tabStyle = (active) => ({
+    flex: 1,
+    padding: '10px 0',
+    fontFamily: "'VT323', monospace",
+    fontSize: '1.1rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.1em',
+    cursor: 'pointer',
+    border: 'none',
+    borderBottom: active ? '2px solid #FFD600' : '2px solid transparent',
+    background: 'transparent',
+    color: active ? '#FFD600' : '#666',
+    transition: 'color 0.15s, border-color 0.15s',
+  });
+
+  return (
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 24,
+      backgroundColor: '#FFD600',
+    }}>
+      <div style={{ width: '100%', maxWidth: 480, display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div style={{ textAlign: 'center' }}>
+          <PixelFace talking={false} size={100} />
+          <h1 style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '2rem',
+            color: '#000',
+            marginTop: 16,
+            textTransform: 'uppercase',
+            letterSpacing: '0.15em',
+          }}>
+            CONNECT TO CLAUDE
+          </h1>
+          <p style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '1.1rem',
+            color: '#555',
+            marginTop: 4,
+          }}>
+            ONE-TIME SETUP TO LINK YOUR ACCOUNT
+          </p>
+        </div>
+
+        <div style={{
+          background: '#0F0F0F',
+          border: '4px solid #2a2a2a',
+          borderRadius: 12,
+          boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
+          display: 'flex',
+          flexDirection: 'column',
+        }}>
+          {/* Tabs */}
+          <div style={{ display: 'flex', borderBottom: '1px solid #2a2a2a' }}>
+            <button onClick={() => setTab('oauth')} style={tabStyle(tab === 'oauth')}>
+              Sign in with Anthropic
+            </button>
+            <button onClick={() => setTab('legacy')} style={tabStyle(tab === 'legacy')}>
+              Paste Token
+            </button>
+          </div>
+
+          <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {tab === 'oauth' ? (
+              /* ── OAuth Tab ── */
+              <>
+                {oauthStep === 1 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+                    <div style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1.1rem',
+                      color: '#FFD600',
+                      textAlign: 'center',
+                    }}>
+                      {'>'} STEP 1: AUTHORIZE WITH ANTHROPIC
+                    </div>
+                    <p style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1rem',
+                      color: '#AA8800',
+                      textAlign: 'center',
+                      lineHeight: 1.5,
+                    }}>
+                      OPENS ANTHROPIC IN A NEW TAB. AUTHORIZE, THEN COPY THE SHORT CODE BACK HERE.
+                    </p>
+                    <button
+                      onClick={handleOAuthStart}
+                      disabled={oauthLoading}
+                      style={{
+                        padding: '14px 32px',
+                        borderRadius: 8,
+                        background: oauthLoading ? '#555' : '#FFD600',
+                        color: '#000',
+                        border: 'none',
+                        fontFamily: "'VT323', monospace",
+                        fontSize: '1.3rem',
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.1em',
+                        cursor: oauthLoading ? 'default' : 'pointer',
+                        boxShadow: oauthLoading ? 'none' : '0 4px 0 #AA8800, 0 8px 10px rgba(0,0,0,0.15)',
+                        transition: 'all 0.1s',
+                      }}
+                    >
+                      {oauthStatus === 'starting' ? 'OPENING...' : 'SIGN IN WITH ANTHROPIC'}
+                    </button>
+                    {oauthError && (
+                      <p style={{
+                        fontFamily: "'VT323', monospace",
+                        fontSize: '1rem',
+                        color: '#ff4444',
+                      }}>{oauthError}</p>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    <div style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1.1rem',
+                      color: '#FFD600',
+                    }}>
+                      {'>'} STEP 2: PASTE AUTHORIZATION CODE
+                    </div>
+                    <p style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1rem',
+                      color: '#AA8800',
+                      lineHeight: 1.5,
+                    }}>
+                      COPY THE SHORT CODE FROM THE ANTHROPIC PAGE AND PASTE IT BELOW.
+                    </p>
+                    <input
+                      value={oauthCode}
+                      onChange={e => { setOauthCode(e.target.value); setOauthError(''); }}
+                      placeholder="PASTE CODE HERE..."
+                      disabled={oauthLoading}
+                      style={{
+                        width: '100%',
+                        backgroundColor: '#C8A800',
+                        boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2)',
+                        borderRadius: 6,
+                        color: '#000',
+                        fontWeight: 'bold',
+                        padding: '0 16px',
+                        height: 50,
+                        fontFamily: "'VT323', monospace",
+                        fontSize: '1.1rem',
+                        border: oauthError ? '2px solid #ff4444' : '2px solid transparent',
+                        outline: 'none',
+                        opacity: oauthLoading ? 0.5 : 1,
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                    {oauthError && (
+                      <p style={{
+                        fontFamily: "'VT323', monospace",
+                        fontSize: '1rem',
+                        color: '#ff4444',
+                      }}>{oauthError}</p>
+                    )}
+                    <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+                      <button
+                        onClick={() => { setOauthStep(1); setOauthCode(''); setOauthError(''); setOauthStatus('idle'); }}
+                        disabled={oauthLoading}
+                        style={{
+                          padding: '10px 20px',
+                          borderRadius: 6,
+                          background: 'transparent',
+                          color: '#AA8800',
+                          border: '1px solid #333',
+                          fontFamily: "'VT323', monospace",
+                          fontSize: '1rem',
+                          cursor: oauthLoading ? 'default' : 'pointer',
+                        }}
+                      >
+                        BACK
+                      </button>
+                      <button
+                        onClick={handleOAuthExchange}
+                        disabled={oauthLoading || !oauthCode.trim()}
+                        style={{
+                          padding: '10px 32px',
+                          borderRadius: 6,
+                          background: (oauthLoading || !oauthCode.trim()) ? '#555' : '#FFD600',
+                          color: '#000',
+                          border: 'none',
+                          fontFamily: "'VT323', monospace",
+                          fontSize: '1.1rem',
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                          cursor: (oauthLoading || !oauthCode.trim()) ? 'default' : 'pointer',
+                          boxShadow: (oauthLoading || !oauthCode.trim()) ? 'none' : '0 3px 0 #AA8800',
+                        }}
+                      >
+                        {oauthStatus === 'exchanging' ? 'CONNECTING...' : oauthStatus === 'polling' ? 'BOOTING...' : 'CONNECT'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              /* ── Legacy Tab ── */
+              <>
+                <div>
+                  <div style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1.1rem',
+                    color: '#FFD600',
+                    marginBottom: 8,
+                  }}>
+                    {'>'} STEP 1: GENERATE TOKEN
+                  </div>
+                  <div style={{
+                    background: '#1a1a00',
+                    border: '1px solid #333',
+                    borderRadius: 4,
+                    padding: '8px 12px',
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1.1rem',
+                  }}>
+                    <span style={{ color: '#666' }}>$</span>{' '}
+                    <span style={{ color: '#FFD600' }}>claude setup-token</span>
+                  </div>
+                </div>
+
+                <div style={{ height: 1, background: '#333', borderStyle: 'dashed' }} />
+
+                <div>
+                  <div style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1.1rem',
+                    color: '#FFD600',
+                    marginBottom: 8,
+                  }}>
+                    {'>'} STEP 2: PASTE TOKEN
+                  </div>
+                  <input
+                    value={token}
+                    onChange={e => { setToken(e.target.value); setLegacyError(''); }}
+                    placeholder="SK-ANT-OAT01-..."
+                    disabled={legacyLoading}
+                    style={{
+                      width: '100%',
+                      backgroundColor: '#C8A800',
+                      boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2)',
+                      borderRadius: 6,
+                      color: '#000',
+                      fontWeight: 'bold',
+                      padding: '0 16px',
+                      height: 50,
+                      fontFamily: "'VT323', monospace",
+                      textTransform: 'uppercase',
+                      fontSize: '1.1rem',
+                      border: legacyError ? '2px solid #ff4444' : '2px solid transparent',
+                      outline: 'none',
+                      opacity: legacyLoading ? 0.5 : 1,
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                  {legacyError && (
+                    <p style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1rem',
+                      color: '#ff4444',
+                      marginTop: 8,
+                    }}>{legacyError}</p>
+                  )}
+                </div>
+
+                <button
+                  onClick={handleLegacyConnect}
+                  disabled={legacyLoading || !token.trim()}
+                  style={{
+                    width: 80,
+                    height: 80,
+                    borderRadius: '50%',
+                    background: (legacyLoading || !token.trim()) ? '#555' : '#E5E5E5',
+                    color: '#333',
+                    border: '1px solid #999',
+                    boxShadow: (legacyLoading || !token.trim()) ? 'none' : '0 4px 0 #999, 0 8px 10px rgba(0,0,0,0.15)',
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '1rem',
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: 1,
+                    cursor: (legacyLoading || !token.trim()) ? 'default' : 'pointer',
+                    transition: 'all 0.1s',
+                    alignSelf: 'center',
+                  }}
+                >
+                  {legacyStatus === 'loading' ? '...' : legacyStatus === 'polling' ? 'BOOT' : 'GO'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Chat input (retro) ──────────────────────────────────────────────────── */
+
+function ChatInput({ onSend, disabled }) {
+  const [input, setInput] = useState('');
+  const inputRef = useRef(null);
+
+  const handleSend = useCallback(() => {
+    const text = input.trim();
+    if (!text || disabled) return;
+    onSend(text);
+    setInput('');
+  }, [input, disabled, onSend]);
+
+  useEffect(() => {
+    if (!disabled && inputRef.current) inputRef.current.focus();
+  }, [disabled]);
+
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
+      padding: '12px 0',
+    }}>
+      <input
+        ref={inputRef}
+        value={input}
+        onChange={e => setInput(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+        placeholder={disabled ? "PROCESSING..." : "INPUT BUFFER..."}
+        disabled={disabled}
+        style={{
+          flex: 1,
+          backgroundColor: '#C8A800',
+          boxShadow: 'inset 2px 2px 4px rgba(0,0,0,0.15), inset -1px -1px 2px rgba(255,255,255,0.2)',
+          borderRadius: 6,
+          color: '#000',
+          fontWeight: 'bold',
+          padding: '0 16px',
+          height: 50,
+          fontFamily: "'VT323', monospace",
+          textTransform: 'uppercase',
+          fontSize: '1.1rem',
+          border: 'none',
+          outline: 'none',
+          opacity: disabled ? 0.5 : 1,
+        }}
+      />
+      <button
+        onClick={handleSend}
+        disabled={disabled}
+        style={{
+          width: 60,
+          height: 60,
+          borderRadius: '50%',
+          background: disabled ? '#555' : '#E5E5E5',
+          color: '#333',
+          border: '1px solid #999',
+          boxShadow: disabled ? 'none' : '0 4px 0 #999, 0 8px 10px rgba(0,0,0,0.15)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontFamily: "'VT323', monospace",
+          fontSize: '0.9rem',
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          letterSpacing: 1,
+          cursor: disabled ? 'default' : 'pointer',
+          transition: 'all 0.1s',
+          flexShrink: 0,
+        }}
+      >
+        A
+      </button>
+    </div>
+  );
+}
+
+// === Window Exports (for App component) ===
+if (typeof window !== 'undefined') {
+  window.escapeHtml = escapeHtml;
+  window.truncate = truncate;
+  window.renderMarkdown = renderMarkdown;
+  window.formatToolInput = formatToolInput;
+  window.PixelFace = PixelFace;
+  window.StatusDots = StatusDots;
+  window.JulianScreenEmbed = JulianScreenEmbed;
+  window.ThinkingDots = ThinkingDots;
+  window.ToolCallBlock = ToolCallBlock;
+  window.MessageBubble = MessageBubble;
+  window.SetupScreen = SetupScreen;
+  window.ChatInput = ChatInput;
+}

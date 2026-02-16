@@ -56,6 +56,20 @@ Artifacts live in `memory/` locally and on the server at `/opt/julian/memory/*.h
 - `mobile-test.html` — Responsive design optimization for mobile devices. Touch-friendly interaction. Testing medium change on actual devices.
 - `synced.html` — [To be documented after reading]
 
+## Frontend File Structure
+
+The frontend is split into three files, each under 2,000 lines, loaded via in-browser Babel script tags. No build step.
+
+| File | Contents | ~Lines |
+|---|---|---|
+| `vibes.jsx` | Auto-generated vibes components: icons, style utilities, BrutalistCard, LabelContainer, AuthScreen, VibesSwitch, HiddenMenuWrapper, VibesButton, VibesPanel | ~1,878 |
+| `chat.jsx` | useAI hook, error components, markdown utils, PixelFace, StatusDots, JulianScreenEmbed, ThinkingDots, ToolCallBlock, MessageBubble, SetupScreen, ChatInput | ~1,133 |
+| `index.html` | HTML shell, CSS, imports, script tags, App component, AppWrapper, initApp | ~1,177 |
+
+**Load order:** `vibes.jsx` → `chat.jsx` → inline App script. Babel processes `<script type="text/babel">` tags in document order. Components export to `window.*` for cross-script access.
+
+**Vibes skill note:** If the vibes skill regenerates components, move output to `vibes.jsx` (not index.html).
+
 ## Architecture
 
 See [`docs/architecture.md`](docs/architecture.md) for full technical documentation: HTTP endpoints, SSE streaming protocol, Claude subprocess management, and auth flow.
@@ -99,7 +113,7 @@ Deploy templates live in `deploy/`:
 
 ```bash
 rsync -avz --exclude='.git' --exclude='node_modules' \
-  index.html sw.js package.json server memory bundles assets julianscreen deploy \
+  index.html vibes.jsx chat.jsx sw.js package.json server memory bundles assets julianscreen deploy \
   julian.exe.xyz:/opt/julian/
 
 scp deploy/CLAUDE.server.md julian.exe.xyz:/opt/julian/CLAUDE.md

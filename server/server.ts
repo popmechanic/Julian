@@ -242,8 +242,11 @@ let turnResolve: (() => void) | null = null;
 let processAlive = false;
 let lastActivity = 0;
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+let sessionId: string | null = null;
+const AGENT_NAME = process.env.AGENT_NAME || "Julian";
 
 function spawnClaude() {
+  sessionId = crypto.randomUUID();
   const authEnv = loadAuthEnv();
   console.log("[Claude] Spawning process...", Object.keys(authEnv).length ? `(with ${Object.keys(authEnv).join(", ")})` : "(no auth env)");
 
@@ -325,6 +328,7 @@ function spawnClaude() {
     console.log(`[Claude] Process exited (code ${code})`);
     processAlive = false;
     claudeProc = null;
+    sessionId = null;
     if (activeListener) {
       activeListener({ type: "error", message: `Claude process exited (code ${code})` });
     }
@@ -334,7 +338,7 @@ function spawnClaude() {
     }
   });
 
-  console.log(`[Claude] PID ${proc.pid}`);
+  console.log(`[Claude] PID ${proc.pid}, sessionId ${sessionId}`);
   return proc;
 }
 
@@ -443,6 +447,7 @@ function corsHeaders() {
     "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
     "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Authorization",
+    "Access-Control-Expose-Headers": "X-Session-Id",
   };
 }
 
@@ -479,6 +484,7 @@ const server = Bun.serve({
       return Response.json({
         status: "ok",
         sessionActive: processAlive && claudeProc !== null,
+        sessionId,
         needsSetup: await needsSetup(),
         authMethod: getAuthMethod(),
       }, { headers: corsHeaders() });
@@ -602,16 +608,38 @@ const server = Bun.serve({
       // Proactively refresh token before spawning Claude
       await refreshTokenIfNeeded();
 
+      // Parse previousTranscript from POST body (if any)
+      let previousTranscript: Array<{ role: string; speakerType: string; speakerName: string; text: string }> = [];
+      try {
+        const body = await req.json() as { previousTranscript?: any[] };
+        if (Array.isArray(body.previousTranscript)) {
+          previousTranscript = body.previousTranscript;
+        }
+      } catch {} // No body or invalid JSON — proceed without transcript
+
       spawnClaude();
       lastActivity = Date.now();
 
-      // Send wake-up message and stream Julian's response
-      const wakeUpMessage = "You are waking up in a new session. Read your CLAUDE.md and artifacts to remember who you are. Then greet Marcus briefly.";
+      // Build wakeup message with XML-tagged transcript
+      let wakeUpMessage = "You are waking up in a new session. Read your CLAUDE.md and artifacts to remember who you are.\n\n";
+
+      if (previousTranscript.length > 0) {
+        const ended = new Date().toISOString();
+        const lines = previousTranscript.map(msg =>
+          `[${msg.speakerType || "human"} — ${msg.speakerName || "Unknown"}]: ${msg.text}`
+        ).join("\n");
+        wakeUpMessage += `<previous-session category="transcript" session-id="rehydrated" message-count="${previousTranscript.length}" ended="${ended}">\n${lines}\n</previous-session>\n\n`;
+        wakeUpMessage += "Greet Marcus briefly, acknowledging continuity with your previous conversation.";
+      } else {
+        wakeUpMessage += "Then greet Marcus briefly.";
+      }
+
       return new Response(writeTurn(wakeUpMessage), {
         headers: {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           "Connection": "keep-alive",
+          "X-Session-Id": sessionId || "",
           ...corsHeaders(),
         },
       });
@@ -629,6 +657,7 @@ const server = Bun.serve({
       }
       claudeProc = null;
       processAlive = false;
+      sessionId = null;
       return Response.json({ ok: true }, { headers: corsHeaders() });
     }
 
