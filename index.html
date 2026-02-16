@@ -410,7 +410,6 @@ function App() {
   }, [persistedMessages, liveAssistant]);
 
   const displayMessages = React.useMemo(() => {
-    console.log('[chat] displayMessages recalc — persistedMessages:', persistedMessages?.length ?? 0, 'liveAssistant:', !!liveAssistant);
     const sorted = [...(persistedMessages || [])].sort((a, b) => {
       if (a._id < b._id) return -1;
       if (a._id > b._id) return 1;
@@ -433,7 +432,6 @@ function App() {
   const isMobile = useMobile();
 
   const sendMessage = useCallback(async (text) => {
-    console.log('[chat] sendMessage called, sessionActive:', sessionActive, 'streaming:', streaming);
     if (streaming) return;
     if (!sessionActive) return;
 
@@ -454,20 +452,17 @@ function App() {
       blocks: [],
       createdAt: new Date().toISOString(),
       serverSessionId,
-    }).then(() => console.log('[chat] user message saved to Fireproof'))
-      .catch(err => console.error('[chat] Fireproof put failed:', err));
+    }).catch(err => console.error('[chat] Fireproof put failed:', err));
 
     let finalBlocks = [];
 
     try {
       const headers = await getAuthHeaders();
-      console.log('[chat] sending to server...');
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers,
         body: JSON.stringify({ message: text }),
       });
-      console.log('[chat] server response status:', response.status);
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -537,8 +532,41 @@ function App() {
       blocks: finalBlocks,
       createdAt: new Date().toISOString(),
       serverSessionId,
-    }).then(() => console.log('[chat] assistant message saved to Fireproof'))
-      .catch(err => console.error('[chat] Fireproof put failed:', err));
+    }).catch(err => console.error('[chat] Fireproof put failed:', err));
+
+    // ── Auto-catalog: detect Write tool for memory/*.html and extract meta tags ──
+    const writeBlocks = finalBlocks.filter(b =>
+      b.type === 'tool_use' && b.name === 'Write' &&
+      b.input?.file_path?.includes('memory/') &&
+      b.input?.file_path?.endsWith('.html')
+    );
+    for (const wb of writeBlocks) {
+      const filename = wb.input.file_path.split('/').pop();
+      setTimeout(async () => {
+        try {
+          const resp = await fetch('/api/artifacts/' + encodeURIComponent(filename));
+          if (!resp.ok) return;
+          const html = await resp.text();
+          const dpParser = new DOMParser();
+          const parsed = dpParser.parseFromString(html, 'text/html');
+          const description = parsed.querySelector('meta[name="artifact-description"]')?.content;
+          const artCategory = parsed.querySelector('meta[name="artifact-category"]')?.content || 'knowledge';
+          const chapter = parsed.querySelector('meta[name="artifact-chapter"]')?.content || '';
+          if (description) {
+            const existing = await database.query("type", { key: "artifact" });
+            const entry = (existing.rows || []).find(r => (r.doc || r.value).filename === filename);
+            if (entry) {
+              const existingDoc = entry.doc || entry.value;
+              await database.put({ ...existingDoc, description, category: artCategory, chapter });
+            } else {
+              await database.put({ type: "artifact", category: artCategory, filename, description, chapter, createdAt: new Date().toISOString() });
+            }
+          }
+        } catch (e) {
+          console.warn('[catalog] Failed to auto-catalog:', filename, e);
+        }
+      }, 2500);
+    }
 
     setLiveAssistant(null);
     setStreaming(false);
@@ -612,16 +640,27 @@ function App() {
               };
             })
             .filter(msg => msg.text.trim());
-          console.log(`[rehydration] Found ${previousTranscript.length} messages from previous session ${previousSessionId}`);
         }
       } catch (err) {
         console.warn('[rehydration] Failed to query previous transcript:', err);
       }
 
+      // ── Catalog: query Fireproof for artifact metadata ──
+      let artifactCatalog = [];
+      try {
+        const catalogResult = await database.query("type", { key: "artifact" });
+        artifactCatalog = (catalogResult.rows || [])
+          .map(r => r.doc || r.value)
+          .filter(d => d && d.filename)
+          .sort((a, b) => (a.chapter || "").localeCompare(b.chapter || "") || (a.filename || "").localeCompare(b.filename || ""));
+      } catch (err) {
+        console.warn('[catalog] Failed to query artifact catalog:', err);
+      }
+
       const response = await fetch('/api/session/start', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ previousTranscript }),
+        body: JSON.stringify({ previousTranscript, artifactCatalog }),
       });
 
       if (!response.ok) {
@@ -1239,9 +1278,9 @@ export default App;
               <AuthGate />
             </SignedOut>
             <SignedIn>
-              <HiddenMenuWrapper menuContent={<VibesPanel />}>
+              <window.HiddenMenuWrapper menuContent={<window.VibesPanel />}>
                 <App />
-              </HiddenMenuWrapper>
+              </window.HiddenMenuWrapper>
             </SignedIn>
           </ClerkFireproofProvider>
         );
