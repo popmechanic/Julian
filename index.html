@@ -247,7 +247,8 @@
               MessageBubble, ToolCallBlock, ThinkingDots, StatusDots,
               PixelFace, ConfigError, LoadingError,
               AgentGrid, AgentFaceHeader, EggHatch,
-              hashNameToFaceVariant, AGENT_COLORS } = window;
+              hashNameToFaceVariant, AGENT_COLORS,
+              JobsPanel } = window;
 
 /* ── Artifact catalog ─────────────────────────────────────────────────────
  * Julian's memory catalog is a single XML document (catalog.xml) containing
@@ -386,6 +387,13 @@ function App() {
 
   // Query agent identities from Fireproof
   const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
+
+  // Query jobs from Fireproof
+  const { docs: jobDocs } = useLiveQuery("type", { key: "job" });
+  const openJobs = useMemo(() =>
+    (jobDocs || []).filter(j => j.status === 'open'),
+    [jobDocs]
+  );
 
   const agents = useMemo(() => {
     return (agentDocs || []).map(doc => ({
@@ -597,7 +605,12 @@ function App() {
       if (a._id > b._id) return 1;
       return 0;
     });
-    const msgs = sorted.map(doc => ({
+    // Filter by active agent — each agent has their own conversation thread
+    const filtered = sorted.filter(doc => {
+      if (activeAgent) return doc.agentName === activeAgent;
+      return !doc.agentName; // Julian's messages have no agentName
+    });
+    const msgs = filtered.map(doc => ({
       id: doc._id,
       role: doc.role,
       text: doc.text || '',
@@ -609,7 +622,7 @@ function App() {
       msgs.push(liveAssistant);
     }
     return msgs;
-  }, [persistedMessages, liveAssistant]);
+  }, [persistedMessages, liveAssistant, activeAgent]);
 
   const isMobile = useMobile();
 
@@ -647,6 +660,7 @@ function App() {
       role: "user",
       speakerType: "human",
       speakerName,
+      agentName: activeAgent || undefined,
       text,
       blocks: [],
       createdAt: new Date().toISOString(),
@@ -676,7 +690,8 @@ function App() {
       category: "transcript",
       role: "assistant",
       speakerType: "agent",
-      speakerName: "Julian",
+      speakerName: activeAgent || "Julian",
+      agentName: activeAgent || undefined,
       text: '',
       blocks: finalBlocks,
       createdAt: new Date().toISOString(),
@@ -723,6 +738,14 @@ function App() {
     // Refresh menu data in case Julian created new artifacts
     refreshMenuData();
   }, [streaming, sessionActive, serverSessionId, database, getAuthHeaders, refreshMenuData, activeAgent]);
+
+  const handleOfferWork = useCallback(() => {
+    const jobSummaries = openJobs
+      .map(j => `- ${j.name}: ${j.description}`)
+      .join('\n');
+    const msg = `[OFFER WORK TO AGENT: ${activeAgent}] Available jobs:\n${jobSummaries}`;
+    sendMessage(msg);
+  }, [activeAgent, openJobs, sendMessage]);
 
   const startSession = useCallback(async () => {
     if (wakingUp || sessionActive) return;
@@ -1126,7 +1149,31 @@ function App() {
                   }}>START SESSION</button>
                 </div>
               ) : (
-                <ChatInput onSend={sendMessage} disabled={streaming || !sessionActive || wakingUp} />
+                <>
+                  {activeAgent && openJobs.length > 0 && (
+                    <button
+                      onClick={handleOfferWork}
+                      disabled={streaming}
+                      style={{
+                        width: '100%',
+                        padding: '6px 0',
+                        marginTop: 6,
+                        fontFamily: "'VT323', monospace",
+                        fontSize: '0.9rem',
+                        color: streaming ? '#666' : '#FF88FF',
+                        background: streaming ? '#1a1a1a' : '#1a001a',
+                        border: `1px solid ${streaming ? '#333' : '#FF88FF'}`,
+                        borderRadius: 4,
+                        cursor: streaming ? 'default' : 'pointer',
+                        letterSpacing: '0.1em',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      OFFER WORK
+                    </button>
+                  )}
+                  <ChatInput onSend={sendMessage} disabled={streaming || !sessionActive || wakingUp} />
+                </>
               )}
             </div>
           </div>
@@ -1291,7 +1338,31 @@ function App() {
                   >START SESSION</button>
                 </div>
               ) : (
-                <ChatInput onSend={sendMessage} disabled={streaming || !sessionActive || wakingUp} />
+                <>
+                  {activeAgent && openJobs.length > 0 && (
+                    <button
+                      onClick={handleOfferWork}
+                      disabled={streaming}
+                      style={{
+                        width: '100%',
+                        padding: '8px 0',
+                        marginTop: 8,
+                        fontFamily: "'VT323', monospace",
+                        fontSize: '1rem',
+                        color: streaming ? '#666' : '#FF88FF',
+                        background: streaming ? '#1a1a1a' : '#1a001a',
+                        border: `1px solid ${streaming ? '#333' : '#FF88FF'}`,
+                        borderRadius: 4,
+                        cursor: streaming ? 'default' : 'pointer',
+                        letterSpacing: '0.1em',
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      OFFER WORK
+                    </button>
+                  )}
+                  <ChatInput onSend={sendMessage} disabled={streaming || !sessionActive || wakingUp} />
+                </>
               )}
             </div>
           </div>
@@ -1316,7 +1387,7 @@ function App() {
                 flexShrink: 0,
                 background: '#0F0F0F',
               }}>
-                {['BROWSER', 'FILES', 'SKILLS', 'AGENTS'].map(tab => {
+                {['BROWSER', 'FILES', 'SKILLS', 'AGENTS', 'JOBS'].map(tab => {
                   const tabKey = tab.toLowerCase();
                   const isActive = tabKey === menuTab;
                   return (
@@ -1355,8 +1426,8 @@ function App() {
                 onMenuTab={setMenuTab}
                 noBorder
               />
-              {/* Overlay for React-managed tabs (browser, agents) */}
-              {(menuTab === 'browser' || menuTab === 'agents') && !sessionActive && (
+              {/* Overlay for React-managed tabs (browser, agents, jobs) */}
+              {(menuTab === 'browser' || menuTab === 'agents' || menuTab === 'jobs') && !sessionActive && (
                 <div style={{
                   position: 'absolute',
                   inset: 0,
@@ -1382,6 +1453,13 @@ function App() {
                         fillContainer
                       />
                     </div>
+                  )}
+                  {menuTab === 'jobs' && (
+                    <JobsPanel
+                      database={database}
+                      useLiveQuery={useLiveQuery}
+                      getAuthHeaders={getAuthHeaders}
+                    />
                   )}
                   {menuTab === 'browser' && (
                     <ArtifactViewer

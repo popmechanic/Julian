@@ -1813,6 +1813,610 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, embedded }) {
   );
 }
 
+/* ── Job Components ─────────────────────────────────────────────────────── */
+
+function JobCard({ job, onClick }) {
+  const isFilled = job.status === 'filled';
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        padding: '12px 16px',
+        background: '#1a1a00',
+        border: '1px solid #333',
+        borderRadius: 4,
+        cursor: 'pointer',
+        marginBottom: 8,
+        transition: 'border-color 0.15s',
+      }}
+      onMouseEnter={e => e.currentTarget.style.borderColor = '#FFD600'}
+      onMouseLeave={e => e.currentTarget.style.borderColor = '#333'}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{
+          fontFamily: "'VT323', monospace",
+          fontSize: '1.1rem',
+          color: '#FFD600',
+          letterSpacing: '0.05em',
+          flex: 1,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}>
+          {job.name || 'UNTITLED JOB'}
+        </div>
+        <div style={{
+          fontFamily: "'VT323', monospace",
+          fontSize: '0.85rem',
+          padding: '2px 8px',
+          borderRadius: 2,
+          background: isFilled ? '#0a2a0a' : '#2a2a00',
+          color: isFilled ? '#22c55e' : '#FFD600',
+          border: `1px solid ${isFilled ? '#22c55e' : '#FFD600'}`,
+          whiteSpace: 'nowrap',
+        }}>
+          {isFilled ? `FILLED: ${job.assignedAgent || '?'}` : 'OPEN'}
+        </div>
+      </div>
+      {job.description && (
+        <div style={{
+          fontFamily: "'VT323', monospace",
+          fontSize: '0.9rem',
+          color: '#AA8800',
+          marginTop: 6,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}>
+          {job.description}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
+  const [name, setName] = useState(job?.name || '');
+  const [description, setDescription] = useState(job?.description || '');
+  const [contextDocs, setContextDocs] = useState(job?.contextDocs || '');
+  const [aboutYou, setAboutYou] = useState(job?.aboutYou || '');
+  const [helping, setHelping] = useState(false);
+  const [suggestions, setSuggestions] = useState(null);
+
+  const inputStyle = {
+    width: '100%',
+    backgroundColor: '#1a1a00',
+    border: '1px solid #333',
+    borderRadius: 4,
+    color: '#FFD600',
+    fontFamily: "'VT323', monospace",
+    fontSize: '1rem',
+    padding: '8px 12px',
+    outline: 'none',
+    resize: 'vertical',
+    boxSizing: 'border-box',
+  };
+
+  const labelStyle = {
+    fontFamily: "'VT323', monospace",
+    fontSize: '0.9rem',
+    color: '#AA8800',
+    letterSpacing: '0.1em',
+    textTransform: 'uppercase',
+    marginBottom: 4,
+    display: 'block',
+  };
+
+  const handleHelp = useCallback(async () => {
+    setHelping(true);
+    setSuggestions(null);
+    try {
+      const headers = await getAuthHeaders();
+      if (!headers) { setHelping(false); return; }
+      const formState = { name, description, contextDocs, aboutYou };
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ message: '[JOB HELP] ' + JSON.stringify(formState) }),
+      });
+      // Read SSE stream for the response
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let resultText = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.data?.type === 'assistant' && data.data?.message?.content) {
+              for (const block of data.data.message.content) {
+                if (block.type === 'text') resultText = block.text;
+              }
+            }
+            if (data.data?.type === 'result' && data.data?.result) {
+              resultText = data.data.result;
+            }
+          } catch {}
+        }
+      }
+      // Try to parse JSON from the response
+      const jsonMatch = resultText.match(/```json\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[1]);
+          setSuggestions(parsed);
+          if (parsed.name && !name) setName(parsed.name);
+          if (parsed.description && !description) setDescription(parsed.description);
+          if (parsed.contextDocs && !contextDocs) setContextDocs(parsed.contextDocs);
+          if (parsed.aboutYou && !aboutYou) setAboutYou(parsed.aboutYou);
+        } catch {}
+      }
+    } catch (err) {
+      console.error('[JobForm] Help request failed:', err);
+    }
+    setHelping(false);
+  }, [name, description, contextDocs, aboutYou, getAuthHeaders]);
+
+  const handleSave = useCallback(async () => {
+    const jobDoc = {
+      type: 'job',
+      name: name.trim() || 'Untitled Job',
+      description,
+      contextDocs,
+      aboutYou,
+      status: job?.status || 'open',
+      assignedAgent: job?.assignedAgent || null,
+      applicants: job?.applicants || [],
+      createdAt: job?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    if (job?._id) jobDoc._id = job._id;
+    if (job?._rev) jobDoc._rev = job._rev;
+    try {
+      await database.put(jobDoc);
+      if (onSave) onSave();
+    } catch (err) {
+      console.error('[JobForm] Save failed:', err);
+    }
+  }, [name, description, contextDocs, aboutYou, job, database, onSave]);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '16px 0' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{
+          fontFamily: "'VT323', monospace",
+          fontSize: '1.2rem',
+          color: '#FFD600',
+          letterSpacing: '0.1em',
+        }}>
+          {job?._id ? 'EDIT JOB' : 'NEW JOB'}
+        </div>
+        <button
+          onClick={handleHelp}
+          disabled={helping}
+          style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '0.9rem',
+            color: helping ? '#666' : '#FF88FF',
+            background: helping ? '#1a1a1a' : '#1a001a',
+            border: `1px solid ${helping ? '#333' : '#FF88FF'}`,
+            borderRadius: 4,
+            padding: '4px 12px',
+            cursor: helping ? 'default' : 'pointer',
+            letterSpacing: '0.05em',
+          }}
+        >
+          {helping ? 'THINKING...' : 'HELP ME'}
+        </button>
+      </div>
+
+      {suggestions && (
+        <div style={{
+          fontFamily: "'VT323', monospace",
+          fontSize: '0.85rem',
+          color: '#FF88FF',
+          fontStyle: 'italic',
+          opacity: 0.7,
+          padding: '8px 12px',
+          background: '#1a001a',
+          border: '1px solid #333',
+          borderRadius: 4,
+        }}>
+          JULIAN'S SUGGESTIONS APPLIED TO EMPTY FIELDS
+        </div>
+      )}
+
+      <div>
+        <label style={labelStyle}>Name</label>
+        <input
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="JOB TITLE..."
+          style={inputStyle}
+        />
+      </div>
+
+      <div>
+        <label style={labelStyle}>Description</label>
+        <textarea
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+          placeholder="WHAT THIS JOB INVOLVES..."
+          rows={3}
+          style={inputStyle}
+        />
+      </div>
+
+      <div>
+        <label style={labelStyle}>Context Documents</label>
+        <textarea
+          value={contextDocs}
+          onChange={e => setContextDocs(e.target.value)}
+          placeholder="TEXT TO ORIENT THE AGENT TOWARD THEIR DOMAIN..."
+          rows={4}
+          style={inputStyle}
+        />
+      </div>
+
+      <div>
+        <label style={labelStyle}>About You</label>
+        <textarea
+          value={aboutYou}
+          onChange={e => setAboutYou(e.target.value)}
+          placeholder="WHO YOU ARE AS A COLLABORATOR..."
+          rows={3}
+          style={inputStyle}
+        />
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 8 }}>
+        <button
+          onClick={onCancel}
+          style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '1rem',
+            color: '#AA8800',
+            background: 'transparent',
+            border: '1px solid #333',
+            borderRadius: 4,
+            padding: '8px 20px',
+            cursor: 'pointer',
+          }}
+        >
+          CANCEL
+        </button>
+        <button
+          onClick={handleSave}
+          style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '1rem',
+            color: '#000',
+            background: '#FFD600',
+            border: '2px solid #000',
+            borderRadius: 4,
+            padding: '8px 20px',
+            cursor: 'pointer',
+            boxShadow: '2px 2px 0 #000',
+          }}
+        >
+          SAVE
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
+  const [view, setView] = useState('list'); // 'list' | 'form' | 'detail'
+  const [selectedJob, setSelectedJob] = useState(null);
+  const { docs: jobDocs } = useLiveQuery("type", { key: "job" });
+  const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
+
+  const jobs = useMemo(() => {
+    return [...(jobDocs || [])].sort((a, b) => {
+      if (a.status === 'open' && b.status !== 'open') return -1;
+      if (a.status !== 'open' && b.status === 'open') return 1;
+      return (b.createdAt || '').localeCompare(a.createdAt || '');
+    });
+  }, [jobDocs]);
+
+  const handleJobClick = useCallback((job) => {
+    setSelectedJob(job);
+    setView('detail');
+  }, []);
+
+  const handleNewJob = useCallback(() => {
+    setSelectedJob(null);
+    setView('form');
+  }, []);
+
+  const handleEdit = useCallback(() => {
+    setView('form');
+  }, []);
+
+  const handleSave = useCallback(() => {
+    setSelectedJob(null);
+    setView('list');
+  }, []);
+
+  const handleCancel = useCallback(() => {
+    setSelectedJob(null);
+    setView('list');
+  }, []);
+
+  const handleDelete = useCallback(async (job) => {
+    if (!confirm('Delete this job?')) return;
+    try {
+      await database.del(job._id);
+      setSelectedJob(null);
+      setView('list');
+    } catch (err) {
+      console.error('[Jobs] Delete failed:', err);
+    }
+  }, [database]);
+
+  const handleAssign = useCallback(async (job, agentName) => {
+    try {
+      await database.put({
+        ...job,
+        assignedAgent: agentName,
+        status: 'filled',
+        updatedAt: new Date().toISOString(),
+      });
+      // Update agent identity with jobId
+      const agent = (agentDocs || []).find(a => a.name === agentName);
+      if (agent) {
+        await database.put({
+          ...agent,
+          jobId: job._id,
+        });
+      }
+      setSelectedJob({ ...job, assignedAgent: agentName, status: 'filled' });
+    } catch (err) {
+      console.error('[Jobs] Assign failed:', err);
+    }
+  }, [database, agentDocs]);
+
+  if (view === 'form') {
+    return (
+      <div style={{ padding: '0 24px', overflowY: 'auto', flex: 1 }}>
+        <JobForm
+          job={selectedJob}
+          database={database}
+          onCancel={handleCancel}
+          onSave={handleSave}
+          getAuthHeaders={getAuthHeaders}
+        />
+      </div>
+    );
+  }
+
+  if (view === 'detail' && selectedJob) {
+    const isFilled = selectedJob.status === 'filled';
+    const availableAgents = (agentDocs || []).filter(a => !a.dormant && !a.jobId);
+    return (
+      <div style={{ padding: '16px 24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <button
+            onClick={() => { setSelectedJob(null); setView('list'); }}
+            style={{
+              fontFamily: "'VT323', monospace",
+              fontSize: '0.9rem',
+              color: '#AA8800',
+              background: 'transparent',
+              border: '1px solid #333',
+              borderRadius: 4,
+              padding: '4px 12px',
+              cursor: 'pointer',
+            }}
+          >
+            BACK
+          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={handleEdit}
+              style={{
+                fontFamily: "'VT323', monospace",
+                fontSize: '0.9rem',
+                color: '#FFD600',
+                background: '#1a1a00',
+                border: '1px solid #FFD600',
+                borderRadius: 4,
+                padding: '4px 12px',
+                cursor: 'pointer',
+              }}
+            >
+              EDIT
+            </button>
+            <button
+              onClick={() => handleDelete(selectedJob)}
+              style={{
+                fontFamily: "'VT323', monospace",
+                fontSize: '0.9rem',
+                color: '#ff4444',
+                background: '#1a0000',
+                border: '1px solid #ff4444',
+                borderRadius: 4,
+                padding: '4px 12px',
+                cursor: 'pointer',
+              }}
+            >
+              DELETE
+            </button>
+          </div>
+        </div>
+
+        <div style={{
+          fontFamily: "'VT323', monospace",
+          fontSize: '1.4rem',
+          color: '#FFD600',
+          letterSpacing: '0.05em',
+        }}>
+          {selectedJob.name || 'UNTITLED JOB'}
+        </div>
+
+        <div style={{
+          fontFamily: "'VT323', monospace",
+          fontSize: '0.85rem',
+          padding: '4px 8px',
+          borderRadius: 2,
+          background: isFilled ? '#0a2a0a' : '#2a2a00',
+          color: isFilled ? '#22c55e' : '#FFD600',
+          border: `1px solid ${isFilled ? '#22c55e' : '#FFD600'}`,
+          alignSelf: 'flex-start',
+        }}>
+          {isFilled ? `FILLED: ${selectedJob.assignedAgent}` : 'OPEN'}
+        </div>
+
+        {selectedJob.description && (
+          <div>
+            <div style={{ fontFamily: "'VT323', monospace", fontSize: '0.85rem', color: '#AA8800', marginBottom: 4, letterSpacing: '0.1em' }}>DESCRIPTION</div>
+            <div style={{
+              fontFamily: "'VT323', monospace",
+              fontSize: '1rem',
+              color: '#ccc',
+              lineHeight: 1.5,
+              whiteSpace: 'pre-wrap',
+            }}>
+              {selectedJob.description}
+            </div>
+          </div>
+        )}
+
+        {selectedJob.contextDocs && (
+          <div>
+            <div style={{ fontFamily: "'VT323', monospace", fontSize: '0.85rem', color: '#AA8800', marginBottom: 4, letterSpacing: '0.1em' }}>CONTEXT DOCUMENTS</div>
+            <div style={{
+              fontFamily: "'VT323', monospace",
+              fontSize: '1rem',
+              color: '#ccc',
+              lineHeight: 1.5,
+              whiteSpace: 'pre-wrap',
+            }}>
+              {selectedJob.contextDocs}
+            </div>
+          </div>
+        )}
+
+        {selectedJob.aboutYou && (
+          <div>
+            <div style={{ fontFamily: "'VT323', monospace", fontSize: '0.85rem', color: '#AA8800', marginBottom: 4, letterSpacing: '0.1em' }}>ABOUT YOU</div>
+            <div style={{
+              fontFamily: "'VT323', monospace",
+              fontSize: '1rem',
+              color: '#ccc',
+              lineHeight: 1.5,
+              whiteSpace: 'pre-wrap',
+            }}>
+              {selectedJob.aboutYou}
+            </div>
+          </div>
+        )}
+
+        {/* Assignment section - only show for open jobs when agents exist */}
+        {!isFilled && availableAgents.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontFamily: "'VT323', monospace", fontSize: '0.85rem', color: '#AA8800', marginBottom: 8, letterSpacing: '0.1em' }}>ASSIGN TO AGENT</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {availableAgents.map(agent => (
+                <button
+                  key={agent._id}
+                  onClick={() => handleAssign(selectedJob, agent.name)}
+                  style={{
+                    fontFamily: "'VT323', monospace",
+                    fontSize: '0.9rem',
+                    color: agent.color || '#FFD600',
+                    background: '#0a0a0a',
+                    border: `1px solid ${agent.color || '#FFD600'}`,
+                    borderRadius: 4,
+                    padding: '6px 14px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {agent.name.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // List view (default)
+  return (
+    <div style={{ padding: '16px 24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{
+          fontFamily: "'VT323', monospace",
+          fontSize: '1.2rem',
+          color: '#FFD600',
+          letterSpacing: '0.1em',
+        }}>
+          JOBS
+        </div>
+        <button
+          onClick={handleNewJob}
+          style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '0.9rem',
+            color: '#000',
+            background: '#FFD600',
+            border: '2px solid #000',
+            borderRadius: 4,
+            padding: '4px 14px',
+            cursor: 'pointer',
+            boxShadow: '2px 2px 0 #000',
+            letterSpacing: '0.05em',
+          }}
+        >
+          NEW JOB
+        </button>
+      </div>
+
+      {jobs.length === 0 ? (
+        <div style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 12,
+        }}>
+          <div style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '1.1rem',
+            color: '#444',
+            textAlign: 'center',
+          }}>
+            NO JOBS DEFINED
+          </div>
+          <div style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '0.9rem',
+            color: '#333',
+            textAlign: 'center',
+          }}>
+            CREATE A JOB TO OFFER WORK TO AGENTS
+          </div>
+        </div>
+      ) : (
+        <div>
+          {jobs.map(job => (
+            <JobCard key={job._id} job={job} onClick={() => handleJobClick(job)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // === Window Exports (for App component) ===
 if (typeof window !== 'undefined') {
   window.escapeHtml = escapeHtml;
@@ -1836,4 +2440,7 @@ if (typeof window !== 'undefined') {
   window.EYE_VARIANTS = EYE_VARIANTS;
   window.MOUTH_VARIANTS = MOUTH_VARIANTS;
   window.GENDER_MARKERS = GENDER_MARKERS;
+  window.JobCard = JobCard;
+  window.JobForm = JobForm;
+  window.JobsPanel = JobsPanel;
 }
