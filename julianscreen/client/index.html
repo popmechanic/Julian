@@ -50,6 +50,7 @@
 <script src="text.js"></script>
 <script src="input.js"></script>
 <script src="effects.js"></script>
+<script src="menu.js"></script>
 
 <script>
 (function() {
@@ -77,8 +78,9 @@
 
   window.addEventListener('resize', resize);
 
-  // Init renderer
+  // Init renderer + input
   JScreen.init(canvas);
+  if (JScreen.initInput) JScreen.initInput(canvas);
   resize();
 
   // WebSocket connection

@@ -23,6 +23,8 @@ const VALID_TILES = [
 
 const VALID_LISTEN_TYPES = ['btn', 'tap', 'tick'];
 
+const VALID_MENU_TABS = ['browser', 'skills', 'agents'];
+
 function clamp(val, min, max) {
   return Math.max(min, Math.min(max, val));
 }
@@ -232,6 +234,26 @@ export function parseCommand(line) {
       return { type: 'CLRITM' };
     }
 
+    // MENU <tab> — Enter menu mode
+    case 'MENU': {
+      const tab = args[0]?.toLowerCase();
+      if (!tab || !VALID_MENU_TABS.includes(tab)) {
+        console.error(`[protocol] Invalid menu tab: ${args[0]}`);
+        return null;
+      }
+      return { type: 'MENU', tab };
+    }
+
+    // MENU_EXIT — Exit menu mode
+    case 'MENU_EXIT': {
+      return { type: 'MENU_EXIT' };
+    }
+
+    // MENU_NAV <path> — Navigate to path within current tab
+    case 'MENU_NAV': {
+      return { type: 'MENU_NAV', path: rest };
+    }
+
     default:
       console.error(`[protocol] Unknown command: ${prefix}`);
       return null;
@@ -240,5 +262,6 @@ export function parseCommand(line) {
 
 export {
   VALID_STATES, VALID_EVENTS, VALID_EFFECTS,
-  VALID_SCENES, VALID_TILES, VALID_LISTEN_TYPES
+  VALID_SCENES, VALID_TILES, VALID_LISTEN_TYPES,
+  VALID_MENU_TABS
 };

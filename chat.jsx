@@ -337,7 +337,7 @@ function StatusDots({ ok }) {
 
 /* ── JulianScreen Embed ──────────────────────────────────────────────────── */
 
-function JulianScreenEmbed({ sessionActive, compact }) {
+function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
@@ -355,7 +355,7 @@ function JulianScreenEmbed({ sessionActive, compact }) {
     }
   }, []);
 
-  // WebSocket connection
+  // WebSocket connection + feedback handler
   useEffect(() => {
     function connect() {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -370,6 +370,26 @@ function JulianScreenEmbed({ sessionActive, compact }) {
         if (reconnectRef.current) {
           clearInterval(reconnectRef.current);
           reconnectRef.current = null;
+        }
+        // Set up sendFeedback to intercept FILE_SELECT locally
+        if (window.JScreen) {
+          window.JScreen.sendFeedback = function(event) {
+            // Handle FILE_SELECT in the browser tab — open in artifact viewer
+            if (event.type === 'FILE_SELECT' && event.tab === 'browser') {
+              const filename = event.file;
+              const artifactUrl = '/api/artifacts/' + encodeURIComponent(filename);
+              // Dispatch custom event for parent App to handle
+              document.dispatchEvent(new CustomEvent('julian-file-select', {
+                detail: { filename, url: artifactUrl }
+              }));
+              // Also call callback prop if provided
+              if (onFileSelect) onFileSelect(filename, artifactUrl);
+            }
+            // Forward all events to server for agent consumption
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify(event));
+            }
+          };
         }
       };
 
@@ -410,19 +430,62 @@ function JulianScreenEmbed({ sessionActive, compact }) {
         wsRef.current = null;
       }
     };
-  }, []);
+  }, [onFileSelect]);
 
-  // Send sleeping avatar when connected but no session
+  // Fetch menu data when connected
   useEffect(() => {
-    if (connected && !sessionActive && window.JScreen) {
-      const timer = setTimeout(() => {
-        window.JScreen.enqueueCommands([
-          { type: 'SCENE', scene: 'home' },
-          { type: 'POS', tx: 4, ty: 3 },
-          { type: 'STATE', state: 'sleeping' },
+    if (!connected || !window.JScreen?.setMenuData) return;
+
+    async function fetchMenuData() {
+      try {
+        const token = await window.Clerk?.session?.getToken();
+        const headers = {};
+        if (token) {
+          headers['Authorization'] = 'Bearer ' + token;
+          headers['X-Authorization'] = 'Bearer ' + token;
+        }
+
+        // Fetch all three data sources in parallel
+        const [artifactsRes, skillsRes, agentsRes] = await Promise.allSettled([
+          fetch('/api/artifacts', { headers }),
+          fetch('/api/skills', { headers }),
+          fetch('/api/agents', { headers }),
         ]);
+
+        if (artifactsRes.status === 'fulfilled' && artifactsRes.value.ok) {
+          const data = await artifactsRes.value.json();
+          window.JScreen.setMenuData('browser', data);
+        }
+        if (skillsRes.status === 'fulfilled' && skillsRes.value.ok) {
+          const data = await skillsRes.value.json();
+          window.JScreen.setMenuData('skills', data);
+        }
+        if (agentsRes.status === 'fulfilled' && agentsRes.value.ok) {
+          const data = await agentsRes.value.json();
+          window.JScreen.setMenuData('agents', data);
+        }
+      } catch (err) {
+        console.warn('[JulianScreen] Failed to fetch menu data:', err);
+      }
+    }
+
+    fetchMenuData();
+  }, [connected]);
+
+  // Enter menu when connected but no session
+  useEffect(() => {
+    if (connected && !sessionActive && window.JScreen?.enterMenu) {
+      const timer = setTimeout(() => {
+        window.JScreen.enterMenu('browser');
       }, 200);
       return () => clearTimeout(timer);
+    }
+  }, [connected, sessionActive]);
+
+  // Exit menu when a session becomes active
+  useEffect(() => {
+    if (connected && sessionActive && window.JScreen?.exitMenu && window.JScreen.isMenuActive?.()) {
+      window.JScreen.exitMenu();
     }
   }, [connected, sessionActive]);
 
@@ -635,25 +698,29 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
     return false;
   }, [getAuthHeaders, onComplete]);
 
-  // OAuth: start flow
+  // OAuth: start flow — open window synchronously to avoid popup blocker
   const handleOAuthStart = useCallback(async () => {
     setOauthStatus('starting');
     setOauthError('');
+    const popup = window.open('about:blank', '_blank');
     try {
       const headers = await getAuthHeaders();
-      if (!headers) { setOauthError('NOT AUTHENTICATED. RELOAD PAGE.'); setOauthStatus('error'); return; }
+      if (!headers) { if (popup) popup.close(); setOauthError('NOT AUTHENTICATED. RELOAD PAGE.'); setOauthStatus('error'); return; }
       const res = await fetch('/api/oauth/start', { headers });
       const data = await res.json();
       if (!res.ok) {
+        if (popup) popup.close();
         setOauthError(data.error || 'FAILED TO START OAUTH');
         setOauthStatus('error');
         return;
       }
       setOauthState(data.state);
-      window.open(data.authUrl, '_blank', 'noopener');
+      if (popup) popup.location.href = data.authUrl;
+      else window.open(data.authUrl, '_blank', 'noopener');
       setOauthStep(2);
       setOauthStatus('idle');
     } catch (err) {
+      if (popup) popup.close();
       setOauthError('CONNECTION ERROR: ' + err.message);
       setOauthStatus('error');
     }

@@ -451,6 +451,72 @@ function corsHeaders() {
   };
 }
 
+// ── Skill directory walker ────────────────────────────────────────────────
+function walkSkillDirs(baseDir: string): Array<{name: string, type: string, children?: any[]}> {
+  const results: Array<{name: string, type: string, children?: any[]}> = [];
+  if (!existsSync(baseDir)) return results;
+
+  try {
+    // Look for plugin directories that contain skills/
+    const entries = readdirSync(baseDir);
+    for (const entry of entries) {
+      const pluginPath = join(baseDir, entry);
+      if (!statSync(pluginPath).isDirectory()) continue;
+
+      // Check for skills/ directly
+      const skillsDir = join(pluginPath, 'skills');
+      if (existsSync(skillsDir) && statSync(skillsDir).isDirectory()) {
+        const skills = readdirSync(skillsDir)
+          .filter(s => {
+            const sp = join(skillsDir, s);
+            return statSync(sp).isDirectory();
+          })
+          .map(s => ({ name: s, type: 'file' as const }));
+        if (skills.length > 0) {
+          results.push({ name: entry, type: 'folder', children: skills });
+        }
+      }
+
+      // Also check nested: cache/<marketplace>/<plugin>/<version>/skills/
+      // Walk one more level for cache directory structure
+      try {
+        const subEntries = readdirSync(pluginPath);
+        for (const sub of subEntries) {
+          const subPath = join(pluginPath, sub);
+          if (!statSync(subPath).isDirectory()) continue;
+          // Check for versioned plugin dirs
+          const versionDirs = readdirSync(subPath).filter(v => {
+            return statSync(join(subPath, v)).isDirectory();
+          });
+          for (const ver of versionDirs) {
+            const verSkillsDir = join(subPath, ver, 'skills');
+            if (existsSync(verSkillsDir) && statSync(verSkillsDir).isDirectory()) {
+              const skills = readdirSync(verSkillsDir)
+                .filter(s => statSync(join(verSkillsDir, s)).isDirectory())
+                .map(s => ({ name: s, type: 'file' as const }));
+              if (skills.length > 0) {
+                // Use the plugin name (sub) as the namespace, avoid duplicates
+                const existing = results.find(r => r.name === sub);
+                if (existing && existing.children) {
+                  for (const sk of skills) {
+                    if (!existing.children.find((c: any) => c.name === sk.name)) {
+                      existing.children.push(sk);
+                    }
+                  }
+                } else {
+                  results.push({ name: sub, type: 'folder', children: skills });
+                }
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+
+  return results;
+}
+
 // ── Kill Claude session after 15 minutes of inactivity ───────────────────
 setInterval(() => {
   if (processAlive && claudeProc && Date.now() - lastActivity > INACTIVITY_TIMEOUT_MS) {
@@ -721,6 +787,111 @@ const server = Bun.serve({
         });
       } catch {
         return new Response("Not Found", { status: 404, headers: corsHeaders() });
+      }
+    }
+
+    // ── Skills endpoint ──────────────────────────────────────────────────
+
+    if (url.pathname === "/api/skills" && req.method === "GET") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
+      try {
+        const allEntries: Array<{name: string, type: string, children?: any[]}> = [];
+
+        // 1. Project-level plugins: WORKING_DIR/.claude/plugins/
+        const projectPlugins = join(WORKING_DIR, ".claude", "plugins");
+        const projectResults = walkSkillDirs(projectPlugins);
+        for (const r of projectResults) {
+          const existing = allEntries.find(e => e.name === r.name);
+          if (existing && existing.children && r.children) {
+            for (const c of r.children) {
+              if (!existing.children.find((ec: any) => ec.name === c.name)) {
+                existing.children.push(c);
+              }
+            }
+          } else {
+            allEntries.push(r);
+          }
+        }
+
+        // 2. User-level plugins: ~/.claude/plugins/
+        const userPlugins = join(homedir(), ".claude", "plugins");
+        const userResults = walkSkillDirs(userPlugins);
+        for (const r of userResults) {
+          const existing = allEntries.find(e => e.name === r.name);
+          if (existing && existing.children && r.children) {
+            for (const c of r.children) {
+              if (!existing.children.find((ec: any) => ec.name === c.name)) {
+                existing.children.push(c);
+              }
+            }
+          } else {
+            allEntries.push(r);
+          }
+        }
+
+        // 3. Project-level julian-plugin/skills/ (direct skill directory)
+        const julianPluginSkills = join(WORKING_DIR, "julian-plugin", "skills");
+        if (existsSync(julianPluginSkills) && statSync(julianPluginSkills).isDirectory()) {
+          const skills = readdirSync(julianPluginSkills)
+            .filter(s => {
+              const sp = join(julianPluginSkills, s);
+              return statSync(sp).isDirectory();
+            })
+            .map(s => ({ name: s, type: 'file' as const }));
+          if (skills.length > 0) {
+            const existing = allEntries.find(e => e.name === "julian-plugin");
+            if (existing && existing.children) {
+              for (const sk of skills) {
+                if (!existing.children.find((c: any) => c.name === sk.name)) {
+                  existing.children.push(sk);
+                }
+              }
+            } else {
+              allEntries.push({ name: "julian-plugin", type: "folder", children: skills });
+            }
+          }
+        }
+
+        return Response.json({ entries: allEntries }, { headers: corsHeaders() });
+      } catch {
+        return Response.json({ entries: [] }, { headers: corsHeaders() });
+      }
+    }
+
+    // ── Agents endpoint ──────────────────────────────────────────────────
+
+    if (url.pathname === "/api/agents" && req.method === "GET") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
+      const teamsDir = join(homedir(), ".claude", "teams");
+      try {
+        if (!existsSync(teamsDir)) {
+          return Response.json({ teams: [] }, { headers: corsHeaders() });
+        }
+        const teamDirs = readdirSync(teamsDir).filter(d => {
+          return statSync(join(teamsDir, d)).isDirectory();
+        });
+        const teams = [];
+        for (const dir of teamDirs) {
+          const configPath = join(teamsDir, dir, "config.json");
+          if (!existsSync(configPath)) continue;
+          try {
+            const config = JSON.parse(readFileSync(configPath, "utf-8"));
+            teams.push({
+              name: config.name || dir,
+              members: (config.members || []).map((m: any) => ({
+                name: m.name || "unknown",
+                agentType: m.agent_type || m.agentType || "unknown",
+              })),
+            });
+          } catch {}
+        }
+        return Response.json({ teams }, { headers: corsHeaders() });
+      } catch {
+        return Response.json({ teams: [] }, { headers: corsHeaders() });
       }
     }
 
