@@ -490,6 +490,10 @@ function App() {
       return [...prev, { name: filename, modified: Date.now() }];
     });
     setActiveArtifact(filename);
+    // HTML files can be rendered — switch to browser tab automatically
+    if (filename.endsWith('.html')) {
+      setMenuTab('browser');
+    }
   }, []);
 
   useEffect(() => {
