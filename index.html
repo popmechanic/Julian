@@ -197,6 +197,36 @@
         width: 100%;
         height: 100vh;
       }
+
+      /* ── Screen panel design system ─────────────────────────────────────── */
+      @keyframes screen-icon-glow {
+        0%, 100% { filter: drop-shadow(0 0 2px rgba(250, 214, 1, 0.3)); }
+        50% { filter: drop-shadow(0 0 4px rgba(250, 214, 1, 0.5)); }
+      }
+      .screen-icon-glow {
+        animation: screen-icon-glow 3s ease-in-out infinite;
+      }
+      .screen-grid-item:hover .screen-icon-glow {
+        opacity: 1 !important;
+        transform: scale(1.05);
+      }
+      .screen-grid-item:hover .screen-grid-label {
+        color: white !important;
+      }
+      .screen-panel-scroll::-webkit-scrollbar {
+        width: 6px;
+        background: #0c0c0c;
+      }
+      .screen-panel-scroll::-webkit-scrollbar-track {
+        background-color: transparent;
+      }
+      .screen-panel-scroll::-webkit-scrollbar-thumb {
+        background-color: #333;
+        border-radius: 3px;
+      }
+      .screen-panel-scroll::-webkit-scrollbar-button {
+        display: none;
+      }
     </style>
   </head>
   <body>
@@ -249,7 +279,7 @@
               PixelFace, ConfigError, LoadingError,
               AgentGrid, AgentFaceHeader, EggHatch,
               hashNameToFaceVariant, AGENT_COLORS,
-              JobsPanel } = window;
+              JobsPanel, ScreenGridPanel } = window;
 
 /* ── Artifact catalog ─────────────────────────────────────────────────────
  * Julian's memory catalog is a single XML document (catalog.xml) containing
@@ -380,6 +410,8 @@ function App() {
   const [artifacts, setArtifacts] = useState([]);
   const [activeArtifact, setActiveArtifact] = useState('');
   const [menuDataLoaded, setMenuDataLoaded] = useState(false);
+  const [filesData, setFilesData] = useState(null);
+  const [skillsData, setSkillsData] = useState(null);
 
   // Agent Teams state
   const [activeAgent, setActiveAgent] = useState(null);
@@ -476,10 +508,12 @@ function App() {
         }
         const files = flattenTree(data.entries || [], '');
         setArtifacts(files);
+        setFilesData(data);
         if (window.JScreen?.setMenuData) window.JScreen.setMenuData('files', data);
       }
       if (skillsRes.status === 'fulfilled' && skillsRes.value.ok) {
         const data = await skillsRes.value.json();
+        setSkillsData(data);
         if (window.JScreen?.setMenuData) window.JScreen.setMenuData('skills', data);
       }
       if (agentsRes.status === 'fulfilled' && agentsRes.value.ok) {
@@ -552,13 +586,10 @@ function App() {
     })();
   }, [database, agentDocs, getAuthHeaders]);
 
-  // Enter menu once data is loaded and no session is active
-  // The menu system auto-defaults FILES tab to shared/ if it exists
+  // When session becomes active, switch to screen tab to show Julian's avatar
   useEffect(() => {
-    if (menuDataLoaded && !sessionActive && window.JScreen?.enterMenu && !window.JScreen.isMenuActive?.()) {
-      window.JScreen.enterMenu('files');
-    }
-  }, [menuDataLoaded, sessionActive]);
+    if (sessionActive) setMenuTab('screen');
+  }, [sessionActive]);
 
   // Handle file selection from JulianScreen menu (filename may include path like "shared/foo.html")
   const handleFileSelect = useCallback((filename) => {
@@ -1499,17 +1530,22 @@ function App() {
             display: 'flex',
             flexDirection: 'column',
             height: '100%',
-            border: '4px solid #2a2a2a',
+            border: '1px solid #333',
             borderRadius: 12,
-            background: '#0a0a0a',
+            background: '#0c0c0c',
             overflow: 'hidden',
           }}>
-            {/* Universal tab bar — always visible */}
+            {/* Universal tab bar — glass panel with pill buttons */}
             <div style={{
               display: 'flex',
-              borderBottom: '2px solid #FF88FF',
+              alignItems: 'center',
+              padding: '0 12px',
+              gap: 6,
+              height: 48,
               flexShrink: 0,
-              background: '#0F0F0F',
+              background: 'rgba(255,255,255,0.03)',
+              backdropFilter: 'blur(10px)',
+              borderBottom: '1px solid rgba(255,255,255,0.05)',
             }}>
               {['SCREEN', 'BROWSER', 'FILES', 'SKILLS', 'AGENTS', 'JOBS'].map(tab => {
                 const tabKey = tab.toLowerCase();
@@ -1520,24 +1556,30 @@ function App() {
                     onClick={() => {
                       if (isActive) return;
                       setMenuTab(tabKey);
-                      if (tabKey === 'files' || tabKey === 'skills') {
-                        if (window.JScreen?.exitMenu) window.JScreen.exitMenu();
-                        if (window.JScreen?.enterMenu) window.JScreen.enterMenu(tabKey);
-                      } else if (tabKey === 'screen') {
-                        if (window.JScreen?.exitMenu) window.JScreen.exitMenu();
-                      }
+                      // Always exit canvas menu when switching tabs
+                      if (window.JScreen?.exitMenu) window.JScreen.exitMenu();
                     }}
                     style={{
-                      flex: 1,
-                      padding: '10px 0',
-                      fontFamily: "'VT323', monospace",
-                      fontSize: '1.1rem',
-                      letterSpacing: '0.1em',
-                      border: 'none',
+                      height: 32,
+                      padding: '0 14px',
+                      borderRadius: 9999,
+                      border: isActive ? '1px solid #00afd1' : '1px solid rgba(255,255,255,0.1)',
+                      background: isActive ? '#00afd1' : 'transparent',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 10,
+                      fontFamily: "'Inter', sans-serif",
+                      fontWeight: isActive ? 700 : 500,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.15em',
+                      color: isActive ? '#000' : 'rgba(255,255,255,0.5)',
                       cursor: isActive ? 'default' : 'pointer',
-                      background: isActive ? '#FF88FF' : 'transparent',
-                      color: isActive ? '#0F0F0F' : '#FFD600',
+                      transition: 'all 500ms',
+                      boxShadow: isActive ? '0 0 15px rgba(0,175,209,0.3)' : 'none',
                     }}
+                    onMouseEnter={e => { if (!isActive) { e.target.style.background = '#00afd1'; e.target.style.color = '#000'; e.target.style.borderColor = '#00afd1'; }}}
+                    onMouseLeave={e => { if (!isActive) { e.target.style.background = 'transparent'; e.target.style.color = 'rgba(255,255,255,0.5)'; e.target.style.borderColor = 'rgba(255,255,255,0.1)'; }}}
                   >
                     {tab}
                   </button>
@@ -1552,16 +1594,30 @@ function App() {
                 onMenuTab={setMenuTab}
                 noBorder
               />
-              {/* Overlay for React-managed tabs (browser, agents, jobs) */}
-              {(menuTab === 'browser' || menuTab === 'agents' || menuTab === 'jobs') && (
+              {/* Overlay for React-managed tabs */}
+              {menuTab !== 'screen' && (
                 <div style={{
                   position: 'absolute',
                   inset: 0,
                   zIndex: 15,
-                  background: '#0F0F0F',
+                  background: '#0c0c0c',
                   display: 'flex',
                   flexDirection: 'column',
                 }}>
+                  {menuTab === 'files' && (
+                    <ScreenGridPanel
+                      data={filesData}
+                      rootLabel="memory"
+                      onFileSelect={handleFileSelect}
+                    />
+                  )}
+                  {menuTab === 'skills' && (
+                    <ScreenGridPanel
+                      data={skillsData}
+                      rootLabel="skills"
+                      onFileSelect={handleFileSelect}
+                    />
+                  )}
                   {menuTab === 'agents' && (
                     <div style={{
                       flex: 1,
@@ -1569,6 +1625,8 @@ function App() {
                       flexDirection: 'column',
                       padding: '16px 24px',
                       minHeight: 0,
+                      background: '#0c0c0c',
+                      backgroundImage: 'radial-gradient(circle at 50% 0%, #1f1f1f 0%, #0c0c0c 100%)',
                     }}>
                       <AgentGrid
                         agents={agents}

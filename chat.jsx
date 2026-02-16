@@ -648,7 +648,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
                 padding: 12,
                 border: `${(isSelected || isJulianSelected) ? 2 : 1}px solid ${borderColor}`,
                 borderRadius: 8,
-                background: '#0a0a0a',
+                background: '#1a1a1a',
                 opacity,
                 cursor: clickHandler ? 'pointer' : 'default',
                 minHeight: fillContainer ? 0 : 90,
@@ -658,10 +658,12 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
               {content}
               {nameLabel && (
                 <div style={{
-                  fontFamily: "'VT323', monospace",
-                  fontSize: '0.8rem',
+                  fontFamily: "'Inter', sans-serif",
+                  fontSize: 10,
+                  fontWeight: 600,
                   color: cell.type === 'julian' ? '#FFD600' : (cell.agent?.color || '#666'),
-                  letterSpacing: '0.08em',
+                  letterSpacing: '0.15em',
+                  textTransform: 'uppercase',
                   textAlign: 'center',
                   lineHeight: 1,
                   marginTop: 1,
@@ -681,15 +683,18 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
             width: '100%',
             marginTop: 12,
             padding: '10px 0',
-            fontFamily: "'VT323', monospace",
-            fontSize: '1.1rem',
-            color: summoning ? '#666' : '#FFD600',
-            background: summoning ? '#1a1a1a' : '#1a1a00',
-            border: `1px solid ${summoning ? '#333' : '#FFD600'}`,
-            borderRadius: 4,
+            fontFamily: "'Inter', sans-serif",
+            fontSize: 11,
+            fontWeight: 600,
+            color: summoning ? '#666' : '#000',
+            background: summoning ? '#1a1a1a' : '#00afd1',
+            border: `1px solid ${summoning ? '#333' : '#00afd1'}`,
+            borderRadius: 9999,
             cursor: summoning ? 'default' : 'pointer',
             letterSpacing: '0.15em',
             textTransform: 'uppercase',
+            transition: 'all 300ms',
+            boxShadow: summoning ? 'none' : '0 0 12px rgba(0,175,209,0.3)',
           }}
         >
           {summoning ? 'SUMMONING...' : 'SUMMON'}
@@ -1666,8 +1671,8 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, embedded }) {
     <div className="flex flex-col" style={{
       flex: 1,
       minHeight: 0,
-      background: embedded ? 'transparent' : '#0F0F0F',
-      border: embedded ? 'none' : '4px solid #2a2a2a',
+      background: embedded ? 'transparent' : '#0c0c0c',
+      border: embedded ? 'none' : '1px solid #333',
       borderRadius: embedded ? 0 : 12,
       overflow: 'hidden',
       boxShadow: embedded ? 'none' : 'inset 0 2px 10px rgba(0,0,0,0.5)',
@@ -1691,8 +1696,8 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, embedded }) {
         alignItems: 'center',
         gap: 12,
         padding: '10px 16px',
-        borderBottom: '1px dashed #333',
-        background: '#0F0F0F',
+        borderBottom: '1px solid rgba(255,255,255,0.05)',
+        background: 'rgba(255,255,255,0.03)',
         minHeight: 50,
         position: 'relative',
         zIndex: 10,
@@ -1740,8 +1745,8 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, embedded }) {
               left: 0,
               right: 0,
               marginTop: 4,
-              background: '#0F0F0F',
-              border: '2px solid #333',
+              background: '#0c0c0c',
+              border: '1px solid #333',
               borderRadius: 4,
               zIndex: 50,
               maxHeight: 300,
@@ -1868,6 +1873,161 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, embedded }) {
   );
 }
 
+/* ── Screen Panel Components ────────────────────────────────────────────── */
+// React overlays for Files/Skills tabs — replaces canvas-based menu.js rendering
+// Navigation logic ported from menu.js: path state, folder drill-down, breadcrumb back
+
+function ScreenFolderIcon() {
+  return (
+    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" className="screen-icon-glow" style={{ transition: 'all 500ms', opacity: 0.8 }}>
+      <path d="M2 5H10L12 7H22V19H2V5Z" stroke="#FAD601" strokeWidth="1" fill="none" />
+      <path d="M2 7H22" stroke="#FAD601" strokeWidth="1" />
+      <rect x="5" y="10" width="4" height="3" fill="#333" />
+    </svg>
+  );
+}
+
+function ScreenFileIcon() {
+  return (
+    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" className="screen-icon-glow" style={{ transition: 'all 500ms', opacity: 0.8 }}>
+      <path d="M5 2H15L20 7V22H5V2Z" fill="#262626" stroke="#FAD601" strokeWidth="1" />
+      <path d="M15 2V7H20" fill="#1a1a1a" stroke="#FAD601" strokeWidth="1" />
+      <rect x="8" y="10" width="8" height="1" fill="#666" />
+      <rect x="8" y="14" width="8" height="1" fill="#666" />
+      <rect x="8" y="18" width="5" height="1" fill="#666" />
+    </svg>
+  );
+}
+
+function ScreenGridPanel({ data, rootLabel = 'memory', onFileSelect }) {
+  const [path, setPath] = useState([]);
+
+  const items = useMemo(() => {
+    if (!data || !data.entries) return [];
+    let entries = data.entries;
+    for (const segment of path) {
+      const found = entries.find(e => e.name === segment && e.type === 'folder');
+      if (found && found.children) {
+        entries = found.children;
+      } else {
+        return [];
+      }
+    }
+    return [...entries].sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [data, path]);
+
+  const handleItemClick = useCallback((item) => {
+    if (item.type === 'folder') {
+      setPath(prev => [...prev, item.name]);
+    } else if (onFileSelect) {
+      const fullPath = [...path, item.name].join('/');
+      onFileSelect(fullPath);
+    }
+  }, [path, onFileSelect]);
+
+  const handleBack = useCallback(() => {
+    if (path.length > 0) setPath(prev => prev.slice(0, -1));
+  }, [path]);
+
+  const truncLabel = (name) => {
+    let label = name.replace(/\.html$/, '').replace(/\.md$/, '');
+    return label.length > 16 ? label.substring(0, 16) : label;
+  };
+
+  const breadcrumb = path.length === 0
+    ? `${rootLabel} \u2014`
+    : `\u2039 ${path[path.length - 1]}/`;
+
+  return (
+    <div style={{
+      flex: 1,
+      display: 'flex',
+      flexDirection: 'column',
+      background: '#0c0c0c',
+      backgroundImage: 'radial-gradient(circle at 50% 0%, #1f1f1f 0%, #0c0c0c 100%)',
+      overflow: 'hidden',
+      fontFamily: "'Inter', sans-serif",
+      color: '#e5e5e5',
+    }}>
+      <div
+        onClick={handleBack}
+        style={{
+          padding: '20px 32px 0',
+          fontSize: 11,
+          letterSpacing: '0.25em',
+          color: 'rgba(255,255,255,0.3)',
+          fontWeight: 300,
+          textTransform: 'uppercase',
+          userSelect: 'text',
+          cursor: path.length > 0 ? 'pointer' : 'default',
+          zIndex: 10,
+        }}
+      >
+        {breadcrumb}
+      </div>
+
+      <div className="screen-panel-scroll" style={{
+        flex: 1,
+        overflowY: 'auto',
+        padding: '32px 32px 48px',
+      }}>
+        {items.length === 0 ? (
+          <div style={{
+            textAlign: 'center',
+            color: '#666',
+            fontSize: 14,
+            fontWeight: 300,
+            paddingTop: 100,
+            letterSpacing: '0.15em',
+            textTransform: 'uppercase',
+          }}>
+            {rootLabel === 'memory' ? 'No files found' : rootLabel === 'skills' ? 'No skills found' : 'Empty'}
+          </div>
+        ) : (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            rowGap: 80,
+            columnGap: 32,
+            maxWidth: '64rem',
+            margin: '0 auto',
+          }}>
+            {items.map((item) => (
+              <div
+                key={item.name}
+                className="screen-grid-item"
+                onClick={() => handleItemClick(item)}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: 24,
+                  cursor: 'pointer',
+                }}
+              >
+                {item.type === 'folder' ? <ScreenFolderIcon /> : <ScreenFileIcon />}
+                <span className="screen-grid-label" style={{
+                  fontSize: 12,
+                  fontWeight: 500,
+                  letterSpacing: '0.2em',
+                  textTransform: 'uppercase',
+                  color: 'rgba(255,255,255,0.4)',
+                  transition: 'color 300ms',
+                }}>
+                  {truncLabel(item.name)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── Job Components ─────────────────────────────────────────────────────── */
 
 function JobCard({ job, onClick }) {
@@ -1876,52 +2036,57 @@ function JobCard({ job, onClick }) {
     <div
       onClick={onClick}
       style={{
-        padding: '12px 16px',
-        background: '#1a1a00',
+        padding: '14px 18px',
+        background: 'rgba(255,255,255,0.03)',
         border: '1px solid #333',
-        borderRadius: 4,
+        borderRadius: 8,
         cursor: 'pointer',
         marginBottom: 8,
-        transition: 'border-color 0.15s',
+        transition: 'all 300ms',
       }}
-      onMouseEnter={e => e.currentTarget.style.borderColor = '#FFD600'}
-      onMouseLeave={e => e.currentTarget.style.borderColor = '#333'}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = '#00afd1'; e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = '#333'; e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <div style={{
-          fontFamily: "'VT323', monospace",
-          fontSize: '1.1rem',
-          color: '#FFD600',
+          fontFamily: "'Inter', sans-serif",
+          fontSize: 14,
+          fontWeight: 500,
+          color: '#e5e5e5',
           letterSpacing: '0.05em',
           flex: 1,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
         }}>
-          {job.name || 'UNTITLED JOB'}
+          {job.name || 'Untitled Job'}
         </div>
         <div style={{
-          fontFamily: "'VT323', monospace",
-          fontSize: '0.85rem',
-          padding: '2px 8px',
-          borderRadius: 2,
-          background: isFilled ? '#0a2a0a' : '#2a2a00',
-          color: isFilled ? '#22c55e' : '#FFD600',
-          border: `1px solid ${isFilled ? '#22c55e' : '#FFD600'}`,
+          fontFamily: "'Inter', sans-serif",
+          fontSize: 10,
+          fontWeight: 600,
+          padding: '3px 10px',
+          borderRadius: 9999,
+          background: isFilled ? 'rgba(34,197,94,0.15)' : 'rgba(0,175,209,0.15)',
+          color: isFilled ? '#22c55e' : '#00afd1',
+          border: `1px solid ${isFilled ? 'rgba(34,197,94,0.3)' : 'rgba(0,175,209,0.3)'}`,
           whiteSpace: 'nowrap',
+          textTransform: 'uppercase',
+          letterSpacing: '0.1em',
         }}>
-          {isFilled ? `FILLED: ${job.assignedAgent || '?'}` : 'OPEN'}
+          {isFilled ? `Filled: ${job.assignedAgent || '?'}` : 'Open'}
         </div>
       </div>
       {job.description && (
         <div style={{
-          fontFamily: "'VT323', monospace",
-          fontSize: '0.9rem',
-          color: '#AA8800',
+          fontFamily: "'Inter', sans-serif",
+          fontSize: 12,
+          color: '#666',
           marginTop: 6,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
+          fontWeight: 300,
         }}>
           {job.description}
         </div>
@@ -1942,25 +2107,28 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
 
   const inputStyle = {
     width: '100%',
-    backgroundColor: '#1a1a00',
+    backgroundColor: 'rgba(255,255,255,0.03)',
     border: '1px solid #333',
-    borderRadius: 4,
-    color: '#FFD600',
-    fontFamily: "'VT323', monospace",
-    fontSize: '1rem',
-    padding: '8px 12px',
+    borderRadius: 8,
+    color: '#e5e5e5',
+    fontFamily: "'Inter', sans-serif",
+    fontSize: 13,
+    fontWeight: 300,
+    padding: '10px 14px',
     outline: 'none',
     resize: 'vertical',
     boxSizing: 'border-box',
+    transition: 'border-color 300ms',
   };
 
   const labelStyle = {
-    fontFamily: "'VT323', monospace",
-    fontSize: '0.9rem',
-    color: '#AA8800',
-    letterSpacing: '0.1em',
+    fontFamily: "'Inter', sans-serif",
+    fontSize: 10,
+    fontWeight: 600,
+    color: '#666',
+    letterSpacing: '0.2em',
     textTransform: 'uppercase',
-    marginBottom: 4,
+    marginBottom: 6,
     display: 'block',
   };
 
@@ -2055,26 +2223,30 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '16px 0' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{
-          fontFamily: "'VT323', monospace",
-          fontSize: '1.2rem',
-          color: '#FFD600',
-          letterSpacing: '0.1em',
+          fontFamily: "'Inter', sans-serif",
+          fontSize: 16,
+          fontWeight: 600,
+          color: '#e5e5e5',
+          letterSpacing: '0.02em',
         }}>
-          {job?._id ? 'EDIT JOB' : 'NEW JOB'}
+          {job?._id ? 'Edit Job' : 'New Job'}
         </div>
         <button
           onClick={handleHelp}
           disabled={helping}
           style={{
-            fontFamily: "'VT323', monospace",
-            fontSize: '0.9rem',
-            color: helping ? '#666' : '#FF88FF',
-            background: helping ? '#1a1a1a' : '#1a001a',
-            border: `1px solid ${helping ? '#333' : '#FF88FF'}`,
-            borderRadius: 4,
-            padding: '4px 12px',
+            fontFamily: "'Inter', sans-serif",
+            fontSize: 10,
+            fontWeight: 600,
+            color: helping ? '#666' : '#00afd1',
+            background: helping ? '#1a1a1a' : 'rgba(0,175,209,0.1)',
+            border: `1px solid ${helping ? '#333' : 'rgba(0,175,209,0.3)'}`,
+            borderRadius: 9999,
+            padding: '6px 16px',
             cursor: helping ? 'default' : 'pointer',
-            letterSpacing: '0.05em',
+            letterSpacing: '0.15em',
+            textTransform: 'uppercase',
+            transition: 'all 300ms',
           }}
         >
           {helping ? 'THINKING...' : 'HELP ME'}
@@ -2083,17 +2255,17 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
 
       {suggestions && (
         <div style={{
-          fontFamily: "'VT323', monospace",
-          fontSize: '0.85rem',
-          color: '#FF88FF',
-          fontStyle: 'italic',
-          opacity: 0.7,
-          padding: '8px 12px',
-          background: '#1a001a',
-          border: '1px solid #333',
-          borderRadius: 4,
+          fontFamily: "'Inter', sans-serif",
+          fontSize: 12,
+          fontWeight: 300,
+          color: '#00afd1',
+          opacity: 0.8,
+          padding: '10px 14px',
+          background: 'rgba(0,175,209,0.05)',
+          border: '1px solid rgba(0,175,209,0.15)',
+          borderRadius: 8,
         }}>
-          JULIAN'S SUGGESTIONS APPLIED TO EMPTY FIELDS
+          Julian's suggestions applied to empty fields
         </div>
       )}
 
@@ -2166,14 +2338,18 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
         <button
           onClick={onCancel}
           style={{
-            fontFamily: "'VT323', monospace",
-            fontSize: '1rem',
-            color: '#AA8800',
+            fontFamily: "'Inter', sans-serif",
+            fontSize: 10,
+            fontWeight: 500,
+            color: 'rgba(255,255,255,0.5)',
             background: 'transparent',
-            border: '1px solid #333',
-            borderRadius: 4,
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: 9999,
             padding: '8px 20px',
             cursor: 'pointer',
+            letterSpacing: '0.15em',
+            textTransform: 'uppercase',
+            transition: 'all 300ms',
           }}
         >
           CANCEL
@@ -2181,15 +2357,19 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
         <button
           onClick={handleSave}
           style={{
-            fontFamily: "'VT323', monospace",
-            fontSize: '1rem',
+            fontFamily: "'Inter', sans-serif",
+            fontSize: 10,
+            fontWeight: 700,
             color: '#000',
-            background: '#FFD600',
-            border: '2px solid #000',
-            borderRadius: 4,
+            background: '#00afd1',
+            border: '1px solid #00afd1',
+            borderRadius: 9999,
             padding: '8px 20px',
             cursor: 'pointer',
-            boxShadow: '2px 2px 0 #000',
+            letterSpacing: '0.15em',
+            textTransform: 'uppercase',
+            boxShadow: '0 0 12px rgba(0,175,209,0.3)',
+            transition: 'all 300ms',
           }}
         >
           SAVE
@@ -2277,7 +2457,11 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
 
   if (view === 'form') {
     return (
-      <div style={{ padding: '0 24px', overflowY: 'auto', flex: 1 }}>
+      <div className="screen-panel-scroll" style={{
+        padding: '0 24px', overflowY: 'auto', flex: 1,
+        background: '#0c0c0c',
+        backgroundImage: 'radial-gradient(circle at 50% 0%, #1f1f1f 0%, #0c0c0c 100%)',
+      }}>
         <JobForm
           job={selectedJob}
           database={database}
@@ -2293,19 +2477,28 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
     const isFilled = selectedJob.status === 'filled';
     const availableAgents = (agentDocs || []).filter(a => !a.dormant && !a.jobId);
     return (
-      <div style={{ padding: '16px 24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="screen-panel-scroll" style={{
+        padding: '16px 24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 16,
+        background: '#0c0c0c',
+        backgroundImage: 'radial-gradient(circle at 50% 0%, #1f1f1f 0%, #0c0c0c 100%)',
+        fontFamily: "'Inter', sans-serif",
+      }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <button
             onClick={() => { setSelectedJob(null); setView('list'); }}
             style={{
-              fontFamily: "'VT323', monospace",
-              fontSize: '0.9rem',
-              color: '#AA8800',
+              fontFamily: "'Inter', sans-serif",
+              fontSize: 10,
+              fontWeight: 500,
+              color: 'rgba(255,255,255,0.5)',
               background: 'transparent',
-              border: '1px solid #333',
-              borderRadius: 4,
-              padding: '4px 12px',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: 9999,
+              padding: '6px 16px',
               cursor: 'pointer',
+              letterSpacing: '0.15em',
+              textTransform: 'uppercase',
+              transition: 'all 300ms',
             }}
           >
             BACK
@@ -2314,14 +2507,17 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
             <button
               onClick={handleEdit}
               style={{
-                fontFamily: "'VT323', monospace",
-                fontSize: '0.9rem',
-                color: '#FFD600',
-                background: '#1a1a00',
-                border: '1px solid #FFD600',
-                borderRadius: 4,
-                padding: '4px 12px',
+                fontFamily: "'Inter', sans-serif",
+                fontSize: 10,
+                fontWeight: 500,
+                color: '#00afd1',
+                background: 'rgba(0,175,209,0.1)',
+                border: '1px solid rgba(0,175,209,0.3)',
+                borderRadius: 9999,
+                padding: '6px 16px',
                 cursor: 'pointer',
+                letterSpacing: '0.15em',
+                textTransform: 'uppercase',
               }}
             >
               EDIT
@@ -2329,14 +2525,17 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
             <button
               onClick={() => handleDelete(selectedJob)}
               style={{
-                fontFamily: "'VT323', monospace",
-                fontSize: '0.9rem',
+                fontFamily: "'Inter', sans-serif",
+                fontSize: 10,
+                fontWeight: 500,
                 color: '#ff4444',
-                background: '#1a0000',
-                border: '1px solid #ff4444',
-                borderRadius: 4,
-                padding: '4px 12px',
+                background: 'rgba(255,68,68,0.1)',
+                border: '1px solid rgba(255,68,68,0.3)',
+                borderRadius: 9999,
+                padding: '6px 16px',
                 cursor: 'pointer',
+                letterSpacing: '0.15em',
+                textTransform: 'uppercase',
               }}
             >
               DELETE
@@ -2345,35 +2544,40 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
         </div>
 
         <div style={{
-          fontFamily: "'VT323', monospace",
-          fontSize: '1.4rem',
-          color: '#FFD600',
-          letterSpacing: '0.05em',
+          fontFamily: "'Inter', sans-serif",
+          fontSize: 18,
+          fontWeight: 600,
+          color: '#e5e5e5',
+          letterSpacing: '0.02em',
         }}>
-          {selectedJob.name || 'UNTITLED JOB'}
+          {selectedJob.name || 'Untitled Job'}
         </div>
 
         <div style={{
-          fontFamily: "'VT323', monospace",
-          fontSize: '0.85rem',
-          padding: '4px 8px',
-          borderRadius: 2,
-          background: isFilled ? '#0a2a0a' : '#2a2a00',
-          color: isFilled ? '#22c55e' : '#FFD600',
-          border: `1px solid ${isFilled ? '#22c55e' : '#FFD600'}`,
+          fontFamily: "'Inter', sans-serif",
+          fontSize: 10,
+          fontWeight: 600,
+          padding: '4px 12px',
+          borderRadius: 9999,
+          background: isFilled ? 'rgba(34,197,94,0.15)' : 'rgba(0,175,209,0.15)',
+          color: isFilled ? '#22c55e' : '#00afd1',
+          border: `1px solid ${isFilled ? 'rgba(34,197,94,0.3)' : 'rgba(0,175,209,0.3)'}`,
           alignSelf: 'flex-start',
+          letterSpacing: '0.1em',
+          textTransform: 'uppercase',
         }}>
-          {isFilled ? `FILLED: ${selectedJob.assignedAgent}` : 'OPEN'}
+          {isFilled ? `Filled: ${selectedJob.assignedAgent}` : 'Open'}
         </div>
 
         {selectedJob.description && (
           <div>
-            <div style={{ fontFamily: "'VT323', monospace", fontSize: '0.85rem', color: '#AA8800', marginBottom: 4, letterSpacing: '0.1em' }}>DESCRIPTION</div>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 10, fontWeight: 600, color: '#666', marginBottom: 6, letterSpacing: '0.2em', textTransform: 'uppercase' }}>Description</div>
             <div style={{
-              fontFamily: "'VT323', monospace",
-              fontSize: '1rem',
+              fontFamily: "'Inter', sans-serif",
+              fontSize: 13,
+              fontWeight: 300,
               color: '#ccc',
-              lineHeight: 1.5,
+              lineHeight: 1.6,
               whiteSpace: 'pre-wrap',
             }}>
               {selectedJob.description}
@@ -2383,12 +2587,13 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
 
         {selectedJob.contextDocs && (
           <div>
-            <div style={{ fontFamily: "'VT323', monospace", fontSize: '0.85rem', color: '#AA8800', marginBottom: 4, letterSpacing: '0.1em' }}>CONTEXT DOCUMENTS</div>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 10, fontWeight: 600, color: '#666', marginBottom: 6, letterSpacing: '0.2em', textTransform: 'uppercase' }}>Context Documents</div>
             <div style={{
-              fontFamily: "'VT323', monospace",
-              fontSize: '1rem',
+              fontFamily: "'Inter', sans-serif",
+              fontSize: 13,
+              fontWeight: 300,
               color: '#ccc',
-              lineHeight: 1.5,
+              lineHeight: 1.6,
               whiteSpace: 'pre-wrap',
             }}>
               {selectedJob.contextDocs}
@@ -2398,12 +2603,13 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
 
         {selectedJob.skills && (
           <div>
-            <div style={{ fontFamily: "'VT323', monospace", fontSize: '0.85rem', color: '#AA8800', marginBottom: 4, letterSpacing: '0.1em' }}>SKILLS</div>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 10, fontWeight: 600, color: '#666', marginBottom: 6, letterSpacing: '0.2em', textTransform: 'uppercase' }}>Skills</div>
             <div style={{
-              fontFamily: "'VT323', monospace",
-              fontSize: '1rem',
+              fontFamily: "'Inter', sans-serif",
+              fontSize: 13,
+              fontWeight: 300,
               color: '#ccc',
-              lineHeight: 1.5,
+              lineHeight: 1.6,
               whiteSpace: 'pre-wrap',
             }}>
               {selectedJob.skills}
@@ -2413,12 +2619,13 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
 
         {selectedJob.files && (
           <div>
-            <div style={{ fontFamily: "'VT323', monospace", fontSize: '0.85rem', color: '#AA8800', marginBottom: 4, letterSpacing: '0.1em' }}>REFERENCE FILES</div>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 10, fontWeight: 600, color: '#666', marginBottom: 6, letterSpacing: '0.2em', textTransform: 'uppercase' }}>Reference Files</div>
             <div style={{
-              fontFamily: "'VT323', monospace",
-              fontSize: '1rem',
+              fontFamily: "'Inter', sans-serif",
+              fontSize: 13,
+              fontWeight: 300,
               color: '#ccc',
-              lineHeight: 1.5,
+              lineHeight: 1.6,
               whiteSpace: 'pre-wrap',
             }}>
               {selectedJob.files}
@@ -2428,12 +2635,13 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
 
         {selectedJob.aboutYou && (
           <div>
-            <div style={{ fontFamily: "'VT323', monospace", fontSize: '0.85rem', color: '#AA8800', marginBottom: 4, letterSpacing: '0.1em' }}>ABOUT YOU</div>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 10, fontWeight: 600, color: '#666', marginBottom: 6, letterSpacing: '0.2em', textTransform: 'uppercase' }}>About You</div>
             <div style={{
-              fontFamily: "'VT323', monospace",
-              fontSize: '1rem',
+              fontFamily: "'Inter', sans-serif",
+              fontSize: 13,
+              fontWeight: 300,
               color: '#ccc',
-              lineHeight: 1.5,
+              lineHeight: 1.6,
               whiteSpace: 'pre-wrap',
             }}>
               {selectedJob.aboutYou}
@@ -2444,20 +2652,24 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
         {/* Assignment section - only show for open jobs when agents exist */}
         {!isFilled && availableAgents.length > 0 && (
           <div style={{ marginTop: 8 }}>
-            <div style={{ fontFamily: "'VT323', monospace", fontSize: '0.85rem', color: '#AA8800', marginBottom: 8, letterSpacing: '0.1em' }}>ASSIGN TO AGENT</div>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 10, fontWeight: 600, color: '#666', marginBottom: 8, letterSpacing: '0.2em', textTransform: 'uppercase' }}>Assign to Agent</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {availableAgents.map(agent => (
                 <button
                   key={agent._id}
                   onClick={() => handleAssign(selectedJob, agent.name)}
                   style={{
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '0.9rem',
-                    color: agent.color || '#FFD600',
-                    background: '#0a0a0a',
-                    border: `1px solid ${agent.color || '#FFD600'}`,
-                    borderRadius: 4,
-                    padding: '6px 14px',
+                    fontFamily: "'Inter', sans-serif",
+                    fontSize: 11,
+                    fontWeight: 500,
+                    color: agent.color || '#00afd1',
+                    background: 'rgba(255,255,255,0.03)',
+                    border: `1px solid ${agent.color || '#00afd1'}`,
+                    borderRadius: 9999,
+                    padding: '6px 16px',
+                    letterSpacing: '0.1em',
+                    textTransform: 'uppercase',
+                    transition: 'all 300ms',
                     cursor: 'pointer',
                   }}
                 >
@@ -2473,29 +2685,42 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
 
   // List view (default)
   return (
-    <div style={{ padding: '16px 24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column' }}>
+    <div className="screen-panel-scroll" style={{
+      padding: '16px 24px',
+      overflowY: 'auto',
+      flex: 1,
+      display: 'flex',
+      flexDirection: 'column',
+      background: '#0c0c0c',
+      backgroundImage: 'radial-gradient(circle at 50% 0%, #1f1f1f 0%, #0c0c0c 100%)',
+      fontFamily: "'Inter', sans-serif",
+    }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div style={{
-          fontFamily: "'VT323', monospace",
-          fontSize: '1.2rem',
-          color: '#FFD600',
-          letterSpacing: '0.1em',
+          fontSize: 11,
+          fontWeight: 300,
+          color: 'rgba(255,255,255,0.3)',
+          letterSpacing: '0.25em',
+          textTransform: 'uppercase',
         }}>
-          JOBS
+          jobs \u2014
         </div>
         <button
           onClick={handleNewJob}
           style={{
-            fontFamily: "'VT323', monospace",
-            fontSize: '0.9rem',
+            fontFamily: "'Inter', sans-serif",
+            fontSize: 10,
+            fontWeight: 700,
             color: '#000',
-            background: '#FFD600',
-            border: '2px solid #000',
-            borderRadius: 4,
-            padding: '4px 14px',
+            background: '#00afd1',
+            border: '1px solid #00afd1',
+            borderRadius: 9999,
+            padding: '6px 18px',
             cursor: 'pointer',
-            boxShadow: '2px 2px 0 #000',
-            letterSpacing: '0.05em',
+            letterSpacing: '0.15em',
+            textTransform: 'uppercase',
+            transition: 'all 300ms',
+            boxShadow: '0 0 12px rgba(0,175,209,0.3)',
           }}
         >
           NEW JOB
@@ -2512,20 +2737,22 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
           gap: 12,
         }}>
           <div style={{
-            fontFamily: "'VT323', monospace",
-            fontSize: '1.1rem',
+            fontSize: 14,
+            fontWeight: 300,
+            color: '#666',
+            textAlign: 'center',
+            letterSpacing: '0.15em',
+            textTransform: 'uppercase',
+          }}>
+            No jobs defined
+          </div>
+          <div style={{
+            fontSize: 12,
+            fontWeight: 300,
             color: '#444',
             textAlign: 'center',
           }}>
-            NO JOBS DEFINED
-          </div>
-          <div style={{
-            fontFamily: "'VT323', monospace",
-            fontSize: '0.9rem',
-            color: '#333',
-            textAlign: 'center',
-          }}>
-            CREATE A JOB TO OFFER WORK TO AGENTS
+            Create a job to offer work to agents
           </div>
         </div>
       ) : (
@@ -2566,4 +2793,5 @@ if (typeof window !== 'undefined') {
   window.JobCard = JobCard;
   window.JobForm = JobForm;
   window.JobsPanel = JobsPanel;
+  window.ScreenGridPanel = ScreenGridPanel;
 }
