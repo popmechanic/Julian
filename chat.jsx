@@ -562,11 +562,14 @@ const JULIAN_POSITION = 4;
 const AGENT_POSITIONS = [0, 1, 2, 3, 5, 6, 7, 8];
 
 function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, onWake, summoning = false, fillContainer = false }) {
+  // Filter out incomplete hatching ghosts (no name = never finished registering)
+  const validAgents = agents.filter(a => a.name);
+
   const cells = Array.from({ length: 9 }, (_, i) => {
     if (i === JULIAN_POSITION) {
       return { type: 'julian' };
     }
-    const agent = agents.find(a => a.gridPosition === i);
+    const agent = validAgents.find(a => a.gridPosition === i);
     if (agent) {
       if (agent.hatching) return { type: 'hatching', agent };
       if (agent.sleeping) return { type: 'sleeping', agent };
@@ -576,10 +579,9 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
   });
 
   const hasSleepingAgents = cells.some(c => c.type === 'sleeping');
-  const hasEmptySlots = cells.some(c => c.type === 'empty');
-  const showSummon = hasEmptySlots && agents.length === 0;
-  const showWake = hasSleepingAgents;
-  const allAwake = agents.length > 0 && !hasSleepingAgents;
+  const allAwake = validAgents.length > 0 && !hasSleepingAgents && cells.every(c => c.type !== 'hatching');
+  // Show WAKE whenever agents aren't all active — handles both first summon and re-wake
+  const showWake = !allAwake;
 
   return (
     <div style={{ padding: fillContainer ? 0 : '12px 8px', display: 'flex', flexDirection: 'column', flex: fillContainer ? 1 : undefined, height: fillContainer ? '100%' : undefined }}>
@@ -701,10 +703,9 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
           );
         })}
       </div>
-      {(showSummon || showWake) && !allAwake && (<div style={{ flexShrink: 0 }}>{
-        showWake ? (
+      {showWake && (<div style={{ flexShrink: 0 }}>
           <button
-            onClick={onWake}
+            onClick={validAgents.length > 0 ? onWake : onSummon}
             disabled={summoning}
             style={{
               width: '100%',
@@ -726,32 +727,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
           >
             {summoning ? 'WAKING...' : 'WAKE'}
           </button>
-        ) : (
-          <button
-            onClick={onSummon}
-            disabled={summoning}
-            style={{
-              width: '100%',
-              marginTop: 12,
-              padding: '10px 0',
-              fontFamily: "'Inter', sans-serif",
-              fontSize: 11,
-              fontWeight: 600,
-              color: summoning ? '#666' : '#000',
-              background: summoning ? '#1a1a1a' : '#00afd1',
-              border: `1px solid ${summoning ? '#333' : '#00afd1'}`,
-              borderRadius: 9999,
-              cursor: summoning ? 'default' : 'pointer',
-              letterSpacing: '0.15em',
-              textTransform: 'uppercase',
-              transition: 'background 300ms ease, color 300ms ease, border-color 300ms ease, box-shadow 300ms ease',
-              boxShadow: summoning ? 'none' : '0 0 12px rgba(0,175,209,0.3)',
-            }}
-          >
-            {summoning ? 'SUMMONING...' : 'SUMMON'}
-          </button>
-        )
-      }</div>)}
+      </div>)}
     </div>
   );
 }
