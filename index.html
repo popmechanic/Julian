@@ -76,6 +76,7 @@
           for (var i = 0; i < SOUNDS.length; i++) {
             var audio = new Audio(basePath + SOUNDS[i] + '.mp3');
             audio.preload = 'auto';
+            audio.volume = 0.4;
             this._sounds[SOUNDS[i]] = audio;
           }
         }
