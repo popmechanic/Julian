@@ -799,7 +799,15 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab, no
 
   // WebSocket connection + feedback handler
   useEffect(() => {
-    async function connect() {
+    let unmounted = false;
+
+    function connect() {
+      if (unmounted) return;
+      // Don't create a new WS if one is already open or connecting
+      if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       let wsUrl;
       if (location.hostname === 'localhost') {
@@ -811,6 +819,7 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab, no
       wsRef.current = ws;
 
       ws.onopen = () => {
+        if (unmounted) { ws.close(); return; }
         setConnected(true);
         reconnectDelayRef.current = 2000;
         if (reconnectRef.current) {
@@ -858,6 +867,7 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab, no
       ws.onclose = () => {
         setConnected(false);
         wsRef.current = null;
+        if (unmounted) return; // Don't reconnect after unmount
         if (!reconnectRef.current) {
           reconnectRef.current = setTimeout(() => {
             reconnectRef.current = null;
@@ -874,12 +884,13 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab, no
 
     connect();
     return () => {
+      unmounted = true;
       if (reconnectRef.current) {
         clearTimeout(reconnectRef.current);
         reconnectRef.current = null;
       }
       if (wsRef.current) {
-        if (wsRef.current.readyState === WebSocket.OPEN) {
+        if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
           wsRef.current.close();
         }
         wsRef.current = null;
