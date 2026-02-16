@@ -1,6 +1,6 @@
 # JulianScreen
 
-128x96 pixel display SDK for Claude Code agents. Send text commands, get animated pixel art.
+640x480 pixel display SDK for Claude Code agents. 20x15 tile grid (32px tiles). Send text commands, get animated pixel art.
 
 ## Quick Start
 

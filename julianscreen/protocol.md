@@ -2,13 +2,15 @@
 
 Text commands sent via `POST /cmd` (newline-delimited). Each line is one command.
 
+Canvas is 640x480 pixels. Tile grid is 20 columns x 15 rows (32px tiles).
+
 ## Avatar
 
 | Command | Description | Example |
 |---------|-------------|---------|
 | `S <state>` | Set avatar state | `S happy` |
 | `E <event>` | Trigger one-shot animation | `E wave` |
-| `P <tx> <ty>` | Move avatar to tile position | `P 4 3` |
+| `P <tx> <ty>` | Move avatar to tile position (0-19, 0-14) | `P 4 3` |
 
 **States:** idle, happy, sad, excited, confused, thinking, talking, working, sleeping, alert, busy, listening, reading
 
@@ -26,7 +28,9 @@ Text commands sent via `POST /cmd` (newline-delimited). Each line is one command
 | Command | Description | Example |
 |---------|-------------|---------|
 | `BG <scene>` | Set background scene | `BG home` |
-| `B <row> <t0> <t1> ...` | Set tile row | `B 0 sky sky sky sky sky sky sky sky` |
+| `B <row> <t0> <t1> ...` | Set tile row (20 columns) | `B 0 sky sky sky sky sky sky sky sky sky sky sky sky sky sky sky sky sky sky sky sky` |
+
+Row range: 0-14. Each row has 20 tile slots.
 
 **Scenes:** home, outside, night, rain, empty, terminal, space
 
@@ -51,13 +55,15 @@ Text commands sent via `POST /cmd` (newline-delimited). Each line is one command
 
 ## Drawing
 
+All drawing commands use pixel coordinates on the 640x480 canvas.
+
 | Command | Description | Example |
 |---------|-------------|---------|
 | `COL <index>` | Set draw color (palette index) | `COL 1` |
 | `RECT <x> <y> <w> <h>` | Fill rectangle | `RECT 10 10 20 15` |
-| `CIRC <x> <y> <r>` | Circle outline | `CIRC 64 48 20` |
-| `LINE <x1> <y1> <x2> <y2>` | Line | `LINE 0 0 127 95` |
-| `DOT <x> <y>` | Single pixel | `DOT 64 48` |
+| `CIRC <x> <y> <r>` | Circle outline | `CIRC 320 240 80` |
+| `LINE <x1> <y1> <x2> <y2>` | Line | `LINE 0 0 639 479` |
+| `DOT <x> <y>` | Single pixel | `DOT 320 240` |
 | `CLR` | Clear draw layer | `CLR` |
 
 **Palette:** 0=transparent, 1=yellow, 2=black, 3=white, 4=red, 5=green, 6=blue, 7=pink, 8=orange, 9=cyan, 10=purple, 11=gray, 12=dark gray, 13=light gray, 14=brown, 15=dark green

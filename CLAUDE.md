@@ -120,11 +120,11 @@ The frontend is split into three files, each under 2,000 lines, loaded via in-br
 See [`docs/architecture.md`](docs/architecture.md) for full technical documentation: HTTP endpoints, SSE streaming protocol, Claude subprocess management, and auth flow.
 
 - **server/server.ts** — Bun server (port 8000), serves static files and API, manages Claude subprocess
-- **JulianScreen** — 128x96 pixel display on port 3848. See `docs/julianscreen.md` for SDK reference.
+- **JulianScreen** — 640x480 pixel display on port 3848. See `docs/julianscreen.md` for SDK reference.
 
 ## JulianScreen (Pixel Display)
 
-A 128x96 pixel display you can drive via `curl -X POST localhost:3848/cmd -d 'S happy\nT Hello!'`. Runs standalone on port 3848. See [`docs/julianscreen.md`](docs/julianscreen.md) for the full SDK reference — command protocol, coordinate system, rendering pipeline, sprite data formats, and integration patterns. Start with `bun run julianscreen/server/index.js`.
+A 640x480 pixel display you can drive via `curl -X POST localhost:3848/cmd -d 'S happy\nT Hello!'`. Runs standalone on port 3848. See [`docs/julianscreen.md`](docs/julianscreen.md) for the full SDK reference — command protocol, coordinate system, rendering pipeline, sprite data formats, and integration patterns. Start with `bun run julianscreen/server/index.js`.
 
 ## Agent Message Routing
 

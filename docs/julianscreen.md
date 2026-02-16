@@ -1,6 +1,6 @@
 # JulianScreen — Pixel Display SDK
 
-JulianScreen is a 128x96 pixel display driven by Claude Code agents via text commands. An agent sends commands like `S happy` or `T Hello!` through HTTP POST, and a browser renders them as animated pixel art on a 4-layer composited canvas. The cost per display change is roughly 2-5 tokens — a single curl call with a few short lines.
+JulianScreen is a 640x480 pixel display driven by Claude Code agents via text commands. An agent sends commands like `S happy` or `T Hello!` through HTTP POST, and a browser renders them as animated pixel art on a 4-layer composited canvas. The cost per display change is roughly 2-5 tokens — a single curl call with a few short lines.
 
 The system is standalone. It runs on port 3848, separate from the Julian chat bridge on 3847. Any Claude Code agent can drive it. The browser client auto-connects via WebSocket and renders commands in real time.
 
@@ -45,32 +45,30 @@ This shows the thinking animation for 800ms, switches to talking with a speech b
 
 ## Coordinate System
 
-The screen is 128x96 pixels, divided into a 8x6 grid of 16x16 pixel tiles.
+The screen is 640x480 pixels, divided into a 20x15 grid of 32x32 pixel tiles.
 
 ```
-     col 0   col 1   col 2   col 3   col 4   col 5   col 6   col 7
-      0,0     16,0    32,0    48,0    64,0    80,0    96,0   112,0
-row 0 ┌───────┬───────┬───────┬───────┬───────┬───────┬───────┬───────┐
-      │ (0,0) │ (1,0) │ (2,0) │ (3,0) │ (4,0) │ (5,0) │ (6,0) │ (7,0) │  y=0-15
-row 1 ├───────┼───────┼───────┼───────┼───────┼───────┼───────┼───────┤
-      │ (0,1) │ (1,1) │ (2,1) │ (3,1) │ (4,1) │ (5,1) │ (6,1) │ (7,1) │  y=16-31
-row 2 ├───────┼───────┼───────┼───────┼───────┼───────┼───────┼───────┤
-      │ (0,2) │ (1,2) │ (2,2) │ (3,2) │ (4,2) │ (5,2) │ (6,2) │ (7,2) │  y=32-47
-row 3 ├───────┼───────┼───────┼───────┼───────┼───────┼───────┼───────┤
-      │ (0,3) │ (1,3) │ (2,3) │ (3,3) │ (4,3) │ (5,3) │ (6,3) │ (7,3) │  y=48-63
-row 4 ├───────┼───────┼───────┼───────┼───────┼───────┼───────┼───────┤
-      │ (0,4) │ (1,4) │ (2,4) │ (3,4) │ (4,4) │ (5,4) │ (6,4) │ (7,4) │  y=64-79
-row 5 ├───────┼───────┼───────┼───────┼───────┼───────┼───────┼───────┤
-      │ (0,5) │ (1,5) │ (2,5) │ (3,5) │ (4,5) │ (5,5) │ (6,5) │ (7,5) │  y=80-95
-      └───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┘
+     col 0   col 1   col 2  ...  col 9  col 10  ...  col 19
+      0,0     32,0    64,0       288,0   320,0       608,0
+row 0  ┌───────┬───────┬──── ... ───────┬───────┬── ... ──────┐
+       │ (0,0) │ (1,0) │         (9,0)  │(10,0) │      (19,0) │  y=0-31
+row 1  ├───────┼───────┼──── ... ───────┼───────┼── ... ──────┤
+       │ (0,1) │ (1,1) │         (9,1)  │(10,1) │      (19,1) │  y=32-63
+  ...  │       │       │                │       │              │
+row 7  ├───────┼───────┼──── ... ───────┼───────┼── ... ──────┤
+       │ (0,7) │ (1,7) │         (9,7)  │(10,7) │      (19,7) │  y=224-255
+  ...  │       │       │                │       │              │
+row 14 ├───────┼───────┼──── ... ───────┼───────┼── ... ──────┤
+       │(0,14) │(1,14) │        (9,14)  │(10,14)│     (19,14) │  y=448-479
+       └───────┴───────┴──── ... ───────┴───────┴── ... ──────┘
 ```
 
 **Two coordinate systems are used:**
 
-- **Tile coordinates** `(tx, ty)` — used by avatar position (`P`), items (`I`), buttons (`BTN`), tile rows (`B`), and scenes (`BG`). Range: tx 0-7, ty 0-5. Mapped to pixels as `(tx * 16, ty * 16)`.
-- **Pixel coordinates** `(x, y)` — used by drawing primitives (`RECT`, `CIRC`, `LINE`, `DOT`) and progress bars (`PROG`). Range: x 0-127, y 0-95.
+- **Tile coordinates** `(tx, ty)` — used by avatar position (`P`), items (`I`), buttons (`BTN`), tile rows (`B`), and scenes (`BG`). Range: tx 0-19, ty 0-14. Mapped to pixels as `(tx * 32, ty * 32)`.
+- **Pixel coordinates** `(x, y)` — used by drawing primitives (`RECT`, `CIRC`, `LINE`, `DOT`) and progress bars (`PROG`). Range: x 0-639, y 0-479.
 
-The avatar default position is tile (4, 3) — center of the screen.
+The avatar default position is tile (4, 3) — left-center area of the screen.
 
 ---
 
@@ -174,7 +172,7 @@ Example: `B 0 sky sky sky sky sky sky sky sky` fills the top row with sky.
 
 #### `I <sprite> <tx> <ty>` — Place Item
 
-Places a 16x16 item sprite at tile position (tx, ty). Items stack — placing multiple items at the same position layers them. Items render on the sprite layer (above background, below UI).
+Places a 32x32 item sprite at tile position (tx, ty). Items stack — placing multiple items at the same position layers them. Items render on the sprite layer (above background, below UI).
 
 Available items: `star`, `heart`, `lightning`, `music`, `gear`
 
@@ -350,7 +348,7 @@ Layer 1 (base): bgLayer     — tile background (only redrawn when dirty flag se
 Background:     #0F0F0F fill — always drawn first
 ```
 
-Each layer is a 128x96 offscreen `<canvas>`. The main canvas composites them bottom-to-top with `drawImage`. Transparent pixels (palette index 0) pass through to lower layers.
+Each layer is a 640x480 offscreen `<canvas>`. The main canvas composites them bottom-to-top with `drawImage`. Transparent pixels (palette index 0) pass through to lower layers.
 
 ### Animation Loop
 
@@ -367,7 +365,7 @@ The tick chain is built via function wrapping — each module captures the previ
 
 ### Display Scaling
 
-The 128x96 canvas is scaled to fill the browser viewport using integer scaling (no sub-pixel blur). The scale factor is `min(floor(viewportWidth/128), floor(viewportHeight/96))`. At a typical 1440x900 viewport, scale = 9 → display size 1152x864 pixels.
+The 640x480 canvas is scaled to fill the browser viewport using CSS scaling (the canvas element's style width/height are set to maintain aspect ratio within the container). The scale factor is computed as `min(containerWidth/640, containerHeight/480)`.
 
 `image-rendering: pixelated` ensures sharp pixel edges. Click coordinates are divided by the scale factor to convert back to canvas coordinates.
 
@@ -422,7 +420,7 @@ The `WAIT` command is handled directly by the command queue processor in `render
 
 ## Sprite Data Format
 
-All sprite data is stored as JSON files in `sprites/`. Each frame is a flat array of 256 values (16x16, row-major order). Each value is a palette index (0-15). Index 0 means transparent.
+All sprite data is stored as JSON files in `sprites/`. Each frame is a flat array of 1024 values (32x32, row-major order). Each value is a palette index (0-15). Index 0 means transparent.
 
 ### `sprites/avatar.json`
 
@@ -459,11 +457,11 @@ Flat object mapping item names to 256-value palette-indexed arrays:
 
 ```json
 {
-  "star": [256 values],
-  "heart": [256 values],
-  "lightning": [256 values],
-  "music": [256 values],
-  "gear": [256 values]
+  "star": [1024 values],
+  "heart": [1024 values],
+  "lightning": [1024 values],
+  "music": [1024 values],
+  "gear": [1024 values]
 }
 ```
 
@@ -681,7 +679,7 @@ JulianScreen is currently standalone on port 3848, separate from the Julian chat
 
 1. **Start alongside bridge**: Add to systemd or run `bun run julianscreen/server/index.js` alongside `julian-bridge`
 2. **Agent drives both**: A Julian session can POST to both `:3847/api/chat` (conversation) and `:3848/cmd` (display) — they're independent channels
-3. **Embed in main UI**: The JulianScreen canvas could be embedded in `index.html` as an iframe or by inlining the client code. The 128x96 canvas at the existing PixelFace location would replace the 32x32 face with a full expressive display.
-4. **Replace PixelFace**: The existing `PixelFace` component in `index.html:2285-2395` is a 32x32 canvas with basic eye/mouth animation. JulianScreen's 16x16 avatar (with 28 frames and 16 animation states) is a superset of that functionality at half the pixel resolution but vastly more expressiveness.
+3. **Embed in main UI**: The JulianScreen canvas is embedded in `index.html` via the `JulianScreenEmbed` component in `chat.jsx`. It connects via WebSocket and renders the 640x480 canvas scaled to fit the right panel.
+4. **PixelFace coexistence**: The `PixelFace` component in `chat.jsx` is a 32x32 canvas with basic eye/mouth animation used in the chat sidebar header and agent grid. JulianScreen's 32x32 avatar (with 28 frames and 16 animation states) provides richer expressiveness on the main display.
 
 The simplest integration path: start the JulianScreen server as a sibling process, have the Julian bridge subprocess send curl commands to `:3848/cmd` as part of its responses, and point an iframe in the main UI to `http://localhost:3848`.

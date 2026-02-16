@@ -887,10 +887,18 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab, no
     };
   }, []);
 
-  // Exit menu when a session becomes active
+  // Exit menu when a session becomes active; show default scene
   useEffect(() => {
     if (connected && sessionActive && window.JScreen?.exitMenu && window.JScreen.isMenuActive?.()) {
       window.JScreen.exitMenu();
+      // Initialize default scene so the screen isn't blank after menu exit
+      if (window.JScreen?.enqueueCommands) {
+        window.JScreen.enqueueCommands([
+          { type: 'SCENE', scene: 'home' },
+          { type: 'POS', tx: 4, ty: 3 },
+          { type: 'STATE', state: 'idle' },
+        ]);
+      }
     }
   }, [connected, sessionActive]);
 
