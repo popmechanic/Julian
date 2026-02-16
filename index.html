@@ -245,7 +245,9 @@
       // Pull chat.jsx window exports into module scope
       const { ArtifactViewer, JulianScreenEmbed, SetupScreen, ChatInput,
               MessageBubble, ToolCallBlock, ThinkingDots, StatusDots,
-              PixelFace, ConfigError, LoadingError } = window;
+              PixelFace, ConfigError, LoadingError,
+              AgentGrid, AgentFaceHeader, EggHatch,
+              hashNameToFaceVariant, AGENT_COLORS } = window;
 
 /* ── Artifact catalog ─────────────────────────────────────────────────────
  * Julian's memory catalog is a single XML document (catalog.xml) containing
@@ -376,6 +378,37 @@ function App() {
   const [artifacts, setArtifacts] = useState([]);
   const [activeArtifact, setActiveArtifact] = useState('');
   const [menuDataLoaded, setMenuDataLoaded] = useState(false);
+
+  // Agent Teams state
+  const [activeAgent, setActiveAgent] = useState(null);
+  const [summoning, setSummoning] = useState(false);
+
+  // Query agent identities from Fireproof
+  const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
+
+  const agents = useMemo(() => {
+    return (agentDocs || []).map(doc => ({
+      name: doc.name,
+      color: doc.color,
+      colorName: doc.colorName,
+      gender: doc.gender,
+      faceVariant: doc.faceVariant,
+      gridPosition: doc.gridPosition,
+      dormant: doc.dormant || false,
+      hatching: doc.hatching || false,
+      _id: doc._id,
+    }));
+  }, [agentDocs]);
+
+  const activeAgentObj = useMemo(() => {
+    if (!activeAgent) return null;
+    return agents.find(a => a.name === activeAgent) || null;
+  }, [activeAgent, agents]);
+
+  const handleSelectAgent = useCallback((agentName) => {
+    setActiveAgent(agentName);
+    setLiveAssistant(null);
+  }, []);
 
   // Register service worker
   useEffect(() => {
@@ -542,6 +575,23 @@ function App() {
 
   const isMobile = useMobile();
 
+  const handleSummon = useCallback(async () => {
+    if (summoning) return;
+    setSummoning(true);
+    try {
+      const headers = await getAuthHeaders();
+      if (!headers) return;
+      await fetch('/api/agents/summon', {
+        method: 'POST',
+        headers,
+      });
+    } catch (err) {
+      console.error('[Summon] Error:', err);
+    } finally {
+      setSummoning(false);
+    }
+  }, [summoning, getAuthHeaders]);
+
   const sendMessage = useCallback(async (text) => {
     if (streaming) return;
     if (!sessionActive) return;
@@ -572,7 +622,7 @@ function App() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, targetAgent: activeAgent || undefined }),
       });
 
       finalBlocks = await streamSSEResponse(response, setLiveAssistant);
@@ -634,7 +684,7 @@ function App() {
     setConnected(true);
     // Refresh menu data in case Julian created new artifacts
     refreshMenuData();
-  }, [streaming, sessionActive, serverSessionId, database, getAuthHeaders, refreshMenuData]);
+  }, [streaming, sessionActive, serverSessionId, database, getAuthHeaders, refreshMenuData, activeAgent]);
 
   const startSession = useCallback(async () => {
     if (wakingUp || sessionActive) return;
@@ -1065,7 +1115,7 @@ function App() {
             <div style={{
               background: '#0F0F0F',
               border: '4px solid #2a2a2a',
-              borderBottom: '1px dashed #333',
+              borderBottom: 'none',
               borderRadius: '12px 12px 0 0',
               padding: '12px 16px',
               boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.5)',
@@ -1086,55 +1136,79 @@ function App() {
                 <StatusDots ok={sessionActive} />
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16, width: '100%' }}>
-                <PixelFace talking={streaming} size={56} />
-                <div style={{ flex: 1 }}>
-                  <div style={{
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '1.4rem',
-                    color: '#FFD600',
-                    letterSpacing: '0.05em',
-                  }}>JULIAN</div>
-                  <div style={{
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '0.85rem',
-                    color: '#AA8800',
-                    opacity: 0.6,
-                  }}>
-                    {!sessionActive ? 'OFFLINE' : streaming ? 'PROCESSING...' : wakingUp ? 'WAKING UP...' : 'LISTENING'}
+              {activeAgentObj ? (
+                <AgentFaceHeader
+                  agent={activeAgentObj}
+                  talking={streaming}
+                  onBack={() => handleSelectAgent(null)}
+                />
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16, width: '100%' }}>
+                  <PixelFace talking={streaming} size={56} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '1.4rem',
+                      color: '#FFD600',
+                      letterSpacing: '0.05em',
+                    }}>JULIAN</div>
+                    <div style={{
+                      fontFamily: "'VT323', monospace",
+                      fontSize: '0.85rem',
+                      color: '#AA8800',
+                      opacity: 0.6,
+                    }}>
+                      {!sessionActive ? 'OFFLINE' : streaming ? 'PROCESSING...' : wakingUp ? 'WAKING UP...' : 'LISTENING'}
+                    </div>
                   </div>
-                </div>
-                <button
-                  onClick={startNewConversation}
-                  style={{
-                    fontFamily: "'VT323', monospace",
-                    fontSize: '0.85rem',
-                    color: '#AA8800',
-                    background: '#1a1a00',
-                    border: '1px solid #333',
-                    borderRadius: 4,
-                    padding: '4px 10px',
-                    cursor: 'pointer',
-                    textTransform: 'uppercase',
-                  }}
-                >NEW</button>
-                {sessionActive && (
                   <button
-                    onClick={endSession}
+                    onClick={startNewConversation}
                     style={{
                       fontFamily: "'VT323', monospace",
                       fontSize: '0.85rem',
-                      color: '#ff4444',
-                      background: '#1a0000',
+                      color: '#AA8800',
+                      background: '#1a1a00',
                       border: '1px solid #333',
                       borderRadius: 4,
                       padding: '4px 10px',
                       cursor: 'pointer',
                       textTransform: 'uppercase',
                     }}
-                  >END</button>
-                )}
-              </div>
+                  >NEW</button>
+                  {sessionActive && (
+                    <button
+                      onClick={endSession}
+                      style={{
+                        fontFamily: "'VT323', monospace",
+                        fontSize: '0.85rem',
+                        color: '#ff4444',
+                        background: '#1a0000',
+                        border: '1px solid #333',
+                        borderRadius: 4,
+                        padding: '4px 10px',
+                        cursor: 'pointer',
+                        textTransform: 'uppercase',
+                      }}
+                    >END</button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Agent Grid */}
+            <div style={{
+              background: '#0F0F0F',
+              borderLeft: '4px solid #2a2a2a',
+              borderRight: '4px solid #2a2a2a',
+              borderBottom: '1px dashed #333',
+            }}>
+              <AgentGrid
+                agents={agents}
+                activeAgent={activeAgent}
+                onSelectAgent={handleSelectAgent}
+                onSummon={handleSummon}
+                summoning={summoning}
+              />
             </div>
 
             {/* Chat messages area */}

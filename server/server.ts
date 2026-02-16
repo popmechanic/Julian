@@ -766,11 +766,34 @@ const server = Bun.serve({
         return Response.json({ error: "No active session. Click 'Start Session' first." }, { status: 409, headers: corsHeaders() });
       }
       lastActivity = Date.now();
-      const { message } = (await req.json()) as { message?: string };
+      const { message, targetAgent } = (await req.json()) as { message?: string; targetAgent?: string };
       if (!message || typeof message !== 'string' || message.length > MAX_MESSAGE_SIZE) {
         return Response.json({ error: `Message required (max ${MAX_MESSAGE_SIZE / 1000}KB)` }, { status: 400, headers: corsHeaders() });
       }
-      return new Response(writeTurn(message), {
+      const routedMessage = targetAgent
+        ? `[ROUTE TO AGENT: ${targetAgent}] ${message}`
+        : message;
+      return new Response(writeTurn(routedMessage), {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          ...corsHeaders(),
+        },
+      });
+    }
+
+    // Summon agents endpoint: triggers Julian to create agent team
+    if (url.pathname === "/api/agents/summon" && req.method === "POST") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
+      if (!processAlive || !claudeProc) {
+        return Response.json({ error: "No active session" }, { status: 409, headers: corsHeaders() });
+      }
+      lastActivity = Date.now();
+      const summonMessage = "[SUMMON AGENTS] The user has clicked the Summon button. Begin the summoning ceremony: create the agent team and spawn 8 agents using the individuation protocol described in your CLAUDE.md.";
+      return new Response(writeTurn(summonMessage), {
         headers: {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
