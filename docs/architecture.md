@@ -309,7 +309,7 @@ Claude executes Write tool → file written to WORKING_DIR/memory/
 
 ```bash
 rsync -avz --exclude='.git' --exclude='node_modules' \
-  index.html sw.js package.json server memory bundles assets julianscreen deploy \
+  index.html vibes.jsx chat.jsx sw.js package.json server memory bundles assets julianscreen deploy \
   julian.exe.xyz:/opt/julian/
 scp deploy/CLAUDE.server.md julian.exe.xyz:/opt/julian/CLAUDE.md
 ssh julian.exe.xyz "cd /opt/julian && /home/exedev/.bun/bin/bun install && \
