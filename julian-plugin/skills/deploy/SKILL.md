@@ -165,6 +165,20 @@ ALLOWED_ORIGIN=https://<vmname>.exe.xyz
 ENVEOF"
 ```
 
+### Step P6b: Configure Claude Code settings
+
+Enable Agent Teams (disabled by default) so Julian can spawn and manage agent teammates:
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "mkdir -p /home/exedev/.claude && cat > /home/exedev/.claude/settings.json << 'SETTINGSEOF'
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  }
+}
+SETTINGSEOF"
+```
+
 ### Step P7: Install and start systemd services
 
 ```bash
