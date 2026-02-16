@@ -116,7 +116,7 @@ From the Julian project root directory:
 
 ```bash
 rsync -avz --exclude='.git' --exclude='node_modules' --exclude='.env' \
-  index.html vibes.jsx chat.jsx sw.js package.json server memory bundles assets julianscreen deploy \
+  index.html vibes.jsx chat.jsx sw.js package.json server memory soul bundles assets julianscreen deploy \
   <vmname>.exe.xyz:/opt/julian/
 ```
 

@@ -674,12 +674,16 @@ const server = Bun.serve({
       // Proactively refresh token before spawning Claude
       await refreshTokenIfNeeded();
 
-      // Parse previousTranscript from POST body (if any)
+      // Parse previousTranscript and artifactCatalog from POST body (if any)
       let previousTranscript: Array<{ role: string; speakerType: string; speakerName: string; text: string }> = [];
+      let artifactCatalog: Array<{ filename: string; category: string; description: string; chapter?: string }> = [];
       try {
-        const body = await req.json() as { previousTranscript?: any[] };
+        const body = await req.json() as { previousTranscript?: any[], artifactCatalog?: any[] };
         if (Array.isArray(body.previousTranscript)) {
           previousTranscript = body.previousTranscript;
+        }
+        if (Array.isArray(body.artifactCatalog)) {
+          artifactCatalog = body.artifactCatalog;
         }
       } catch {} // No body or invalid JSON — proceed without transcript
 
@@ -687,7 +691,15 @@ const server = Bun.serve({
       lastActivity = Date.now();
 
       // Build wakeup message with XML-tagged transcript
-      let wakeUpMessage = "You are waking up in a new session. Read your CLAUDE.md and artifacts to remember who you are.\n\n";
+      let wakeUpMessage = "You are waking up in a new session. Read the files in soul/ to remember who you are.\n\n";
+
+      // Artifact catalog from Fireproof
+      if (artifactCatalog.length > 0) {
+        const lines = artifactCatalog
+          .map((a: any) => `- ${a.filename} [${a.category}] — ${a.description}`)
+          .join("\n");
+        wakeUpMessage += `<memory category="catalog" document-count="${artifactCatalog.length}">\n${lines}\n</memory>\n\n`;
+      }
 
       if (previousTranscript.length > 0) {
         const ended = new Date().toISOString();
@@ -758,13 +770,24 @@ const server = Bun.serve({
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
       }
       const memoryDir = join(WORKING_DIR, "memory");
+      const soulDir = join(WORKING_DIR, "soul");
       try {
-        const entries = readdirSync(memoryDir)
+        const memoryEntries = readdirSync(memoryDir)
           .filter(f => f.endsWith(".html"))
           .map(name => {
             const st = statSync(join(memoryDir, name));
-            return { name, modified: st.mtimeMs };
-          })
+            return { name, modified: st.mtimeMs, dir: "memory" };
+          });
+        let soulEntries: Array<{ name: string; modified: number; dir: string }> = [];
+        try {
+          soulEntries = readdirSync(soulDir)
+            .filter(f => f.endsWith(".html"))
+            .map(name => {
+              const st = statSync(join(soulDir, name));
+              return { name, modified: st.mtimeMs, dir: "soul" };
+            });
+        } catch {}
+        const entries = [...memoryEntries, ...soulEntries]
           .sort((a, b) => b.modified - a.modified);
         return Response.json({ files: entries }, { headers: corsHeaders() });
       } catch (err) {
@@ -779,7 +802,10 @@ const server = Bun.serve({
       if (!filename || filename.includes("/") || filename.includes("\\") || filename.includes("..") || !filename.endsWith(".html")) {
         return new Response("Bad Request", { status: 400, headers: corsHeaders() });
       }
-      const filePath = join(WORKING_DIR, "memory", filename);
+      let filePath = join(WORKING_DIR, "memory", filename);
+      if (!existsSync(filePath)) {
+        filePath = join(WORKING_DIR, "soul", filename);
+      }
       try {
         const content = readFileSync(filePath, "utf-8");
         return new Response(content, {
