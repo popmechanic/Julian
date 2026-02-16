@@ -496,6 +496,31 @@ function App() {
     refreshMenuData();
   }, [refreshMenuData]);
 
+  // Auto-seed agent identities from server if Fireproof is empty
+  const agentSeedRef = useRef(false);
+  useEffect(() => {
+    if (!database || !agentDocs || agentSeedRef.current) return;
+    if (agentDocs.length > 0) return; // already seeded
+    agentSeedRef.current = true;
+    (async () => {
+      try {
+        const headers = await getAuthHeaders();
+        if (!headers) { agentSeedRef.current = false; return; }
+        const res = await fetch('/api/agents/identities', { headers });
+        const data = await res.json();
+        if (data.agents && data.agents.length > 0) {
+          for (const agent of data.agents) {
+            await database.put({ ...agent, type: 'agent-identity' });
+            console.log('[AgentSeed] Seeded agent:', agent.name, 'at position', agent.gridPosition);
+          }
+        }
+      } catch (err) {
+        console.error('[AgentSeed] Error:', err);
+        agentSeedRef.current = false;
+      }
+    })();
+  }, [database, agentDocs, getAuthHeaders]);
+
   // Enter menu once data is loaded and no session is active
   // The menu system auto-defaults FILES tab to shared/ if it exists
   useEffect(() => {
@@ -633,16 +658,41 @@ function App() {
     try {
       const headers = await getAuthHeaders();
       if (!headers) return;
+      // Fire the summon (triggers Julian to spawn agents)
       await fetch('/api/agents/summon', {
         method: 'POST',
         headers,
       });
+      // Poll for agent identities written by Julian
+      const pollForAgents = async (retries = 30, delay = 3000) => {
+        for (let i = 0; i < retries; i++) {
+          await new Promise(r => setTimeout(r, delay));
+          try {
+            const res = await fetch('/api/agents/identities', { headers });
+            const data = await res.json();
+            if (data.agents && data.agents.length > 0) {
+              // Save each agent to Fireproof if not already present
+              const existing = (agentDocs || []).map(d => d.gridPosition);
+              for (const agent of data.agents) {
+                if (!existing.includes(agent.gridPosition)) {
+                  await database.put(agent);
+                  console.log('[Summon] Saved agent:', agent.name, 'at position', agent.gridPosition);
+                }
+              }
+              return;
+            }
+          } catch (err) {
+            console.error('[Summon] Poll error:', err);
+          }
+        }
+      };
+      await pollForAgents();
     } catch (err) {
       console.error('[Summon] Error:', err);
     } finally {
       setSummoning(false);
     }
-  }, [summoning, getAuthHeaders]);
+  }, [summoning, getAuthHeaders, database, agentDocs]);
 
   const sendMessage = useCallback(async (text) => {
     if (streaming) return;
