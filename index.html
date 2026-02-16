@@ -242,6 +242,11 @@
       import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
       import { useFireproofClerk } from "use-fireproof";
 
+      // Pull chat.jsx window exports into module scope
+      const { ArtifactViewer, JulianScreenEmbed, SetupScreen, ChatInput,
+              MessageBubble, ToolCallBlock, ThinkingDots, StatusDots,
+              PixelFace, ConfigError, LoadingError } = window;
+
 /* ── Main App ────────────────────────────────────────────────────────────── */
 
 function App() {
