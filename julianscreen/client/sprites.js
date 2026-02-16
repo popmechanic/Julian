@@ -187,6 +187,9 @@ async function initSprites() {
 
     if (!player || !avatarSheet) return;
 
+    // Skip avatar drawing when face mode is active
+    if (JS.isFaceMode && JS.isFaceMode()) return;
+
     const dt = lastTimestamp ? (timestamp - lastTimestamp) : 16;
     lastTimestamp = timestamp;
 
