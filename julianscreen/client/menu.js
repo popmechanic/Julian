@@ -103,23 +103,28 @@
   }
 
   function renderTabBar(ctx) {
+    ctx.font = "18px 'VT323', monospace";
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
     for (const tab of TABS) {
-      const metrics = S._fontMetrics ? S._fontMetrics('large') : { charW: 12 };
-      const labelW = tab.label.length * metrics.charW;
-      const labelX = tab.x + Math.floor((tab.w - labelW) / 2);
-      const labelY = Math.floor((TAB_HEIGHT - 14) / 2); // center 14px glyph in tab
+      const centerX = tab.x + Math.floor(tab.w / 2);
+      const centerY = Math.floor(TAB_HEIGHT / 2);
 
       if (tab.id === state.tab) {
         // Active tab: filled pink/magenta background
         ctx.fillStyle = S.PALETTE[7]; // pink
         ctx.fillRect(tab.x, 0, tab.w, TAB_HEIGHT);
         // Near-black text on pink
-        if (S.drawText) S.drawText(ctx, tab.label, labelX, labelY, 2, 'large');
+        ctx.fillStyle = S.PALETTE[2];
+        ctx.fillText(tab.label, centerX, centerY);
       } else {
         // Inactive tab: yellow text on transparent
-        if (S.drawText) S.drawText(ctx, tab.label, labelX, labelY, 1, 'large');
+        ctx.fillStyle = S.PALETTE[1];
+        ctx.fillText(tab.label, centerX, centerY);
       }
     }
+    ctx.textAlign = 'start';
+    ctx.textBaseline = 'alphabetic';
   }
 
   function renderSeparator(ctx) {
@@ -138,9 +143,12 @@
     } else {
       text = '< ' + state.path[state.path.length - 1] + '/';
     }
-    // Truncate to fit screen width (large font at 12px per char, ~53 chars)
-    if (text.length > 50) text = text.substring(0, 49) + '/';
-    if (S.drawText) S.drawText(ctx, text, 4, BREADCRUMB_Y + 1, 1, 'large');
+    if (text.length > 60) text = text.substring(0, 59) + '/';
+    ctx.font = "14px 'VT323', monospace";
+    ctx.fillStyle = S.PALETTE[1]; // yellow
+    ctx.textBaseline = 'top';
+    ctx.fillText(text, 4, BREADCRUMB_Y + 2);
+    ctx.textBaseline = 'alphabetic';
   }
 
   function renderGrid(ctx) {
@@ -169,21 +177,22 @@
           renderSprite(ctx, sprite, iconX, iconY);
         }
 
-        // Draw label centered below icon (large font)
-        if (S.drawText) {
-          const label = truncateLabel(item.name, 12);
-          const metrics = S._fontMetrics ? S._fontMetrics('large') : { charW: 12 };
-          const labelW = label.length * metrics.charW;
-          const labelX = cellX + Math.floor((COL_W - labelW) / 2);
-          const labelY = iconY + ICON_SIZE + 4;
-          S.drawText(ctx, label, labelX, labelY, 1, 'large');
+        // Draw label centered below icon (VT323 web font)
+        {
+          const label = truncateLabel(item.name, 16);
+          ctx.font = "16px 'VT323', monospace";
+          ctx.fillStyle = S.PALETTE[1]; // yellow
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'top';
+          ctx.fillText(label, cellX + Math.floor(COL_W / 2), iconY + ICON_SIZE + 4);
+          ctx.textAlign = 'start';
+          ctx.textBaseline = 'alphabetic';
         }
       }
     }
   }
 
   function renderEmptyState(ctx) {
-    if (!S.drawText) return;
     let msg;
     if (state.tab === 'agents') {
       msg = 'No active teams';
@@ -192,11 +201,13 @@
     } else {
       msg = 'No files found';
     }
-    const metrics = S._fontMetrics ? S._fontMetrics('large') : { charW: 12 };
-    const msgW = msg.length * metrics.charW;
-    const x = Math.floor((S.SCREEN_W - msgW) / 2);
-    const y = CONTENT_Y + 150;
-    S.drawText(ctx, msg, x, y, 11, 'large'); // gray text
+    ctx.font = "20px 'VT323', monospace";
+    ctx.fillStyle = S.PALETTE[11]; // gray
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(msg, Math.floor(S.SCREEN_W / 2), CONTENT_Y + 150);
+    ctx.textAlign = 'start';
+    ctx.textBaseline = 'alphabetic';
   }
 
   function renderSprite(ctx, spriteData, x, y) {
