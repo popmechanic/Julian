@@ -487,11 +487,12 @@ function App() {
       gender: doc.gender,
       faceVariant: doc.faceVariant,
       gridPosition: doc.gridPosition,
-      dormant: doc.dormant || false,
+      // Agents are sleeping when no session is active (pessimistic model)
+      sleeping: !sessionActive,
       hatching: doc.hatching || false,
       _id: doc._id,
     }));
-  }, [agentDocs]);
+  }, [agentDocs, sessionActive]);
 
   const activeAgentObj = useMemo(() => {
     if (!activeAgent) return null;
@@ -806,6 +807,105 @@ function App() {
       setSummoning(false);
     }
   }, [summoning, getAuthHeaders, database, agentDocs]);
+
+  // Wake sleeping agents — query their transcripts from Fireproof, assemble payloads, send to Julian
+  const handleWake = useCallback(async () => {
+    if (summoning) return;
+    setSummoning(true);
+    try {
+      const headers = await getAuthHeaders();
+      if (!headers) return;
+
+      // Start a session if none is active
+      if (!sessionActive) {
+        // Trigger startSession first — reuse the same flow as clicking the chat
+        // We need a session for Julian to receive the wake message
+        const startRes = await fetch('/api/session/start', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ previousTranscript: [], artifactCatalog: await ensureCatalog(database) }),
+        });
+        if (!startRes.ok) {
+          console.error('[Wake] Failed to start session');
+          return;
+        }
+        const newSid = startRes.headers.get('X-Session-Id');
+        if (newSid) setServerSessionId(newSid);
+        setSessionActive(true);
+        setConnected(true);
+        // Wait for session to settle
+        await new Promise(r => setTimeout(r, 1000));
+      }
+
+      // Query all messages from Fireproof
+      const allMessages = await database.query("type", { key: "message" });
+      const allDocs = (allMessages.rows || []).map(r => r.doc || r.value || r);
+
+      // Build per-agent payloads
+      const agentPayloads = (agentDocs || []).map(agent => {
+        // Find this agent's most recent session transcript
+        const agentMsgs = allDocs.filter(d => d.agentName === agent.name);
+        // Group by session and pick the most recent
+        const bySession = {};
+        for (const m of agentMsgs) {
+          const sid = m.serverSessionId;
+          if (!sid) continue;
+          if (!bySession[sid]) bySession[sid] = [];
+          bySession[sid].push(m);
+        }
+        const sessionIds = Object.keys(bySession).sort((a, b) => {
+          const lastA = bySession[a].at(-1)?.createdAt || "";
+          const lastB = bySession[b].at(-1)?.createdAt || "";
+          return lastB.localeCompare(lastA);
+        });
+        const recentSession = sessionIds[0];
+        let transcript = '';
+        if (recentSession && bySession[recentSession]) {
+          transcript = bySession[recentSession]
+            .sort((a, b) => (a._id < b._id ? -1 : 1))
+            .map(m => {
+              if (m.role === 'user') return `[${m.speakerName || 'Marcus'}]: ${m.text || ''}`;
+              const text = (m.blocks || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+              return `[${m.speakerName || agent.name}]: ${text}`;
+            })
+            .filter(line => line.includes(': ') && line.split(': ').slice(1).join(': ').trim())
+            .join('\n');
+        }
+
+        return {
+          name: agent.name,
+          color: agent.color,
+          colorName: agent.colorName || '',
+          position: agent.gridPosition,
+          soul: agent.individuationArtifact || '',
+          transcript,
+        };
+      });
+
+      // Assemble the wake message
+      const payloadXml = agentPayloads.map(a =>
+        `  <agent name="${a.name}" color="${a.color}" colorName="${a.colorName}" position="${a.position}">\n` +
+        `    <soul>${a.soul}</soul>\n` +
+        `    <transcript>${a.transcript}</transcript>\n` +
+        `  </agent>`
+      ).join('\n');
+
+      const wakeMessage = `[WAKE AGENTS]\n<agent-payloads>\n${payloadXml}\n</agent-payloads>`;
+
+      // Send through the chat endpoint
+      await fetch('/api/chat', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ message: wakeMessage }),
+      });
+
+      console.log('[Wake] Sent wake message for', agentPayloads.length, 'agents');
+    } catch (err) {
+      console.error('[Wake] Error:', err);
+    } finally {
+      setSummoning(false);
+    }
+  }, [summoning, sessionActive, getAuthHeaders, database, agentDocs]);
 
   const sendMessage = useCallback(async (text) => {
     if (streaming) return;
@@ -1691,6 +1791,7 @@ function App() {
                           activeAgent={activeAgent}
                           onSelectAgent={handleSelectAgent}
                           onSummon={handleSummon}
+                          onWake={handleWake}
                           summoning={summoning}
                           fillContainer
                         />

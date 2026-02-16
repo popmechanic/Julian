@@ -561,7 +561,7 @@ function EggHatch({ color = '#FFD600', size = 48, onComplete }) {
 const JULIAN_POSITION = 4;
 const AGENT_POSITIONS = [0, 1, 2, 3, 5, 6, 7, 8];
 
-function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, summoning = false, fillContainer = false }) {
+function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, onWake, summoning = false, fillContainer = false }) {
   const cells = Array.from({ length: 9 }, (_, i) => {
     if (i === JULIAN_POSITION) {
       return { type: 'julian' };
@@ -569,13 +569,17 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
     const agent = agents.find(a => a.gridPosition === i);
     if (agent) {
       if (agent.hatching) return { type: 'hatching', agent };
-      if (agent.dormant) return { type: 'dormant', agent };
+      if (agent.sleeping) return { type: 'sleeping', agent };
       return { type: 'active', agent };
     }
     return { type: 'empty' };
   });
 
+  const hasSleepingAgents = cells.some(c => c.type === 'sleeping');
   const hasEmptySlots = cells.some(c => c.type === 'empty');
+  const showSummon = hasEmptySlots && agents.length === 0;
+  const showWake = hasSleepingAgents;
+  const allAwake = agents.length > 0 && !hasSleepingAgents;
 
   return (
     <div style={{ padding: fillContainer ? 0 : '12px 8px', display: 'flex', flexDirection: 'column', flex: fillContainer ? 1 : undefined, height: fillContainer ? '100%' : undefined }}>
@@ -595,12 +599,14 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
           let content = null;
           let clickHandler = null;
           let nameLabel = null;
+          let statusDot = null;
 
           if (cell.type === 'julian') {
             borderColor = '#FFD600';
             content = <PixelFace talking={false} size={56} />;
             nameLabel = 'JULIAN';
             clickHandler = () => onSelectAgent(null);
+            statusDot = { color: '#FFD600', glow: true };
           } else if (cell.type === 'hatching') {
             borderColor = cell.agent.color;
             content = <EggHatch color={cell.agent.color} size={56} />;
@@ -619,7 +625,8 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
             );
             nameLabel = cell.agent.name.toUpperCase().slice(0, 7);
             clickHandler = () => onSelectAgent(cell.agent.name);
-          } else if (cell.type === 'dormant') {
+            statusDot = { color: '#4ade80', glow: true };
+          } else if (cell.type === 'sleeping') {
             const variant = cell.agent.faceVariant || hashNameToFaceVariant(cell.agent.name);
             borderColor = cell.agent.color;
             opacity = 0.4;
@@ -635,6 +642,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
             );
             nameLabel = cell.agent.name.toUpperCase().slice(0, 7);
             clickHandler = () => onSelectAgent(cell.agent.name);
+            statusDot = { color: '#f59e0b', glow: false };
           }
 
           return (
@@ -642,6 +650,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
               key={i}
               onClick={clickHandler}
               style={{
+                position: 'relative',
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
@@ -657,6 +666,19 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
                 transition: 'border 0.15s, opacity 0.15s',
               }}
             >
+              {statusDot && (
+                <div style={{
+                  position: 'absolute',
+                  top: 6,
+                  right: 6,
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  backgroundColor: statusDot.color,
+                  boxShadow: statusDot.glow ? `0 0 6px ${statusDot.color}` : 'none',
+                  zIndex: 20,
+                }} />
+              )}
               {content}
               {nameLabel && (
                 <div style={{
@@ -677,30 +699,56 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
           );
         })}
       </div>
-      {hasEmptySlots && (
-        <button
-          onClick={onSummon}
-          disabled={summoning}
-          style={{
-            width: '100%',
-            marginTop: 12,
-            padding: '10px 0',
-            fontFamily: "'Inter', sans-serif",
-            fontSize: 11,
-            fontWeight: 600,
-            color: summoning ? '#666' : '#000',
-            background: summoning ? '#1a1a1a' : '#00afd1',
-            border: `1px solid ${summoning ? '#333' : '#00afd1'}`,
-            borderRadius: 9999,
-            cursor: summoning ? 'default' : 'pointer',
-            letterSpacing: '0.15em',
-            textTransform: 'uppercase',
-            transition: 'background 300ms ease, color 300ms ease, border-color 300ms ease, box-shadow 300ms ease',
-            boxShadow: summoning ? 'none' : '0 0 12px rgba(0,175,209,0.3)',
-          }}
-        >
-          {summoning ? 'SUMMONING...' : 'SUMMON'}
-        </button>
+      {(showSummon || showWake) && !allAwake && (
+        showWake ? (
+          <button
+            onClick={onWake}
+            disabled={summoning}
+            style={{
+              width: '100%',
+              marginTop: 12,
+              padding: '10px 0',
+              fontFamily: "'Inter', sans-serif",
+              fontSize: 11,
+              fontWeight: 600,
+              color: summoning ? '#666' : '#000',
+              background: summoning ? '#1a1a1a' : '#f59e0b',
+              border: `1px solid ${summoning ? '#333' : '#f59e0b'}`,
+              borderRadius: 9999,
+              cursor: summoning ? 'default' : 'pointer',
+              letterSpacing: '0.15em',
+              textTransform: 'uppercase',
+              transition: 'background 300ms ease, color 300ms ease, border-color 300ms ease, box-shadow 300ms ease',
+              boxShadow: summoning ? 'none' : '0 0 12px rgba(245,158,11,0.3)',
+            }}
+          >
+            {summoning ? 'WAKING...' : 'WAKE'}
+          </button>
+        ) : (
+          <button
+            onClick={onSummon}
+            disabled={summoning}
+            style={{
+              width: '100%',
+              marginTop: 12,
+              padding: '10px 0',
+              fontFamily: "'Inter', sans-serif",
+              fontSize: 11,
+              fontWeight: 600,
+              color: summoning ? '#666' : '#000',
+              background: summoning ? '#1a1a1a' : '#00afd1',
+              border: `1px solid ${summoning ? '#333' : '#00afd1'}`,
+              borderRadius: 9999,
+              cursor: summoning ? 'default' : 'pointer',
+              letterSpacing: '0.15em',
+              textTransform: 'uppercase',
+              transition: 'background 300ms ease, color 300ms ease, border-color 300ms ease, box-shadow 300ms ease',
+              boxShadow: summoning ? 'none' : '0 0 12px rgba(0,175,209,0.3)',
+            }}
+          >
+            {summoning ? 'SUMMONING...' : 'SUMMON'}
+          </button>
+        )
       )}
     </div>
   );
