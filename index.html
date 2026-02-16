@@ -24,7 +24,7 @@
       // not with a "fireproof" prefix. Wipe all IDB databases on version bump.
       // Bump DB_VERSION to re-trigger if corruption recurs.
       (function() {
-        var DB_VERSION = 6;
+        var DB_VERSION = 5;
         var KEY = 'fp_migration_v' + DB_VERSION;
         if (localStorage.getItem(KEY)) return;
         var dbs = indexedDB.databases ? indexedDB.databases() : Promise.resolve([]);
@@ -418,34 +418,6 @@ async function streamSSEResponse(response, setLiveAssistant) {
           finalBlocks = blocks;
           if (!notifiedArrival) { window.SFX?.play('notification'); notifiedArrival = true; }
           setLiveAssistant(prev => prev ? { ...prev, blocks, thinking: false, streaming: true } : null);
-
-          // Detect [AGENT_REGISTERED] markers in any SSE stream
-          for (const block of eventData.message.content) {
-            if (block.type !== 'text') continue;
-            const agentLines = block.text.split('\n').filter(l => l.includes('[AGENT_REGISTERED]'));
-            for (const agentLine of agentLines) {
-              try {
-                const jsonStr = agentLine.slice(agentLine.indexOf('{'));
-                const agent = JSON.parse(jsonStr);
-                if (agent.name && agent.gridPosition != null && window._julianDB) {
-                  const db = window._julianDB;
-                  // Check if agent already exists at this position
-                  const existing = await db.query("type", { key: "agent-identity" });
-                  const atPosition = (existing.rows || []).find(r => (r.doc || r.value || r).gridPosition === agent.gridPosition);
-                  if (atPosition) {
-                    const doc = atPosition.doc || atPosition.value || atPosition;
-                    await db.put({ ...doc, ...agent, type: 'agent-identity', hatching: false });
-                  } else {
-                    await db.put({ ...agent, type: 'agent-identity' });
-                  }
-                  window.SFX?.play('select');
-                  console.log('[SSE] Detected and saved agent:', agent.name, 'at position', agent.gridPosition);
-                }
-              } catch (parseErr) {
-                console.debug('[SSE] Failed to parse agent identity:', parseErr);
-              }
-            }
-          }
         }
 
         if (eventData.type === 'result') {
@@ -467,7 +439,7 @@ async function streamSSEResponse(response, setLiveAssistant) {
 /* ── Main App ────────────────────────────────────────────────────────────── */
 
 function App() {
-  const { database, useLiveQuery } = useFireproofClerk("julian-chat-v6");
+  const { database, useLiveQuery } = useFireproofClerk("julian-chat-v5");
 
   useEffect(() => {
     window._julianDB = database;
@@ -483,8 +455,8 @@ function App() {
   const [wakingUp, setWakingUp] = useState(false);
   const [serverSessionId, setServerSessionId] = useState(null);
   const messagesEndRef = useRef(null);
-  const [artifacts, setArtifacts] = useState(demoMode ? [{ name: 'shared/readme.html', modified: Date.now() }] : []);
-  const [activeArtifact, setActiveArtifact] = useState(demoMode ? 'shared/readme.html' : '');
+  const [artifacts, setArtifacts] = useState([]);
+  const [activeArtifact, setActiveArtifact] = useState('');
   const [menuDataLoaded, setMenuDataLoaded] = useState(false);
   const [filesData, setFilesData] = useState(null);
   const [skillsData, setSkillsData] = useState(null);
@@ -492,8 +464,7 @@ function App() {
   // Agent Teams state
   const [activeAgent, setActiveAgent] = useState(null);
   const [summoning, setSummoning] = useState(false);
-  const [demoMode, setDemoMode] = useState(new URLSearchParams(window.location.search).get('demo') === '1');
-  const [menuTab, setMenuTab] = useState(demoMode ? 'browser' : 'files');
+  const [menuTab, setMenuTab] = useState('files');
   const [sfxMuted, setSfxMuted] = useState(window.SFX?.isMuted ?? false);
   useEffect(() => {
     const handler = (e) => setSfxMuted(e.detail.muted);
@@ -678,12 +649,6 @@ function App() {
           setSetupNeeded(data.needsSetup ?? false);
           if (data.sessionId) setServerSessionId(data.sessionId);
           if (data.version) window.__julianVersion = data.version;
-          if (data.demoMode && !demoMode) {
-            setDemoMode(true);
-            setMenuTab('browser');
-            setActiveArtifact('shared/readme.html');
-            setArtifacts(prev => prev.some(f => f.name === 'shared/readme.html') ? prev : [...prev, { name: 'shared/readme.html', modified: Date.now() }]);
-          }
         }
       } catch {
         if (!cancelled) {
