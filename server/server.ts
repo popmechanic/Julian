@@ -716,7 +716,10 @@ const server = Bun.serve({
         if (body.demoMode === true) {
           demoMode = true;
         }
-      } catch {} // No body or invalid JSON — proceed without transcript
+        console.log("[Session] Body parsed — demoMode:", body.demoMode, "→", demoMode);
+      } catch (e) {
+        console.error("[Session] Body parse failed:", e);
+      } // No body or invalid JSON — proceed without transcript
 
       spawnClaude();
       lastActivity = Date.now();
