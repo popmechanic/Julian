@@ -16,7 +16,7 @@
   }
   #wrap {
     position: relative;
-    /* 128x96 scaled to fill viewport with integer scaling */
+    /* 640x480 scaled to fill viewport with integer scaling */
   }
   #screen {
     display: block;
@@ -40,7 +40,7 @@
 <body>
 
 <div id="wrap">
-  <canvas id="screen" width="128" height="96"></canvas>
+  <canvas id="screen" width="640" height="480"></canvas>
   <div id="status"></div>
 </div>
 
@@ -62,11 +62,11 @@
   function resize() {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const scaleX = Math.floor(vw / 128) || 1;
-    const scaleY = Math.floor(vh / 96) || 1;
+    const scaleX = Math.floor(vw / 640) || 1;
+    const scaleY = Math.floor(vh / 480) || 1;
     const scale = Math.min(scaleX, scaleY);
-    const w = 128 * scale;
-    const h = 96 * scale;
+    const w = 640 * scale;
+    const h = 480 * scale;
     canvas.style.width = w + 'px';
     canvas.style.height = h + 'px';
     wrap.style.width = w + 'px';

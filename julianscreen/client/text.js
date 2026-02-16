@@ -1,10 +1,10 @@
-// JulianScreen — bitmap text rendering + speech bubbles
+// JulianScreen — dual-size bitmap text rendering + speech bubbles
+// Large font (10x14) for speech/headers, small font (7x9) for labels/menus
 
-const GLYPH_W = 5;
-const GLYPH_H = 7;
-const CHAR_W = 6; // 5px glyph + 1px spacing
+const FONT_LARGE = { glyphW: 10, glyphH: 14, charW: 12, charH: 16 };
+const FONT_SMALL = { glyphW: 7,  glyphH: 9,  charW: 8,  charH: 11 };
 
-let fontData = null;
+let fontData = null; // { large: { A: [...], ... }, small: { A: [...], ... } }
 
 // Load font data
 fetch('/sprites/font.json')
@@ -12,16 +12,23 @@ fetch('/sprites/font.json')
   .then(data => { fontData = data; })
   .catch(e => console.error('[text] Failed to load font:', e));
 
+function getFontMetrics(size) {
+  return size === 'small' ? FONT_SMALL : FONT_LARGE;
+}
+
 // Draw a single character at pixel position
-function drawChar(ctx, ch, x, y, paletteIndex) {
+function drawChar(ctx, ch, x, y, paletteIndex, size) {
   if (!fontData) return;
-  const glyph = fontData[ch];
+  const font = size === 'small' ? fontData.small : fontData.large;
+  if (!font) return;
+  const glyph = font[ch];
   if (!glyph) return;
+  const metrics = getFontMetrics(size);
   const color = JScreen.PALETTE[paletteIndex] || JScreen.PALETTE[1];
   ctx.fillStyle = color;
-  for (let row = 0; row < GLYPH_H; row++) {
-    for (let col = 0; col < GLYPH_W; col++) {
-      if (glyph[row * GLYPH_W + col]) {
+  for (let row = 0; row < metrics.glyphH; row++) {
+    for (let col = 0; col < metrics.glyphW; col++) {
+      if (glyph[row * metrics.glyphW + col]) {
         ctx.fillRect(x + col, y + row, 1, 1);
       }
     }
@@ -29,15 +36,17 @@ function drawChar(ctx, ch, x, y, paletteIndex) {
 }
 
 // Draw a string of text at pixel position
-function drawText(ctx, text, x, y, paletteIndex) {
+function drawText(ctx, text, x, y, paletteIndex, size) {
+  const metrics = getFontMetrics(size);
   for (let i = 0; i < text.length; i++) {
-    drawChar(ctx, text[i], x + i * CHAR_W, y, paletteIndex);
+    drawChar(ctx, text[i], x + i * metrics.charW, y, paletteIndex, size);
   }
 }
 
 // Word-wrap text to fit maxWidth in pixels
-function wrapText(text, maxWidth) {
-  const maxChars = Math.floor(maxWidth / CHAR_W);
+function wrapText(text, maxWidth, size) {
+  const metrics = getFontMetrics(size);
+  const maxChars = Math.floor(maxWidth / metrics.charW);
   if (maxChars < 1) return [text];
   const words = text.split(' ');
   const lines = [];
@@ -56,23 +65,24 @@ function wrapText(text, maxWidth) {
   return lines;
 }
 
-// Draw a speech bubble with text
+// Draw a speech bubble with text (always uses large font)
 function drawBubble(ctx, text, targetX, targetY) {
-  const PAD = 2;
-  const POINTER_H = 3;
-  const POINTER_W = 3;
-  const MAX_BUBBLE_W = 100;
+  const PAD = 4;
+  const POINTER_H = 6;
+  const POINTER_W = 6;
+  const MAX_BUBBLE_W = 300;
+  const metrics = FONT_LARGE;
 
-  const lines = wrapText(text, MAX_BUBBLE_W - PAD * 2);
-  const textW = Math.max(...lines.map(l => l.length)) * CHAR_W;
-  const textH = lines.length * (GLYPH_H + 1) - 1; // 1px line spacing
+  const lines = wrapText(text, MAX_BUBBLE_W - PAD * 2, 'large');
+  const textW = Math.max(...lines.map(l => l.length)) * metrics.charW;
+  const textH = lines.length * metrics.charH - (metrics.charH - metrics.glyphH);
 
   const bubbleW = textW + PAD * 2;
   const bubbleH = textH + PAD * 2;
 
   // Position bubble above target, centered horizontally
   let bx = targetX - Math.floor(bubbleW / 2);
-  let by = targetY - bubbleH - POINTER_H - 1;
+  let by = targetY - bubbleH - POINTER_H - 2;
 
   // Clamp to screen bounds
   const sw = JScreen.SCREEN_W;
@@ -100,22 +110,30 @@ function drawBubble(ctx, text, targetX, targetY) {
   ctx.fillRect(bx + bubbleW - 1, by, 1, bubbleH);
 
   // Pointer triangle (pointing down toward avatar)
-  const px = targetX - 1; // center pointer on target
+  const px = targetX - Math.floor(POINTER_W / 2);
   const py = by + bubbleH;
   ctx.fillStyle = bgColor;
-  ctx.fillRect(px, py, POINTER_W, 1);
-  ctx.fillRect(px + 1, py + 1, 1, 1);
-  // Pointer border
+  for (let row = 0; row < POINTER_H; row++) {
+    const halfW = Math.floor(POINTER_W / 2 - row * POINTER_W / (2 * POINTER_H));
+    const cx = px + Math.floor(POINTER_W / 2);
+    if (halfW > 0) {
+      ctx.fillRect(cx - halfW, py + row, halfW * 2, 1);
+    } else {
+      ctx.fillRect(cx, py + row, 1, 1);
+    }
+  }
+  // Pointer border edges
   ctx.fillStyle = borderColor;
-  ctx.fillRect(px - 1, py, 1, 1);
-  ctx.fillRect(px + POINTER_W, py, 1, 1);
-  ctx.fillRect(px, py + 1, 1, 1);
-  ctx.fillRect(px + POINTER_W - 1, py + 1, 1, 1);
-  ctx.fillRect(px + 1, py + 2, 1, 1);
+  for (let row = 0; row < POINTER_H; row++) {
+    const halfW = Math.floor(POINTER_W / 2 - row * POINTER_W / (2 * POINTER_H));
+    const cx = px + Math.floor(POINTER_W / 2);
+    ctx.fillRect(cx - halfW - 1, py + row, 1, 1);
+    ctx.fillRect(cx + halfW, py + row, 1, 1);
+  }
 
   // Draw text lines inside bubble
   for (let i = 0; i < lines.length; i++) {
-    drawText(ctx, lines[i], bx + PAD, by + PAD + i * (GLYPH_H + 1), 1);
+    drawText(ctx, lines[i], bx + PAD, by + PAD + i * metrics.charH, 1, 'large');
   }
 }
 
@@ -134,27 +152,28 @@ function handleText(cmd) {
 
   if (cmd.text && cmd.text.length > 0) {
     // Get avatar position (set by sprites.js), default to center
-    const ax = JScreen.avatarX != null ? JScreen.avatarX : 64;
-    const ay = JScreen.avatarY != null ? JScreen.avatarY : 48;
+    const ax = JScreen.avatarX != null ? JScreen.avatarX : 320;
+    const ay = JScreen.avatarY != null ? JScreen.avatarY : 240;
     // Bubble targets top-center of avatar sprite
-    const targetX = ax + 8;
+    const targetX = ax + 16;
     const targetY = ay;
 
     // Calculate bubble rect for later clearing
-    const PAD = 2;
-    const POINTER_H = 3;
-    const MAX_BUBBLE_W = 100;
-    const lines = wrapText(cmd.text, MAX_BUBBLE_W - PAD * 2);
-    const textW = Math.max(...lines.map(l => l.length)) * CHAR_W;
-    const textH = lines.length * (GLYPH_H + 1) - 1;
+    const PAD = 4;
+    const POINTER_H = 6;
+    const MAX_BUBBLE_W = 300;
+    const metrics = FONT_LARGE;
+    const lines = wrapText(cmd.text, MAX_BUBBLE_W - PAD * 2, 'large');
+    const textW = Math.max(...lines.map(l => l.length)) * metrics.charW;
+    const textH = lines.length * metrics.charH - (metrics.charH - metrics.glyphH);
     const bubbleW = textW + PAD * 2;
     const bubbleH = textH + PAD * 2;
     let bx = targetX - Math.floor(bubbleW / 2);
-    let by = targetY - bubbleH - POINTER_H - 1;
+    let by = targetY - bubbleH - POINTER_H - 2;
     if (bx < 0) bx = 0;
     if (bx + bubbleW > JScreen.SCREEN_W) bx = JScreen.SCREEN_W - bubbleW;
     if (by < 0) by = 0;
-    bubbleRect = { x: bx - 1, y: by - 1, w: bubbleW + 2, h: bubbleH + POINTER_H + 4 };
+    bubbleRect = { x: bx - 1, y: by - 1, w: bubbleW + 2, h: bubbleH + POINTER_H + 8 };
 
     drawBubble(ctx, cmd.text, targetX, targetY);
   }
@@ -165,3 +184,4 @@ function handleText(cmd) {
 
 JScreen.registerHandler('TEXT', handleText);
 JScreen.drawText = drawText;
+JScreen._fontMetrics = getFontMetrics;

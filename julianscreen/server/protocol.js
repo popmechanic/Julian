@@ -79,7 +79,7 @@ export function parseCommand(line) {
         console.error(`[protocol] Invalid position: ${rest}`);
         return null;
       }
-      return { type: 'POS', tx: clamp(tx, 0, 7), ty: clamp(ty, 0, 5) };
+      return { type: 'POS', tx: clamp(tx, 0, 19), ty: clamp(ty, 0, 14) };
     }
 
     // T <text> — Show speech bubble (empty = clear)
@@ -100,7 +100,7 @@ export function parseCommand(line) {
     // B <row> <t0> <t1> ... — Set tile row
     case 'B': {
       const row = parseInt10(args[0]);
-      if (row === null || row < 0 || row > 5) {
+      if (row === null || row < 0 || row > 14) {
         console.error(`[protocol] Invalid tile row: ${args[0]}`);
         return null;
       }
@@ -120,7 +120,7 @@ export function parseCommand(line) {
         console.error(`[protocol] Invalid item: ${rest}`);
         return null;
       }
-      return { type: 'ITEM', sprite, tx: clamp(tx, 0, 7), ty: clamp(ty, 0, 5) };
+      return { type: 'ITEM', sprite, tx: clamp(tx, 0, 19), ty: clamp(ty, 0, 14) };
     }
 
     // F <effect> — Trigger screen effect
@@ -143,7 +143,7 @@ export function parseCommand(line) {
         console.error(`[protocol] Invalid button: ${rest}`);
         return null;
       }
-      return { type: 'BTN', id, tx: clamp(tx, 0, 7), ty: clamp(ty, 0, 5), label: label || id };
+      return { type: 'BTN', id, tx: clamp(tx, 0, 19), ty: clamp(ty, 0, 14), label: label || id };
     }
 
     // PROG <x> <y> <w> <pct> — Progress bar

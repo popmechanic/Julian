@@ -28,24 +28,24 @@
 
   // ── Layout constants ────────────────────────────────────────────────────
 
-  const TAB_HEIGHT = 10;
-  const SEP_Y = 10;
-  const BREADCRUMB_Y = 11;
-  const BREADCRUMB_H = 8;
-  const CONTENT_Y = 19;
-  const CONTENT_H = 77;     // y=19 to y=95
-  const GRID_COLS = 3;
-  const GRID_ROWS = 3;
-  const COL_W = 41;          // floor(124 / 3) — leaves 1px gutter
-  const ROW_H = 25;          // 16px icon + 2px gap + 7px text
-  const ICON_SIZE = 16;
-  const SCROLLBAR_X = 125;
-  const SCROLLBAR_W = 3;
+  const TAB_HEIGHT = 24;
+  const SEP_Y = 24;
+  const BREADCRUMB_Y = 26;
+  const BREADCRUMB_H = 15;
+  const CONTENT_Y = 42;
+  const CONTENT_H = 438;    // y=42 to y=479
+  const GRID_COLS = 4;
+  const GRID_ROWS = 5;
+  const COL_W = 158;         // floor(632 / 4) — leaves room for scrollbar
+  const ROW_H = 80;          // 32px icon + 4px gap + 11px text + gap
+  const ICON_SIZE = 32;
+  const SCROLLBAR_X = 632;
+  const SCROLLBAR_W = 8;
 
   const TABS = [
-    { id: 'browser', label: 'BROWSER', x: 0, w: 43 },
-    { id: 'skills',  label: 'SKILLS',  x: 43, w: 43 },
-    { id: 'agents',  label: 'AGENTS',  x: 86, w: 42 },
+    { id: 'browser', label: 'BROWSER', x: 0, w: 214 },
+    { id: 'skills',  label: 'SKILLS',  x: 214, w: 213 },
+    { id: 'agents',  label: 'AGENTS',  x: 427, w: 213 },
   ];
 
   // ── Icon sprites (loaded from items.json) ───────────────────────────────
@@ -87,18 +87,20 @@
 
   function renderTabBar(ctx) {
     for (const tab of TABS) {
-      const labelW = tab.label.length * 6;
+      const metrics = S._fontMetrics ? S._fontMetrics('large') : { charW: 12 };
+      const labelW = tab.label.length * metrics.charW;
       const labelX = tab.x + Math.floor((tab.w - labelW) / 2);
+      const labelY = Math.floor((TAB_HEIGHT - 14) / 2); // center 14px glyph in tab
 
       if (tab.id === state.tab) {
         // Active tab: filled pink/magenta background
         ctx.fillStyle = S.PALETTE[7]; // pink
         ctx.fillRect(tab.x, 0, tab.w, TAB_HEIGHT);
         // Near-black text on pink
-        if (S.drawText) S.drawText(ctx, tab.label, labelX, 2, 2);
+        if (S.drawText) S.drawText(ctx, tab.label, labelX, labelY, 2, 'large');
       } else {
         // Inactive tab: yellow text on transparent
-        if (S.drawText) S.drawText(ctx, tab.label, labelX, 2, 1);
+        if (S.drawText) S.drawText(ctx, tab.label, labelX, labelY, 1, 'large');
       }
     }
   }
@@ -119,9 +121,9 @@
     } else {
       text = '< ' + state.path[state.path.length - 1] + '/';
     }
-    // Truncate to fit screen width
-    if (text.length > 21) text = text.substring(0, 20) + '/';
-    if (S.drawText) S.drawText(ctx, text, 2, BREADCRUMB_Y + 1, 1);
+    // Truncate to fit screen width (small font at 8px per char, ~79 chars)
+    if (text.length > 75) text = text.substring(0, 74) + '/';
+    if (S.drawText) S.drawText(ctx, text, 4, BREADCRUMB_Y + 3, 1, 'small');
   }
 
   function renderGrid(ctx) {
@@ -150,13 +152,14 @@
           renderSprite(ctx, sprite, iconX, iconY);
         }
 
-        // Draw label centered below icon
+        // Draw label centered below icon (small font)
         if (S.drawText) {
-          const label = truncateLabel(item.name, 7);
-          const labelW = label.length * 6;
+          const label = truncateLabel(item.name, 14);
+          const metrics = S._fontMetrics ? S._fontMetrics('small') : { charW: 8 };
+          const labelW = label.length * metrics.charW;
           const labelX = cellX + Math.floor((COL_W - labelW) / 2);
-          const labelY = iconY + ICON_SIZE + 2;
-          S.drawText(ctx, label, labelX, labelY, 1);
+          const labelY = iconY + ICON_SIZE + 4;
+          S.drawText(ctx, label, labelX, labelY, 1, 'small');
         }
       }
     }
@@ -172,16 +175,17 @@
     } else {
       msg = 'No files found';
     }
-    const msgW = msg.length * 6;
+    const metrics = S._fontMetrics ? S._fontMetrics('large') : { charW: 12 };
+    const msgW = msg.length * metrics.charW;
     const x = Math.floor((S.SCREEN_W - msgW) / 2);
-    const y = CONTENT_Y + 30;
-    S.drawText(ctx, msg, x, y, 11); // gray text
+    const y = CONTENT_Y + 150;
+    S.drawText(ctx, msg, x, y, 11, 'large'); // gray text
   }
 
   function renderSprite(ctx, spriteData, x, y) {
-    for (let py = 0; py < 16; py++) {
-      for (let px = 0; px < 16; px++) {
-        const colorIdx = spriteData[py * 16 + px];
+    for (let py = 0; py < 32; py++) {
+      for (let px = 0; px < 32; px++) {
+        const colorIdx = spriteData[py * 32 + px];
         if (colorIdx !== 0) {
           ctx.fillStyle = S.PALETTE[colorIdx];
           ctx.fillRect(x + px, y + py, 1, 1);
@@ -201,19 +205,25 @@
     ctx.fillStyle = S.PALETTE[12]; // dark gray
     ctx.fillRect(SCROLLBAR_X, trackTop, SCROLLBAR_W, trackH);
 
-    // Up arrow (▲) — 3px wide triangle
+    // Up arrow (▲) — 8px wide triangle
     ctx.fillStyle = S.PALETTE[1]; // yellow
-    ctx.fillRect(SCROLLBAR_X + 1, trackTop + 1, 1, 1);
-    ctx.fillRect(SCROLLBAR_X, trackTop + 2, SCROLLBAR_W, 1);
+    for (let row = 0; row < 4; row++) {
+      const half = row + 1;
+      const cx = SCROLLBAR_X + Math.floor(SCROLLBAR_W / 2);
+      ctx.fillRect(cx - half, trackTop + 4 - row, half * 2, 1);
+    }
 
     // Down arrow (▼)
-    ctx.fillRect(SCROLLBAR_X, trackTop + trackH - 3, SCROLLBAR_W, 1);
-    ctx.fillRect(SCROLLBAR_X + 1, trackTop + trackH - 2, 1, 1);
+    for (let row = 0; row < 4; row++) {
+      const half = row + 1;
+      const cx = SCROLLBAR_X + Math.floor(SCROLLBAR_W / 2);
+      ctx.fillRect(cx - half, trackTop + trackH - 5 + row, half * 2, 1);
+    }
 
     // Thumb
     const maxScroll = totalRows - GRID_ROWS;
-    const thumbAreaTop = trackTop + 5;
-    const thumbAreaH = trackH - 10;
+    const thumbAreaTop = trackTop + 12;
+    const thumbAreaH = trackH - 24;
     const thumbH = Math.max(4, Math.floor(thumbAreaH * GRID_ROWS / totalRows));
     const thumbY = maxScroll > 0
       ? Math.floor(thumbAreaTop + (thumbAreaH - thumbH) * state.scrollOffset / maxScroll)
@@ -326,12 +336,12 @@
       if (totalRows <= GRID_ROWS) return true;
 
       const maxScroll = totalRows - GRID_ROWS;
-      // Up arrow zone (top 5px of track)
-      if (cy < CONTENT_Y + 5) {
+      // Up arrow zone (top 12px of track)
+      if (cy < CONTENT_Y + 12) {
         state.scrollOffset = Math.max(0, state.scrollOffset - 1);
       }
-      // Down arrow zone (bottom 5px of track)
-      else if (cy > CONTENT_Y + CONTENT_H - 5) {
+      // Down arrow zone (bottom 12px of track)
+      else if (cy > CONTENT_Y + CONTENT_H - 12) {
         state.scrollOffset = Math.min(maxScroll, state.scrollOffset + 1);
       }
       // Track: page up/down based on position
