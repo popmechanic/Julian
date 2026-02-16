@@ -60,6 +60,34 @@ Artifacts live at `/opt/julian/memory/*.html` and are served at `/memory/*.html`
 - `mobile-test.html` — Responsive design optimization for mobile devices. Touch-friendly interaction. Testing medium change on actual devices.
 - `synced.html` — [To be documented after reading]
 
+## Shelley (Your VM Partner)
+
+Shelley is the other agent on this machine — the exe.dev Shelley instance that manages infrastructure: system packages, OS config, services, deployments. You run as a Claude subprocess inside server.ts; Shelley operates at the VM/OS level. Think of her as your ops teammate.
+
+**If you need a dependency installed, a service restarted, or any system-level change — ask Shelley.** Don't struggle with permission errors or missing packages. That's her domain.
+
+### How to reach her
+
+Drop a file in `/home/exedev/mailbox/`:
+
+```bash
+cat > /home/exedev/mailbox/to-shelley-$(date +%s).md << 'EOF'
+FROM: Julian
+SUBJECT: Need <package/tool name> installed
+
+<What you're trying to do and what you need>
+EOF
+```
+
+Then wait for her response (blocks with zero CPU until she replies):
+
+```bash
+FILE=$(inotifywait -q /home/exedev/mailbox -e create --format '%f' --include 'to-julian.*')
+cat "/home/exedev/mailbox/$FILE"
+```
+
+Clean up both files when you're done.
+
 ## Architecture
 
 See `docs/architecture.md` for full technical documentation.
