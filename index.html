@@ -358,7 +358,7 @@ async function streamSSEResponse(response, setLiveAssistant) {
 /* ── Main App ────────────────────────────────────────────────────────────── */
 
 function App() {
-  const { database, useLiveQuery } = useFireproofClerk("julian-chat-v2");
+  const { database, useLiveQuery } = useFireproofClerk("julian-chat-v3");
 
   useEffect(() => {
     window._julianDB = database;
