@@ -20,7 +20,7 @@
       // caused by failed auth syncs (401 on /tokens/with-email).
       // Bump DB_VERSION to re-trigger if corruption recurs.
       (function() {
-        var DB_VERSION = 2;
+        var DB_VERSION = 3;
         var KEY = 'fp_migration_v' + DB_VERSION;
         if (localStorage.getItem(KEY)) return;
         var dbs = indexedDB.databases ? indexedDB.databases() : Promise.resolve([]);
