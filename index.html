@@ -502,6 +502,7 @@ function App() {
     agentSeedRef.current = true;
     (async () => {
       try {
+        await database.ready();
         const headers = await getAuthHeaders();
         if (!headers) { agentSeedRef.current = false; return; }
         const res = await fetch('/api/agents/identities', { headers });
