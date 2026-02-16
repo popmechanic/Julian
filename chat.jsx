@@ -768,21 +768,155 @@ function StatusDots({ ok }) {
   );
 }
 
+/* ── JulianScreen WebSocket Singleton ───────────────────────────────────── */
+// Global WebSocket manager — one connection for all JulianScreenEmbed instances.
+// Created at script scope (outside React), persists for page lifetime.
+// Components subscribe to status via 'julian-screen-status' CustomEvent.
+
+const JulianScreenWS = {
+  ws: null,
+  connected: false,
+  _reconnectTimer: null,
+  _reconnectDelay: 2000,
+
+  connect() {
+    if (this.ws?.readyState === WebSocket.OPEN ||
+        this.ws?.readyState === WebSocket.CONNECTING) return;
+
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = location.hostname === 'localhost'
+      ? 'ws://localhost:3848/ws'
+      : `${proto}//${location.host}/screen/ws`;
+
+    const ws = new WebSocket(url);
+    this.ws = ws;
+
+    ws.onopen = () => {
+      this.connected = true;
+      this._reconnectDelay = 2000;
+      this._clearReconnect();
+      this._broadcast(true);
+
+      // Wire up JScreen feedback forwarding
+      if (window.JScreen) {
+        window.JScreen.sendFeedback = (event) => {
+          // Handle FILE_SELECT in the browser — open in artifact viewer
+          if (event.type === 'FILE_SELECT' && event.tab === 'files') {
+            const fullPath = event.path ? event.path + '/' + event.file : event.file;
+            const artifactUrl = '/api/artifacts/' + fullPath.split('/').map(encodeURIComponent).join('/');
+            document.dispatchEvent(new CustomEvent('julian-file-select', {
+              detail: { filename: fullPath, url: artifactUrl }
+            }));
+          }
+          // Broadcast menu tab changes
+          if (event.type === 'MENU_TAB') {
+            document.dispatchEvent(new CustomEvent('julian-menu-tab', {
+              detail: { tab: event.tab }
+            }));
+          }
+          // Forward all events to server for agent consumption
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(event));
+          }
+        };
+      }
+    };
+
+    ws.onmessage = (event) => {
+      if (!window.JScreen) return;
+      try {
+        const data = JSON.parse(event.data);
+        if (Array.isArray(data)) {
+          const cmds = data.filter(c => c.type !== 'READY');
+          if (cmds.length > 0) window.JScreen.enqueueCommands(cmds);
+        } else if (data.type && data.type !== 'READY') {
+          window.JScreen.enqueueCommands([data]);
+        }
+      } catch {}
+    };
+
+    ws.onclose = () => {
+      this.connected = false;
+      this.ws = null;
+      this._broadcast(false);
+      this._scheduleReconnect();
+    };
+
+    ws.onerror = () => { ws.close(); };
+  },
+
+  send(msg) {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    }
+  },
+
+  _broadcast(connected) {
+    window.dispatchEvent(new CustomEvent('julian-screen-status',
+      { detail: { connected } }));
+  },
+
+  _scheduleReconnect() {
+    if (this._reconnectTimer) return;
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      this.connect();
+    }, this._reconnectDelay);
+    this._reconnectDelay = Math.min(this._reconnectDelay * 2, 30000);
+  },
+
+  _clearReconnect() {
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+  }
+};
+
+window.JulianScreenWS = JulianScreenWS;
+JulianScreenWS.connect();
+
 /* ── JulianScreen Embed ──────────────────────────────────────────────────── */
+// Pure rendering component — no WebSocket logic.
+// Subscribes to the singleton via 'julian-screen-status' CustomEvent.
 
 function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab, noBorder }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
-  const wsRef = useRef(null);
-  const reconnectRef = useRef(null);
-  const reconnectDelayRef = useRef(2000);
   const onFileSelectRef = useRef(onFileSelect);
   const onMenuTabRef = useRef(onMenuTab);
-  const [connected, setConnected] = useState(false);
+  const [connected, setConnected] = useState(window.JulianScreenWS?.connected || false);
   const [scale, setScale] = useState(1);
 
   useEffect(() => { onFileSelectRef.current = onFileSelect; }, [onFileSelect]);
   useEffect(() => { onMenuTabRef.current = onMenuTab; }, [onMenuTab]);
+
+  // Subscribe to singleton WebSocket status
+  useEffect(() => {
+    const handler = (e) => setConnected(e.detail.connected);
+    window.addEventListener('julian-screen-status', handler);
+    return () => window.removeEventListener('julian-screen-status', handler);
+  }, []);
+
+  // Subscribe to file select events from the singleton
+  useEffect(() => {
+    const handler = (e) => {
+      if (onFileSelectRef.current) {
+        onFileSelectRef.current(e.detail.filename, e.detail.url);
+      }
+    };
+    document.addEventListener('julian-file-select', handler);
+    return () => document.removeEventListener('julian-file-select', handler);
+  }, []);
+
+  // Subscribe to menu tab events from the singleton
+  useEffect(() => {
+    const handler = (e) => {
+      if (onMenuTabRef.current) onMenuTabRef.current(e.detail.tab);
+    };
+    document.addEventListener('julian-menu-tab', handler);
+    return () => document.removeEventListener('julian-menu-tab', handler);
+  }, []);
 
   // Initialize JulianScreen on canvas mount
   useEffect(() => {
@@ -795,110 +929,6 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab, no
     if (window.JScreen.setExternalTabBar) {
       window.JScreen.setExternalTabBar(true);
     }
-  }, []);
-
-  // WebSocket connection + feedback handler
-  useEffect(() => {
-    let unmounted = false;
-
-    function connect() {
-      if (unmounted) return;
-      // Don't create a new WS if one is already open or connecting
-      if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
-        return;
-      }
-
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      let wsUrl;
-      if (location.hostname === 'localhost') {
-        wsUrl = 'ws://localhost:3848/ws';
-      } else {
-        wsUrl = `${proto}//${location.host}/screen/ws`;
-      }
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        if (unmounted) { ws.close(); return; }
-        setConnected(true);
-        reconnectDelayRef.current = 2000;
-        if (reconnectRef.current) {
-          clearTimeout(reconnectRef.current);
-          reconnectRef.current = null;
-        }
-        // Set up sendFeedback to intercept FILE_SELECT locally
-        if (window.JScreen) {
-          window.JScreen.sendFeedback = function(event) {
-            // Handle FILE_SELECT in the browser tab — open in artifact viewer
-            if (event.type === 'FILE_SELECT' && event.tab === 'files') {
-              // Build full path from directory path + filename
-              const fullPath = event.path ? event.path + '/' + event.file : event.file;
-              const artifactUrl = '/api/artifacts/' + fullPath.split('/').map(encodeURIComponent).join('/');
-              document.dispatchEvent(new CustomEvent('julian-file-select', {
-                detail: { filename: fullPath, url: artifactUrl }
-              }));
-              if (onFileSelectRef.current) onFileSelectRef.current(fullPath, artifactUrl);
-            }
-            // Notify parent when menu tab changes
-            if (event.type === 'MENU_TAB') {
-              if (onMenuTabRef.current) onMenuTabRef.current(event.tab);
-            }
-            // Forward all events to server for agent consumption
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify(event));
-            }
-          };
-        }
-      };
-
-      ws.onmessage = (event) => {
-        if (!window.JScreen) return;
-        try {
-          const data = JSON.parse(event.data);
-          if (Array.isArray(data)) {
-            const cmds = data.filter(c => c.type !== 'READY');
-            if (cmds.length > 0) window.JScreen.enqueueCommands(cmds);
-          } else if (data.type && data.type !== 'READY') {
-            window.JScreen.enqueueCommands([data]);
-          }
-        } catch {}
-      };
-
-      ws.onclose = () => {
-        setConnected(false);
-        wsRef.current = null;
-        if (unmounted) return; // Don't reconnect after unmount
-        if (!reconnectRef.current) {
-          reconnectRef.current = setTimeout(() => {
-            reconnectRef.current = null;
-            connect();
-          }, reconnectDelayRef.current);
-          reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 2, 30000);
-        }
-      };
-
-      ws.onerror = () => {
-        ws.close();
-      };
-    }
-
-    // Delay connection to let React's mount/unmount cycle settle.
-    // Prevents creating WebSockets that get immediately closed on remount.
-    const connectTimer = setTimeout(connect, 200);
-    return () => {
-      clearTimeout(connectTimer);
-      unmounted = true;
-      if (reconnectRef.current) {
-        clearTimeout(reconnectRef.current);
-        reconnectRef.current = null;
-      }
-      if (wsRef.current) {
-        if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
-          wsRef.current.close();
-        }
-        wsRef.current = null;
-      }
-    };
   }, []);
 
   // Initialize default scene when session becomes active (tab bar handles visibility)
@@ -2517,6 +2547,7 @@ if (typeof window !== 'undefined') {
   window.formatToolInput = formatToolInput;
   window.PixelFace = PixelFace;
   window.StatusDots = StatusDots;
+  window.JulianScreenWS = JulianScreenWS;
   window.JulianScreenEmbed = JulianScreenEmbed;
   window.ThinkingDots = ThinkingDots;
   window.ToolCallBlock = ToolCallBlock;
