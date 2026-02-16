@@ -570,11 +570,11 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
   const hasEmptySlots = cells.some(c => c.type === 'empty');
 
   return (
-    <div style={{ padding: '8px 4px' }}>
+    <div style={{ padding: '12px 8px' }}>
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: 4,
+        gap: 8,
       }}>
         {cells.map((cell, i) => {
           const isSelected = cell.agent && activeAgent === cell.agent.name;
@@ -588,19 +588,19 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
 
           if (cell.type === 'julian') {
             borderColor = '#FFD600';
-            content = <PixelFace talking={false} size={32} />;
+            content = <PixelFace talking={false} size={56} />;
             nameLabel = 'JULIAN';
             clickHandler = () => onSelectAgent(null);
           } else if (cell.type === 'hatching') {
             borderColor = cell.agent.color;
-            content = <EggHatch color={cell.agent.color} size={32} />;
+            content = <EggHatch color={cell.agent.color} size={56} />;
           } else if (cell.type === 'active') {
             const variant = cell.agent.faceVariant || hashNameToFaceVariant(cell.agent.name);
             borderColor = cell.agent.color;
             content = (
               <PixelFace
                 talking={false}
-                size={32}
+                size={56}
                 color={cell.agent.color}
                 eyes={variant.eyes}
                 mouth={variant.mouth}
@@ -616,7 +616,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
             content = (
               <PixelFace
                 talking={false}
-                size={32}
+                size={56}
                 color={cell.agent.color}
                 eyes={variant.eyes}
                 mouth={variant.mouth}
@@ -636,14 +636,14 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
                 flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
-                gap: 2,
-                padding: 4,
+                gap: 4,
+                padding: 12,
                 border: `${(isSelected || isJulianSelected) ? 2 : 1}px solid ${borderColor}`,
-                borderRadius: 4,
+                borderRadius: 8,
                 background: '#0a0a0a',
                 opacity,
                 cursor: clickHandler ? 'pointer' : 'default',
-                minHeight: 52,
+                minHeight: 90,
                 transition: 'border 0.15s, opacity 0.15s',
               }}
             >
@@ -651,9 +651,9 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
               {nameLabel && (
                 <div style={{
                   fontFamily: "'VT323', monospace",
-                  fontSize: '0.55rem',
+                  fontSize: '0.8rem',
                   color: cell.type === 'julian' ? '#FFD600' : (cell.agent?.color || '#666'),
-                  letterSpacing: '0.05em',
+                  letterSpacing: '0.08em',
                   textAlign: 'center',
                   lineHeight: 1,
                   marginTop: 1,
@@ -671,10 +671,10 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, s
           disabled={summoning}
           style={{
             width: '100%',
-            marginTop: 6,
-            padding: '6px 0',
+            marginTop: 12,
+            padding: '10px 0',
             fontFamily: "'VT323', monospace",
-            fontSize: '0.85rem',
+            fontSize: '1.1rem',
             color: summoning ? '#666' : '#FFD600',
             background: summoning ? '#1a1a1a' : '#1a1a00',
             border: `1px solid ${summoning ? '#333' : '#FFD600'}`,
@@ -762,17 +762,19 @@ function StatusDots({ ok }) {
 
 /* ── JulianScreen Embed ──────────────────────────────────────────────────── */
 
-function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
+function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
   const reconnectRef = useRef(null);
   const reconnectDelayRef = useRef(2000);
   const onFileSelectRef = useRef(onFileSelect);
+  const onMenuTabRef = useRef(onMenuTab);
   const [connected, setConnected] = useState(false);
   const [scale, setScale] = useState(1);
 
   useEffect(() => { onFileSelectRef.current = onFileSelect; }, [onFileSelect]);
+  useEffect(() => { onMenuTabRef.current = onMenuTab; }, [onMenuTab]);
 
   // Initialize JulianScreen on canvas mount
   useEffect(() => {
@@ -811,12 +813,14 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
             if (event.type === 'FILE_SELECT' && event.tab === 'browser') {
               const filename = event.file;
               const artifactUrl = '/api/artifacts/' + encodeURIComponent(filename);
-              // Dispatch custom event for parent App to handle
               document.dispatchEvent(new CustomEvent('julian-file-select', {
                 detail: { filename, url: artifactUrl }
               }));
-              // Also call callback prop if provided
               if (onFileSelectRef.current) onFileSelectRef.current(filename, artifactUrl);
+            }
+            // Notify parent when menu tab changes
+            if (event.type === 'MENU_TAB') {
+              if (onMenuTabRef.current) onMenuTabRef.current(event.tab);
             }
             // Forward all events to server for agent consumption
             if (ws.readyState === WebSocket.OPEN) {
@@ -886,12 +890,12 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect }) {
 
     function updateScale() {
       const rect = container.getBoundingClientRect();
-      const sx = Math.floor(rect.width / 640);
-      const sy = Math.floor(rect.height / 480);
+      const sx = rect.width / 640;
+      const sy = rect.height / 480;
       const s = Math.max(1, Math.min(sx, sy));
       setScale(s);
-      canvas.style.width = (640 * s) + 'px';
-      canvas.style.height = (480 * s) + 'px';
+      canvas.style.width = Math.floor(640 * s) + 'px';
+      canvas.style.height = Math.floor(480 * s) + 'px';
       if (window.JScreen) window.JScreen._scale = s;
     }
 
