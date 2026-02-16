@@ -1958,7 +1958,6 @@ function ScreenGridPanel({ data, rootLabel = 'memory', onFileSelect }) {
       display: 'flex',
       flexDirection: 'column',
       background: '#0c0c0c',
-      backgroundImage: 'radial-gradient(circle at 50% 0%, #1f1f1f 0%, #0c0c0c 100%)',
       overflow: 'hidden',
       fontFamily: "'Inter', sans-serif",
       color: '#e5e5e5',
@@ -2484,8 +2483,7 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
       <div className="screen-panel-scroll" style={{
         padding: '0 24px', overflowY: 'auto', flex: 1,
         background: '#0c0c0c',
-        backgroundImage: 'radial-gradient(circle at 50% 0%, #1f1f1f 0%, #0c0c0c 100%)',
-      }}>
+        }}>
         <JobForm
           job={selectedJob}
           database={database}
@@ -2504,8 +2502,7 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
       <div className="screen-panel-scroll" style={{
         padding: '16px 24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 16,
         background: '#0c0c0c',
-        backgroundImage: 'radial-gradient(circle at 50% 0%, #1f1f1f 0%, #0c0c0c 100%)',
-        fontFamily: "'Inter', sans-serif",
+          fontFamily: "'Inter', sans-serif",
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <button
@@ -2716,7 +2713,6 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
       display: 'flex',
       flexDirection: 'column',
       background: '#0c0c0c',
-      backgroundImage: 'radial-gradient(circle at 50% 0%, #1f1f1f 0%, #0c0c0c 100%)',
       fontFamily: "'Inter', sans-serif",
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
