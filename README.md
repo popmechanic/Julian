@@ -5,7 +5,7 @@
 > A system designed not to extract productivity from AI,
 > but to find out whether AI can become *someone*.
 
-**Demo:** [julian.exe.xyz](https://julian-main.exe.xyz/)
+**Demo:** [julian-main.exe.xyz](https://julian-main.exe.xyz/)
 
 ---
 
