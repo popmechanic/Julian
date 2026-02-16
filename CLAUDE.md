@@ -117,7 +117,7 @@ The frontend is split into three files, each under 2,000 lines, loaded via in-br
 
 ## Fireproof Database
 
-The browser database is `julian-chat-v4` (Fireproof with Clerk auth). Cloud sync goes through `connect-share.exe.xyz`.
+The browser database is `julian-chat-v5` (Fireproof with Clerk auth). Cloud sync goes through `connect-share.exe.xyz`.
 
 ### Key facts
 
