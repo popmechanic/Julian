@@ -671,7 +671,7 @@ These features were planned but not built in the initial implementation:
 - **State transition animations**: Brief bounce/blink when switching between states (currently switches immediately)
 - **Multi-agent namespacing**: `@agent` prefix is stripped but could be used to scope display regions
 - **`READY` polling from agent side**: Agent has no way to know when the browser is ready except polling `/health` for `connections > 0`
-- **Deployment to production**: Currently runs locally only. To deploy alongside the Julian bridge, would need nginx proxy config for port 3848 and rsync of `julianscreen/` to the server.
+- **Deployment to production**: Runs via `julian-screen` systemd service on port 3848. The browser connects through the WebSocket proxy at `/screen/ws` in server.ts.
 
 ---
 

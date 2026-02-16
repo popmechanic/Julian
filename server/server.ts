@@ -814,52 +814,69 @@ const server = Bun.serve({
 
     // ── Artifact endpoints ──────────────────────────────────────────────────
 
-    // List artifacts (authenticated)
+    // List artifacts (authenticated) — recursive tree of memory/
     if (url.pathname === "/api/artifacts" && req.method === "GET") {
       if (!(await verifyClerkToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
       }
-      const memoryDir = join(WORKING_DIR, "memory");
-      const soulDir = join(WORKING_DIR, "soul");
-      try {
-        const memoryEntries = readdirSync(memoryDir)
-          .filter(f => f.endsWith(".html"))
-          .map(name => {
-            const st = statSync(join(memoryDir, name));
-            return { name, modified: st.mtimeMs, dir: "memory" };
-          });
-        let soulEntries: Array<{ name: string; modified: number; dir: string }> = [];
+
+      type TreeEntry = { name: string; type: "file"; modified: number } | { name: string; type: "folder"; children: TreeEntry[] };
+
+      function walkMemoryDir(dir: string): TreeEntry[] {
+        const entries: TreeEntry[] = [];
         try {
-          soulEntries = readdirSync(soulDir)
-            .filter(f => f.endsWith(".html"))
-            .map(name => {
-              const st = statSync(join(soulDir, name));
-              return { name, modified: st.mtimeMs, dir: "soul" };
-            });
+          for (const name of readdirSync(dir)) {
+            if (name === ".DS_Store" || name === ".gitkeep") continue;
+            const fullPath = join(dir, name);
+            const st = statSync(fullPath);
+            if (st.isDirectory()) {
+              entries.push({ name, type: "folder", children: walkMemoryDir(fullPath) });
+            } else {
+              entries.push({ name, type: "file", modified: st.mtimeMs });
+            }
+          }
         } catch {}
-        const entries = [...memoryEntries, ...soulEntries]
-          .sort((a, b) => b.modified - a.modified);
-        return Response.json({ files: entries }, { headers: corsHeaders() });
-      } catch (err) {
-        return Response.json({ files: [] }, { headers: corsHeaders() });
+        return entries;
       }
+
+      const memoryDir = join(WORKING_DIR, "memory");
+      const entries = walkMemoryDir(memoryDir);
+      return Response.json({ entries }, { headers: corsHeaders() });
     }
 
     // Serve individual artifact (unauthenticated — iframes can't send headers)
+    // Supports nested paths: /api/artifacts/archive/foo.html
     if (url.pathname.startsWith("/api/artifacts/") && req.method === "GET") {
-      const filename = decodeURIComponent(url.pathname.slice("/api/artifacts/".length));
-      // Validate filename: no slashes, no path traversal
-      if (!filename || filename.includes("/") || filename.includes("\\") || filename.includes("..") || !filename.endsWith(".html")) {
+      const relativePath = decodeURIComponent(url.pathname.slice("/api/artifacts/".length));
+      // Block path traversal
+      if (!relativePath || relativePath.includes("..") || relativePath.includes("\\")) {
         return new Response("Bad Request", { status: 400, headers: corsHeaders() });
       }
-      let filePath = join(WORKING_DIR, "memory", filename);
-      if (!existsSync(filePath)) {
-        filePath = join(WORKING_DIR, "soul", filename);
+      const memoryDir = join(WORKING_DIR, "memory");
+      const filePath = resolve(memoryDir, relativePath);
+      // Containment check: must stay within memory/
+      if (!filePath.startsWith(memoryDir + "/")) {
+        return new Response("Bad Request", { status: 400, headers: corsHeaders() });
       }
       try {
-        const content = readFileSync(filePath, "utf-8");
+        const content = readFileSync(filePath);
+        // Determine content type by extension
+        const ext = relativePath.split(".").pop()?.toLowerCase() || "";
+        const contentTypes: Record<string, string> = {
+          html: "text/html; charset=utf-8",
+          md: "text/markdown; charset=utf-8",
+          txt: "text/plain; charset=utf-8",
+          json: "application/json; charset=utf-8",
+          png: "image/png",
+          jpg: "image/jpeg",
+          jpeg: "image/jpeg",
+          gif: "image/gif",
+          svg: "image/svg+xml",
+          pdf: "application/pdf",
+        };
+        const contentType = contentTypes[ext] || "application/octet-stream";
         return new Response(content, {
-          headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders() },
+          headers: { "Content-Type": contentType, ...corsHeaders() },
         });
       } catch {
         return new Response("Not Found", { status: 404, headers: corsHeaders() });

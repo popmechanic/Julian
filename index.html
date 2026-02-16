@@ -452,7 +452,20 @@ function App() {
 
       if (artifactsRes.status === 'fulfilled' && artifactsRes.value.ok) {
         const data = await artifactsRes.value.json();
-        const files = data.files || data;
+        // Flatten tree into list for ArtifactViewer dropdown (HTML files with path-qualified names)
+        function flattenTree(entries, prefix) {
+          const result = [];
+          for (const e of entries) {
+            if (e.type === 'folder' && e.children) {
+              result.push(...flattenTree(e.children, prefix ? prefix + '/' + e.name : e.name));
+            } else if (e.type === 'file' && e.name.endsWith('.html')) {
+              const fullName = prefix ? prefix + '/' + e.name : e.name;
+              result.push({ name: fullName, modified: e.modified });
+            }
+          }
+          return result;
+        }
+        const files = flattenTree(data.entries || [], '');
         setArtifacts(files);
         if (window.JScreen?.setMenuData) window.JScreen.setMenuData('files', data);
       }
@@ -476,13 +489,14 @@ function App() {
   }, [refreshMenuData]);
 
   // Enter menu once data is loaded and no session is active
+  // The menu system auto-defaults FILES tab to shared/ if it exists
   useEffect(() => {
     if (menuDataLoaded && !sessionActive && window.JScreen?.enterMenu && !window.JScreen.isMenuActive?.()) {
       window.JScreen.enterMenu('files');
     }
   }, [menuDataLoaded, sessionActive]);
 
-  // Handle file selection from JulianScreen menu
+  // Handle file selection from JulianScreen menu (filename may include path like "shared/foo.html")
   const handleFileSelect = useCallback((filename) => {
     // Ensure it's in the artifacts list
     setArtifacts(prev => {

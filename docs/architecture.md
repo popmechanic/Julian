@@ -105,8 +105,8 @@ The server maintains a single persistent Claude CLI subprocess:
 | `POST` | `/api/session/start` | Clerk JWT | Spawns Claude subprocess, streams wake-up SSE response |
 | `POST` | `/api/session/end` | Clerk JWT | Kills Claude subprocess |
 | `POST` | `/api/chat` | Clerk JWT | Sends message to Claude stdin, returns SSE stream |
-| `GET` | `/api/artifacts` | Clerk JWT | Lists `*.html` files from `memory/` sorted by mtime desc |
-| `GET` | `/api/artifacts/:filename` | None | Serves HTML artifact file (iframes can't send headers) |
+| `GET` | `/api/artifacts` | Clerk JWT | Recursive tree of `memory/` — returns `{ entries: [...] }` with folders and all file types |
+| `GET` | `/api/artifacts/*path` | None | Serves any file from `memory/` by path (e.g. `shared/foo.html`, `archive/bar.html`). Content-type by extension. |
 | `GET` | `/api/skills` | Clerk JWT | Lists available Claude Code skills/plugins |
 | `GET` | `/api/agents` | Clerk JWT | Lists active agent teams |
 | `WS` | `/screen/ws` | None | WebSocket proxy to JulianScreen (port 3848) |
@@ -225,10 +225,12 @@ Both tabs poll `/api/health` after setup until `processAlive && !needsSetup`.
 
 ### Artifact System
 
-- **Polling**: `refreshArtifacts()` calls `GET /api/artifacts` every 10 seconds.
-- **Display**: `ArtifactViewer` renders a dropdown selector and an `<iframe>` pointed at `/api/artifacts/<filename>`.
+- **API tree**: `GET /api/artifacts` returns `{ entries: [...] }` — a recursive tree of `memory/`. Each entry is `{ name, type: "file", modified }` or `{ name, type: "folder", children: [...] }`. Filters `.DS_Store` and `.gitkeep`. All file types included (not just `.html`).
+- **Path serving**: `GET /api/artifacts/*path` serves any file within `memory/` by path (e.g. `shared/foo.html`, `archive/bar.html`). Content-type determined by extension. Path traversal blocked via `..` check and `resolve()` containment.
+- **Directory convention**: `memory/shared/` is for user-facing artifacts. Julian's own memories stay at the `memory/` root. The FILES tab defaults to `shared/` but users can navigate up.
+- **Display**: `ArtifactViewer` renders a dropdown selector (flattened HTML files with path-qualified names) and an `<iframe>` pointed at `/api/artifacts/<path>`.
 - **Iframe sandbox**: `allow-scripts allow-popups allow-popups-to-escape-sandbox` (no `allow-same-origin`).
-- **Open in new tab**: Direct link to `/api/artifacts/<filename>`.
+- **Open in new tab**: Direct link to `/api/artifacts/<path>`.
 - **Tracking**: CLAUDE.md maintains a manually-updated list of all artifacts with descriptions.
 
 ### Key Components

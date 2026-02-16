@@ -816,12 +816,13 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab, no
           window.JScreen.sendFeedback = function(event) {
             // Handle FILE_SELECT in the browser tab — open in artifact viewer
             if (event.type === 'FILE_SELECT' && event.tab === 'files') {
-              const filename = event.file;
-              const artifactUrl = '/api/artifacts/' + encodeURIComponent(filename);
+              // Build full path from directory path + filename
+              const fullPath = event.path ? event.path + '/' + event.file : event.file;
+              const artifactUrl = '/api/artifacts/' + fullPath.split('/').map(encodeURIComponent).join('/');
               document.dispatchEvent(new CustomEvent('julian-file-select', {
-                detail: { filename, url: artifactUrl }
+                detail: { filename: fullPath, url: artifactUrl }
               }));
-              if (onFileSelectRef.current) onFileSelectRef.current(filename, artifactUrl);
+              if (onFileSelectRef.current) onFileSelectRef.current(fullPath, artifactUrl);
             }
             // Notify parent when menu tab changes
             if (event.type === 'MENU_TAB') {
@@ -1716,7 +1717,7 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, embedded }) {
         {/* Open in new tab */}
         {activeArtifact && (
           <a
-            href={'/api/artifacts/' + encodeURIComponent(activeArtifact)}
+            href={'/api/artifacts/' + activeArtifact.split('/').map(encodeURIComponent).join('/')}
             target="_blank"
             rel="noopener noreferrer"
             style={{
@@ -1746,7 +1747,7 @@ function ArtifactViewer({ activeArtifact, artifacts, onSelect, embedded }) {
       {activeArtifact ? (
         <iframe
           key={activeArtifact}
-          src={'/api/artifacts/' + encodeURIComponent(activeArtifact)}
+          src={'/api/artifacts/' + activeArtifact.split('/').map(encodeURIComponent).join('/')}
           style={{
             flex: 1,
             width: '100%',

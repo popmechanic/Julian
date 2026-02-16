@@ -21,7 +21,7 @@
     scrollOffset: 0,       // rows scrolled (0-based)
     externalTabBar: false, // true when React renders the tab bar
     data: {
-      files: null,         // { files: [{ name, modified }] }
+      files: null,         // { entries: [{ name, type: 'folder'|'file', children?, modified? }] }
       skills: null,        // { entries: [{ name, type, children? }] }
       agents: null,        // { teams: [{ name, members: [{ name, agentType }] }] }
     }
@@ -268,13 +268,24 @@
   }
 
   function getBrowserItems(data) {
-    if (!data || !data.files) return [];
-    // Sort alphabetically by name
-    const sorted = [...data.files].sort((a, b) => a.name.localeCompare(b.name));
-    return sorted.map(f => ({
-      name: f.name,
-      type: 'file',
-    }));
+    if (!data || !data.entries) return [];
+    let entries = data.entries;
+    // Navigate into nested path
+    for (const segment of state.path) {
+      const found = entries.find(e => e.name === segment && e.type === 'folder');
+      if (found && found.children) {
+        entries = found.children;
+      } else {
+        return [];
+      }
+    }
+    // Sort: folders first, then alphabetical
+    return [...entries]
+      .sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      })
+      .map(e => ({ name: e.name, type: e.type }));
   }
 
   function getSkillItems(data) {
@@ -331,7 +342,14 @@
         if (cx >= tab.x && cx < tab.x + tab.w) {
           if (tab.id !== state.tab) {
             state.tab = tab.id;
-            state.path = [];
+            // Default FILES to shared/ if it exists
+            if (tab.id === 'files') {
+              const data = state.data.files;
+              const hasShared = data?.entries?.some(e => e.name === 'shared' && e.type === 'folder');
+              state.path = hasShared ? ['shared'] : [];
+            } else {
+              state.path = [];
+            }
             updateItems();
             render();
             S.sendFeedback({ type: 'MENU_TAB', tab: tab.id });
@@ -426,7 +444,17 @@
   S.registerHandler('MENU', function(cmd) {
     state.active = true;
     state.tab = cmd.tab || 'files';
-    state.path = [];
+    // Support explicit initial path, or default FILES to shared/ if it exists
+    if (cmd.initialPath) {
+      state.path = Array.isArray(cmd.initialPath) ? cmd.initialPath : [cmd.initialPath];
+    } else if (state.tab === 'files') {
+      // Default to shared/ if the folder exists in the data
+      const data = state.data.files;
+      const hasShared = data?.entries?.some(e => e.name === 'shared' && e.type === 'folder');
+      state.path = hasShared ? ['shared'] : [];
+    } else {
+      state.path = [];
+    }
     updateItems();
     render();
   });
@@ -458,8 +486,8 @@
     }
   };
 
-  S.enterMenu = function(tab) {
-    S.enqueueCommands([{ type: 'MENU', tab: tab || 'files' }]);
+  S.enterMenu = function(tab, initialPath) {
+    S.enqueueCommands([{ type: 'MENU', tab: tab || 'files', initialPath: initialPath }]);
   };
 
   S.exitMenu = function() {
