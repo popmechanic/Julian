@@ -882,8 +882,11 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab, no
       };
     }
 
-    connect();
+    // Delay connection to let React's mount/unmount cycle settle.
+    // Prevents creating WebSockets that get immediately closed on remount.
+    const connectTimer = setTimeout(connect, 200);
     return () => {
+      clearTimeout(connectTimer);
       unmounted = true;
       if (reconnectRef.current) {
         clearTimeout(reconnectRef.current);
