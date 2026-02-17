@@ -18,5 +18,10 @@
     "url": "https://julian-main.exe.xyz",
     "provisioned": "2026-02-16T17:25:00Z",
     "branch": "main"
+  },
+  "julian-edge": {
+    "url": "https://julian-edge.exe.xyz",
+    "provisioned": "2026-02-17T22:00:00Z",
+    "branch": "post-hackathon"
   }
 }
