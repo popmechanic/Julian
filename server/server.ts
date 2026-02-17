@@ -453,6 +453,12 @@ function writeTurn(message: string): ReadableStream {
       controller.close();
       releaseLock();
     },
+    cancel() {
+      // Client disconnected — release the turn lock so subsequent turns aren't stuck
+      activeListener = null;
+      if (turnResolve) { turnResolve(); turnResolve = null; }
+      releaseLock();
+    },
   });
 }
 
