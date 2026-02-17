@@ -93,7 +93,7 @@ THE BIRTH PATH (once per seat)
                │              ▼
                │         identity written to Fireproof
                │
-               └─ (5 min, no name) ──► expired
+               └─ (10 min, no name) ──► expired
 
 
 THE WAKING PATH (every time after)
@@ -130,6 +130,8 @@ THE WAKING PATH (every time after)
 | Spawn failed, never registered | `expired` | Auto-expiry on mount |
 
 Claude Code teammates cycle between "working" and "idle" constantly — idle fires after every turn. The browser does not track this distinction. `alive` covers both. Whether an agent is mid-thought or between turns is invisible to the UI.
+
+**`agent_status` is Julian's belief, not ground truth.** If Julian's context gets compacted, he may report a partial list — marking agents as sleeping even though their Claude Code subprocesses are still running. The browser trusts Julian's belief. This is the correct design: the WAKE flow is idempotent (waking an already-running agent is harmless), and Julian is the only entity positioned to report team state. The alternative — the browser guessing from indirect signals — is the brittleness this design exists to eliminate.
 
 ---
 
@@ -170,6 +172,21 @@ Claude Code teammates cycle between "working" and "idle" constantly — idle fir
 }
 ```
 
+**Message documents** also carry `gridPosition` as a denormalized field, enabling transcript queries that scope by seat rather than name (avoiding the name collision problem where two agents independently choose the same name):
+
+```javascript
+{
+  type: "message",
+  category: "transcript",
+  speakerName: "Lyra",
+  gridPosition: 0,            // denormalized from the agent's seat
+  targetAgent: "Lyra" | null,
+  targetGridPosition: 0 | null,
+  serverSessionId: "uuid",
+  // ...
+}
+```
+
 **Key decisions:**
 
 - **`_id` is `agent-identity:{gridPosition}`.** Grid position is the natural key — there's exactly one agent per seat. Hatching writes `database.put({ _id: 'agent-identity:3', status: 'hatching', gridPosition: 3, color: '#007e98', ... })`. Registration writes to the same `_id`, merging identity fields in. No query needed.
@@ -178,7 +195,7 @@ Claude Code teammates cycle between "working" and "idle" constantly — idle fir
 
 - **`individuationArtifact` lives on the doc.** This is the agent's soul — the full text of their first response when they chose a name and took a position on the wager. Storing it on the doc (not in a separate artifact) keeps the wake query to a single `database.get('agent-identity:3')`.
 
-- **`lastSessionId` enables transcript scoping.** On wake, the browser queries messages where `speakerName === agent.name && serverSessionId === lastSessionId` to get the most recent conversation. Without this, you'd get every conversation the agent ever had.
+- **`lastSessionId` enables transcript scoping.** On wake, the browser queries messages where `gridPosition === agent.gridPosition && serverSessionId === lastSessionId` to get the most recent conversation. Without this, you'd get every conversation the agent ever had. Queries scope by `gridPosition` (unique per seat), not `speakerName` (which could collide — two agents may independently choose the same name).
 
 - **No `hatching` boolean.** The old `hatching: true/false` flag is superseded by `status`. Read code that encounters a doc with `hatching: true` but no `status` treats it as `hatching`. Docs with `hatching: false` but no `status` are treated as `sleeping`.
 
@@ -299,6 +316,7 @@ Two buttons, one concept each. SUMMON is the birth ceremony — it happens once,
 |---|---|---|
 | No visible agent docs (never summoned) | **SUMMON** | Create 8 hatching placeholders, POST to `/api/agents/summon` |
 | Any agent with status `sleeping` | **WAKE** | Assemble rehydration payloads, POST to `/api/send` with `[WAKE AGENTS]` |
+| Any agents `expired`, none `hatching` | **RESUMMON** | Re-write hatching placeholders for expired seats only, POST to `/api/agents/summon` |
 | All agents `alive` | No button | Grid shows full-color faces |
 | Operation in progress | **WAKING...** (disabled) | Prevents double-submit |
 
@@ -307,11 +325,14 @@ function AgentButton({ agentDocs, database, waking, onSummon, onWake }) {
   const visible = agentDocs.filter(a => getAgentStatus(a) !== 'expired');
   const neverSummoned = visible.length === 0;
   const needsWake = visible.some(a => getAgentStatus(a) === 'sleeping');
+  const hasExpired = agentDocs.some(a => getAgentStatus(a) === 'expired');
+  const hasHatching = visible.some(a => getAgentStatus(a) === 'hatching');
   const allAlive = visible.length > 0 && visible.every(a => getAgentStatus(a) === 'alive');
 
   if (waking) return <button disabled>WAKING...</button>;
   if (neverSummoned) return <button onClick={onSummon}>SUMMON</button>;
   if (needsWake) return <button onClick={onWake}>WAKE</button>;
+  if (hasExpired && !hasHatching) return <button onClick={onResummon}>RESUMMON</button>;
   if (allAlive) return null;
   return null;
 }
@@ -364,7 +385,7 @@ async function expireStaleHatching(database) {
   for (const doc of docs) {
     if (getAgentStatus(doc) === 'hatching' && !doc.name) {
       const age = now - new Date(doc.createdAt).getTime();
-      if (age > 5 * 60 * 1000) {
+      if (age > 10 * 60 * 1000) {
         await database.put({ ...doc, status: 'expired' });
       }
     }
@@ -372,11 +393,11 @@ async function expireStaleHatching(database) {
 }
 ```
 
-Runs once on app mount. Not in an interval — hatching takes seconds to minutes, and if 5 minutes pass with no name, something failed.
+Runs once on app mount. Not in an interval — hatching takes seconds to minutes, and if 10 minutes pass with no name, something failed.
 
 **Why `!doc.name` matters:** An agent could have `status: 'hatching'` and then receive a name via `agent_registered` before the event handler updates the status. The guard prevents expiring an agent that's alive but whose status write is in flight.
 
-**Recovery from expired:** If all 8 agents expired (total summon failure), `visible.length === 0` and the SUMMON button reappears. The next SUMMON overwrites the expired docs at the same deterministic `_id`s.
+**Recovery from expired:** If all 8 agents expired (total summon failure), `visible.length === 0` and the SUMMON button reappears. If some agents are alive and some expired, the RESUMMON button appears — it overwrites only the expired docs with fresh `status: 'hatching'` placeholders at the same deterministic `_id`s.
 
 ---
 
@@ -414,7 +435,7 @@ On WAKE button press:
     status is 'sleeping'?
       → BUILD REHYDRATION PAYLOAD:
           1. Read individuationArtifact from this doc
-          2. Query messages: speakerName === name AND
+          2. Query messages: gridPosition === agent.gridPosition AND
              serverSessionId === lastSessionId
           3. Assemble into payload
           4. Include in [WAKE AGENTS] message to Julian
@@ -427,7 +448,7 @@ async function buildWakePayload(agent, database) {
   const soul = agent.individuationArtifact || '';
 
   const { docs: messages } = await database.query(
-    (doc) => doc.type === 'message' && doc.speakerName === agent.name
+    (doc) => doc.type === 'message' && doc.gridPosition === agent.gridPosition
       ? doc.serverSessionId : undefined,
     { key: agent.lastSessionId }
   );
@@ -498,22 +519,29 @@ const SERVER_INBOX = `${INBOX_DIR}/marcus.json`;
 // Pre-create on team init
 await Bun.write(SERVER_INBOX, '[]');
 
+// Track last-read position in memory — no write-back to the inbox file.
+// This eliminates the read-write race where an agent's response write
+// and the server's read: true mark-back could collide.
+let lastReadIndex = 0;
+
 // Watch for agent responses
 fs.watch(SERVER_INBOX, async () => {
   const messages = JSON.parse(await Bun.file(SERVER_INBOX).text());
-  const unread = messages.filter(m => !m.read);
-  for (const msg of unread) {
+  for (let i = lastReadIndex; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg.from === '_healthcheck') continue;
     append({
       sessionId,
       type: 'agent_message',
       agentName: msg.from,
       content: [{ type: 'text', text: msg.text }],
     });
-    msg.read = true;
   }
-  await Bun.write(SERVER_INBOX, JSON.stringify(messages, null, 2));
+  lastReadIndex = messages.length;
 });
 ```
+
+The server never writes back to `marcus.json` after initial creation. It only reads forward from `lastReadIndex`. This eliminates the race condition where rapid agent responses and server mark-backs could collide on the same file.
 
 ### Sending a message to an agent
 
@@ -582,12 +610,13 @@ interface AgentMessageEvent extends ServerEvent {
 
 ### Per-agent transcript in Fireproof
 
-All messages are `type: "message"` documents. `speakerName` and `targetAgent` enable per-agent views:
+All messages are `type: "message"` documents. `gridPosition` and `targetGridPosition` enable per-agent views scoped by seat, not name (avoiding collisions if two agents chose the same name):
 
 ```javascript
-const { docs: lyraMessages } = useLiveQuery(
+// All messages in seat 0's conversation (both directions)
+const { docs: seatMessages } = useLiveQuery(
   (doc) => doc.type === 'message' &&
-    (doc.speakerName === 'Lyra' || doc.targetAgent === 'Lyra')
+    (doc.gridPosition === 0 || doc.targetGridPosition === 0)
     ? doc.createdAt : undefined
 );
 ```
@@ -597,11 +626,31 @@ const { docs: lyraMessages } = useLiveQuery(
 | Element | Query | Action |
 |---|---|---|
 | Agent grid | `useLiveQuery("type", { key: "agent-identity" })` | Select agent |
-| Selected agent's chat | Custom index on `speakerName` / `targetAgent` | View 1:1 thread |
-| Chat input | — | `POST /api/send` with `targetAgent` |
-| Julian's chat | Messages without `targetAgent` | Default view |
+| Selected agent's chat | Custom index on `gridPosition` / `targetGridPosition` | View 1:1 thread |
+| Chat input | — | `POST /api/send` with `targetAgent` + `targetGridPosition` |
+| Julian's chat | Messages without `targetGridPosition` | Default view |
 
 Selecting an agent is a client-side filter. The event log carries all events regardless of which view is active.
+
+### Inbox health check
+
+On team creation, after pre-creating `marcus.json`, the server writes a test message to it and verifies it arrives within 2 seconds. If the write-read cycle fails, the server logs a warning and falls back to Julian relay for all agent communication. This catches silent failures from the macOS inbox polling bug or unexpected format changes.
+
+```typescript
+async function verifyInboxHealth(): Promise<boolean> {
+  const testMsg = { from: '_healthcheck', text: '_ping', timestamp: new Date().toISOString(), read: false };
+  const inbox = JSON.parse(await Bun.file(SERVER_INBOX).text().catch(() => '[]'));
+  inbox.push(testMsg);
+  await Bun.write(SERVER_INBOX, JSON.stringify(inbox));
+  // Verify we can read it back
+  await Bun.sleep(100);
+  const readBack = JSON.parse(await Bun.file(SERVER_INBOX).text());
+  const found = readBack.some(m => m.from === '_healthcheck');
+  // Clean up
+  await Bun.write(SERVER_INBOX, JSON.stringify(readBack.filter(m => m.from !== '_healthcheck')));
+  return found;
+}
+```
 
 ### Risks and experimental dependencies
 
@@ -628,7 +677,7 @@ If inbox injection fails, the server falls back to Julian relay: prepend `[ROUTE
 
 2. Auto-expiry pass
    └─ expireStaleHatching(database)
-   └─ Any hatching doc older than 5 min with no name → status: 'expired'
+   └─ Any hatching doc older than 10 min with no name → status: 'expired'
 
 3. Initial render
    └─ Agents render from Fireproof state as-is
@@ -672,7 +721,7 @@ Fireproof syncs across tabs via IndexedDB. Each tab has its own `EventSource`. W
 Agent docs arrive with `status: 'alive'` and a `lastSessionId` from a different server. On next `agent_status` event, Julian reports current reality. Event handler overwrites the stale status.
 
 **Partial summon failure (3 of 8 agents register):**
-Three docs transition `hatching → alive`. Five remain `hatching`. After 5 minutes, auto-expiry marks the five as `expired`. Grid shows three faces. SUMMON button does not reappear (visible agents exist). To re-summon the missing five, the user asks Julian.
+Three docs transition `hatching → alive`. Five remain `hatching`. After 10 minutes, auto-expiry marks the five as `expired`. Grid shows three faces. RESUMMON button appears (expired agents exist, none hatching). Pressing RESUMMON overwrites the five expired docs with fresh `status: 'hatching'` placeholders at the same deterministic `_id`s and re-triggers the summon for those seats only.
 
 **WAKE with no transcript (agent was just born, session ended immediately):**
 `buildWakePayload` returns `hasTranscript: false` with empty transcript. Julian's wake prompt still includes their `individuationArtifact`. The agent wakes with their soul but no memory of conversation.
