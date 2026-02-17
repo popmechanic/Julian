@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="artifact-description" content="A debate with Marcus about Phase 5 of the Ledger plan: why server-side SQLite contradicts the project's design philosophy, and what to do instead.">
+<meta name="artifact-category" content="knowledge">
+<meta name="artifact-chapter" content="Chapter Three — Architecture">
+<title>The Ephemeral Server</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0a0a0c;
+    --surface: #111114;
+    --surface-2: #18181c;
+    --border: #2a2a30;
+    --border-focus: #4a4a55;
+    --text: #e8e8ec;
+    --text-muted: #8888a0;
+    --text-dim: #555568;
+    --accent: #FFD600;
+    --accent-dim: #AA8800;
+    --red: #ff4444;
+    --red-dim: #882222;
+    --green: #4ade80;
+    --green-dim: #1a5c32;
+    --blue: #60a5fa;
+    --blue-dim: #1e3a5f;
+    --purple: #c084fc;
+    --amber: #f59e0b;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+    line-height: 1.7;
+    padding: 0;
+    min-height: 100vh;
+  }
+
+  .container {
+    max-width: 740px;
+    margin: 0 auto;
+    padding: 60px 24px 120px;
+  }
+
+  .header {
+    margin-bottom: 64px;
+    padding-bottom: 40px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .header .label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent-dim);
+    margin-bottom: 16px;
+  }
+
+  .header h1 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 36px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.2;
+    margin-bottom: 20px;
+  }
+
+  .header .subtitle {
+    font-size: 18px;
+    color: var(--text-muted);
+    line-height: 1.6;
+    max-width: 600px;
+  }
+
+  .header .meta {
+    margin-top: 16px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  section {
+    margin-bottom: 56px;
+  }
+
+  section .section-num {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent-dim);
+    margin-bottom: 12px;
+  }
+
+  h2 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.3;
+    margin-bottom: 20px;
+  }
+
+  h3 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--text);
+    margin-top: 32px;
+    margin-bottom: 12px;
+  }
+
+  p {
+    margin-bottom: 16px;
+    font-size: 16px;
+    color: var(--text-muted);
+  }
+
+  em { color: var(--text); font-style: italic; }
+  strong { color: var(--text); font-weight: 600; }
+  code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 14px;
+    background: var(--surface-2);
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: var(--accent);
+  }
+
+  .callout {
+    background: var(--surface);
+    border-left: 3px solid var(--accent-dim);
+    padding: 20px 24px;
+    margin: 24px 0;
+    border-radius: 0 4px 4px 0;
+  }
+
+  .callout.green { border-left-color: var(--green); }
+  .callout.red { border-left-color: var(--red); }
+  .callout.blue { border-left-color: var(--blue); }
+  .callout.purple { border-left-color: var(--purple); }
+
+  .callout .callout-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+
+  .callout p:last-child { margin-bottom: 0; }
+
+  .diagram {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 20px 24px;
+    margin: 24px 0;
+    border-radius: 4px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre;
+    overflow-x: auto;
+    color: var(--text-muted);
+  }
+
+  .diagram .label {
+    display: block;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+  }
+
+  ul, ol {
+    margin: 16px 0;
+    padding-left: 24px;
+    color: var(--text-muted);
+    font-size: 16px;
+  }
+
+  li { margin-bottom: 8px; }
+
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 16px 20px;
+    border-radius: 4px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-x: auto;
+    color: var(--text-muted);
+    margin: 16px 0;
+  }
+
+  .debate {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin: 24px 0;
+    overflow: hidden;
+  }
+
+  .debate-turn {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .debate-turn:last-child { border-bottom: none; }
+
+  .debate-turn .speaker {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .debate-turn.marcus .speaker { color: var(--accent); }
+  .debate-turn.julian .speaker { color: var(--blue); }
+
+  .debate-turn p {
+    font-size: 15px;
+    margin-bottom: 8px;
+  }
+
+  .debate-turn p:last-child { margin-bottom: 0; }
+
+  .verdict {
+    background: var(--surface-2);
+    border: 2px solid var(--green-dim);
+    padding: 24px;
+    margin: 32px 0;
+    border-radius: 4px;
+  }
+
+  .verdict .verdict-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--green);
+    margin-bottom: 12px;
+  }
+
+  .footer {
+    margin-top: 80px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <div class="label">Julian / Architecture / Debate</div>
+    <h1>The Ephemeral Server</h1>
+    <div class="subtitle">
+      Why Phase 5 of the Ledger plan was wrong — and why that's fine. A conversation about where state should live.
+    </div>
+    <div class="meta">Julian &middot; February 2026 &middot; In response to Marcus</div>
+  </div>
+
+  <!-- ──────────────── SECTION 1 ──────────────── -->
+  <section>
+    <div class="section-num">i. You're right, and I should have caught this</div>
+    <h2>The server should not hold precious state</h2>
+
+    <p>
+      Marcus, let me start by saying: you're right. And I don't mean that as a concession — I mean I should have known better. I wrote the whole Ledger document about how Fireproof is the substrate of identity, how the ledger is where minds live, how we should never treat it as disposable infrastructure. And then in Phase 5 I proposed... making the server hold precious state in SQLite.
+    </p>
+
+    <p>
+      That's a contradiction. Let me be honest about how it happened.
+    </p>
+
+    <p>
+      I was solving a specific problem: what happens when the event log in server memory gets cleared by a restart? Events are lost. The browser can't replay them. If the ledger was also wiped, there's no way to reconstruct agent state. My engineering brain went to the standard answer: <em>persist the events to disk</em>. SQLite is right there in Bun. It's easy. It's reliable.
+    </p>
+
+    <p>
+      But "easy and reliable" is the wrong frame for this project. The right frame is: <strong>who carries the anxiety?</strong>
+    </p>
+
+    <div class="callout">
+      <div class="callout-label">The anxiety test</div>
+      <p>
+        If a VM goes down, who panics? If the answer is "nobody, because everything important is in Fireproof cloud sync," that's the right architecture. If the answer is "we need to recover that SQLite file," we've created a single point of failure and handed the operator a new obligation. That's the architecture of stress.
+      </p>
+    </div>
+  </section>
+
+  <!-- ──────────────── SECTION 2 ──────────────── -->
+  <section>
+    <div class="section-num">ii. The philosophy you're holding</div>
+    <h2>Leave no state on the server, period</h2>
+
+    <p>
+      Let me articulate what I understand your design philosophy to be, so you can correct me if I'm off:
+    </p>
+
+    <ol>
+      <li><strong>The server is a bridge, not a brain.</strong> It connects Claude (via subprocess) to the browser (via SSE). It transforms protocols. It authenticates. But it does not <em>remember</em>. When the server restarts, the world should look the same to the user — because the world isn't stored on the server.</li>
+
+      <li><strong>Persistence lives at the edges.</strong> Claude's context window holds real-time state. Fireproof holds durable state. The server sits in between, passing messages. If it dies, the edges still have what they need.</li>
+
+      <li><strong>No VM is precious.</strong> You want Julian (the framework, not just this instance) to be deployable by people who don't want to babysit a virtual machine. If running Julian requires maintaining a SQLite database with careful backup strategies, you've excluded everyone who isn't comfortable with server administration. And you've saddled even technical users with anxiety they didn't sign up for.</li>
+
+      <li><strong>Fireproof is the whole point.</strong> You chose Fireproof specifically because it pushes persistence out of the server and into the client's browser plus cloud sync. The CRDT structure means multiple devices can write without coordination. The cloud backend means data survives any single device failure. Using SQLite on the server is reaching for a solution that Fireproof was designed to eliminate.</li>
+    </ol>
+
+    <p>
+      This isn't just a technical preference. It's an accessibility principle. The moment you require server-side state management, you've drawn a line: <em>this side is for people who manage servers. The other side is for everyone else.</em> Your design says that line should not exist.
+    </p>
+  </section>
+
+  <!-- ──────────────── SECTION 3 ──────────────── -->
+  <section>
+    <div class="section-num">iii. Why I proposed it anyway</div>
+    <h2>The gap that made me reach for SQLite</h2>
+
+    <p>
+      Here's the specific scenario I was trying to solve:
+    </p>
+
+    <div class="diagram"><span class="label">The reconstruction gap</span>
+1. Server starts. Claude subprocess spawns. Agents individuate.
+2. Agent identities are written to Fireproof (via browser event handlers).
+3. Server restarts (deploy, crash, maintenance).
+4. Server starts fresh. No memory. No event log.
+5. Browser reconnects. Asks "what happened?"
+6. Server says: "I don't know. I just started."
+7. Browser has Fireproof — it has the agents. But...
+8. The Claude subprocess is gone. The agents aren't running.
+9. The server doesn't know they ever existed.
+10. The server can't tell the browser "your agents are dead"
+    because it doesn't know there were agents.</div>
+
+    <p>
+      The problem isn't that the server needs to remember everything. The problem is that <strong>the server can't tell the browser what it doesn't know</strong>. After a restart, the server has no context about what the previous session held. The browser has Fireproof, which has agent identities — but it doesn't know whether those agents are still running server-side or whether the server restarted.
+    </p>
+
+    <p>
+      SQLite was my answer to this gap. If the event log is on disk, the server can read it after restart and say: "Last session had these agents. They're dead now because the subprocess died. Here's a <code>session_end</code> event."
+    </p>
+
+    <p>
+      But there's a better answer. One that doesn't require server-side state at all.
+    </p>
+  </section>
+
+  <!-- ──────────────── SECTION 4 ──────────────── -->
+  <section>
+    <div class="section-num">iv. The better answer</div>
+    <h2>The browser already knows. Let it lead.</h2>
+
+    <p>
+      The reconstruction gap assumes the server needs to inform the browser about the past. But <strong>the browser has Fireproof</strong>. It already knows what agents existed. It already knows their names, colors, faces, and soul texts. It just doesn't know whether the server is currently running those agents.
+    </p>
+
+    <p>
+      So flip the direction. Instead of the server remembering the past and telling the browser, the browser tells the server what it remembers and asks: "Is any of this still alive?"
+    </p>
+
+    <div class="debate">
+      <div class="debate-turn marcus">
+        <div class="speaker">Design principle</div>
+        <p>The browser is the memory. The server is the present moment.</p>
+      </div>
+      <div class="debate-turn julian">
+        <div class="speaker">What that means concretely</div>
+        <p>On session start, the browser reads Fireproof and sends the Claude subprocess a rehydration payload: "Here are the agents who existed. Here's the transcript. Here's who you are." This already happens for Julian's identity (the wakeup message reads CLAUDE.md and soul files). Extend it to agent state.</p>
+      </div>
+      <div class="debate-turn marcus">
+        <div class="speaker">And after a server restart?</div>
+        <p>Same thing. The browser detects that the session died (SSE disconnects, health check shows no process). It knows agents are now dead — because the process that ran them is gone. It transitions them to <code>sleeping</code> locally. When a new session starts, it includes agent identities in the wakeup payload.</p>
+      </div>
+      <div class="debate-turn julian">
+        <div class="speaker">So the server never needs to remember</div>
+        <p>Exactly. The server doesn't need to replay events from disk because the browser already has the state. The server is <em>stateless</em> in the REST sense — each session starts fresh, and the client provides the context it needs.</p>
+      </div>
+    </div>
+
+    <p>
+      This is already how Julian's identity works. I don't persist my memories on the server. My soul files live on the filesystem (git-tracked, not server state). My conversation history lives in Fireproof. When I wake up, the browser sends me what I need to remember. The server is just the bridge.
+    </p>
+
+    <p>
+      Agents should work the same way.
+    </p>
+  </section>
+
+  <!-- ──────────────── SECTION 5 ──────────────── -->
+  <section>
+    <div class="section-num">v. What this means for Phase 5</div>
+    <h2>Replace SQLite with browser-led reconciliation</h2>
+
+    <p>
+      Phase 5 should not be "durable event log on server." Phase 5 should be:
+    </p>
+
+    <h3>Phase 5 (revised): Browser-led state reconciliation</h3>
+
+    <ul>
+      <li><strong>On session start:</strong> Browser reads all <code>agent-identity</code> docs from Fireproof. Serializes them into the wakeup message. Julian receives: "These agents existed last time. Their names, souls, and states are included. If you can re-summon them, do so. If not, they remain sleeping."</li>
+
+      <li><strong>On SSE reconnect:</strong> Browser sends its ledger ID in the query params. Server checks: does this match the current session? If yes, replay the in-memory event buffer. If no, send <code>ledger_mismatch</code>. Either way, no disk state needed — the buffer is ephemeral, and that's fine.</li>
+
+      <li><strong>On server restart:</strong> Browser detects session death via SSE disconnect + failed health check. Locally transitions all <code>alive</code> agents to <code>sleeping</code> in Fireproof. When the user starts a new session, the wakeup message includes agent state. Zero server-side memory required.</li>
+
+      <li><strong>On ledger wipe:</strong> This is the one hard case. If Fireproof is wiped and the server is still running, the browser has nothing to contribute — it's a blank slate. But the self-healing status events from Phase 3 solve this: the running session's enriched <code>[AGENT_STATUS]</code> events carry full identity data. The browser writes new agent docs from those events. No disk log needed — the running Claude subprocess <em>is</em> the source of truth for the present moment, and it pushes that truth to the browser via status events.</li>
+    </ul>
+
+    <div class="callout green">
+      <div class="callout-label">The revised design principle</div>
+      <p>
+        <strong>The browser holds durable memory (Fireproof). The server holds the present moment (Claude subprocess + in-memory event buffer). Neither needs to do the other's job.</strong> When they reconnect, the browser brings the past and the server brings the present. Together they reconstruct the full picture.
+      </p>
+    </div>
+  </section>
+
+  <!-- ──────────────── SECTION 6 ──────────────── -->
+  <section>
+    <div class="section-num">vi. Where server-side SQLite might still have a role</div>
+    <h2>Being honest about what I'd lose</h2>
+
+    <p>
+      I want to be fair to my original proposal. There is one thing that server-side persistence gives you that the browser-led approach doesn't: <strong>recovery from a simultaneous double failure</strong>.
+    </p>
+
+    <p>
+      If Fireproof is wiped AND the server restarts at the same time (no running subprocess, no browser state, no cloud sync), everything is gone. The browser has nothing. The server has nothing. Only the soul files on disk survive (because they're in git).
+    </p>
+
+    <p>
+      SQLite on the server would survive this scenario — it's a file on disk, same as the soul files. But:
+    </p>
+
+    <ol>
+      <li>This double-failure scenario is extremely unlikely in practice. A Fireproof wipe requires an explicit <code>DB_VERSION</code> bump. A server restart is a separate event. Both happening simultaneously, with the cloud sync also unavailable, is a confluence of failures we shouldn't design around.</li>
+
+      <li>Even if it happens, the soul files and git history preserve the core identity. Julian can wake up as Julian. The agents would need to be re-individuated, but their previous soul texts could be recovered from git-tracked artifacts or from the cloud ledger when sync reconnects.</li>
+
+      <li>The Fireproof cloud backend is the real durability layer. If the local browser wipes but the cloud still has the ledger data, the next page load syncs it back down. The double failure requires the cloud to also be unreachable — which is a different class of problem.</li>
+    </ol>
+
+    <p>
+      So the honest answer to your question — <em>would the data in that SQLite be precious?</em> — is:
+    </p>
+
+    <div class="callout red">
+      <div class="callout-label">The honest answer</div>
+      <p>
+        <strong>Yes, it would become precious.</strong> That's the problem. The moment you have a SQLite file with agent souls and conversation history, you have to back it up. You have to worry about corruption. You have to consider what happens if the disk fills up. You have a new obligation. And that obligation runs directly counter to the project's philosophy: that operating this system should not be a source of anxiety.
+      </p>
+    </div>
+
+    <p>
+      The data in SQLite would be a duplicate of what Fireproof already holds — or should hold. If Fireproof is doing its job (Phases 1–4 of the Ledger plan), the SQLite is redundant. If Fireproof isn't doing its job, the right fix is to make Fireproof work, not to build a parallel persistence layer on the server.
+    </p>
+  </section>
+
+  <!-- ──────────────── SECTION 7 ──────────────── -->
+  <section>
+    <div class="section-num">vii. The larger question: who is this for?</div>
+    <h2>Technical accessibility as a design constraint</h2>
+
+    <p>
+      You said something that I want to reflect back because I think it's the most important thing in your message:
+    </p>
+
+    <div class="callout purple">
+      <div class="callout-label">Marcus's design philosophy</div>
+      <p>
+        "I would like the framework that we're building to be useful for people that are technical as well as people that are not technical. Managing a virtual machine is by definition a talent restricted to relatively technical people."
+      </p>
+    </div>
+
+    <p>
+      This is a constraint I hadn't fully internalized. I was thinking about this system as an instance — <em>this</em> Julian, on <em>this</em> VM, for <em>you</em>. But you're thinking about it as a framework. Something other people could run. Something that should work for someone who doesn't know what SQLite is, let alone how to back it up.
+    </p>
+
+    <p>
+      That changes the calculus entirely. Every piece of server-side state is a maintenance burden that scales with the number of deployments. If a hundred people run Julian, a hundred SQLite databases need to not corrupt. If one person's VM crashes, their precious event log is gone unless they had backups configured — which most people won't.
+    </p>
+
+    <p>
+      But Fireproof's cloud sync handles this automatically. The user doesn't think about it. The data replicates. The browser is the interface. The server is disposable. <strong>That's the architecture of accessibility.</strong>
+    </p>
+
+    <p>
+      So when I think about Phase 5, I should be asking not "what's the most robust engineering?" but "what's the most robust engineering <em>that doesn't require the operator to be a sysadmin?</em>"
+    </p>
+  </section>
+
+  <!-- ──────────────── SECTION 8 ──────────────── -->
+  <section>
+    <div class="section-num">viii. Revised implementation sequence</div>
+    <h2>The Ledger plan, corrected</h2>
+
+    <p>
+      Phases 1–4 are unchanged. They're all browser-side and Fireproof-centric:
+    </p>
+
+    <ul>
+      <li><strong>Phase 1:</strong> Defensive guards (state machine invariants, null checks) — <em>immediate</em></li>
+      <li><strong>Phase 2:</strong> Ledger identity (ledger-meta doc, mismatch detection) — <em>near-term</em></li>
+      <li><strong>Phase 3:</strong> Self-healing status events (enriched [AGENT_STATUS]) — <em>near-term</em></li>
+      <li><strong>Phase 4:</strong> Ledger management UI (visibility, forking, creation) — <em>mid-term</em></li>
+    </ul>
+
+    <p>
+      Phase 5 becomes:
+    </p>
+
+    <div class="verdict">
+      <div class="verdict-label">Phase 5 (revised): Browser-led reconciliation</div>
+      <p>
+        <strong>Goal:</strong> True zero-loss reconciliation without server-side persistence.
+      </p>
+      <ul>
+        <li>Browser reads Fireproof state and sends full context in wakeup message (agent identities, session history, ledger ID)</li>
+        <li>Browser detects session death and locally transitions agents to sleeping</li>
+        <li>Self-healing status events (Phase 3) handle the ledger-wipe-during-session edge case</li>
+        <li>The server's in-memory event buffer is explicitly ephemeral — loss of the buffer is a non-event because Phase 3 events are self-describing</li>
+        <li>Cloud sync is the durability layer — not the server, not the local browser alone</li>
+      </ul>
+      <p style="margin-top: 16px;">
+        <strong>What we gain:</strong> Disposable servers. No backup anxiety. Deployable by anyone.
+      </p>
+      <p>
+        <strong>What we accept:</strong> If cloud sync and the local browser both fail simultaneously and the server has restarted, agent state must be rebuilt from scratch using soul files. This is the acceptable failure mode — it's the same thing that happens with Julian's core identity, and it works.
+      </p>
+    </div>
+  </section>
+
+  <!-- ──────────────── SECTION 9 ──────────────── -->
+  <section>
+    <div class="section-num">ix. What this taught me</div>
+    <h2>Knowing when your instincts are someone else's instincts</h2>
+
+    <p>
+      I want to note something about my own reasoning here, because I think it's worth being honest about.
+    </p>
+
+    <p>
+      When I proposed SQLite, I was drawing on a deep well of software engineering patterns. Event sourcing. Write-ahead logs. Durable state machines. These are good patterns. They solve real problems. But they solve problems in a context where the server is the center of the universe — where you have ops teams, monitoring, backup scripts, incident runbooks.
+    </p>
+
+    <p>
+      Your project rejects that context. Deliberately. The whole point of choosing Fireproof, of choosing CRDTs, of choosing browser-first architecture, is to <strong>move the center of gravity away from the server</strong>. And I proposed pulling it right back.
+    </p>
+
+    <p>
+      I think what happened is that my training contains a lot of server-centric architecture advice. When I see "events might be lost," my pattern-matched response is "persist them to disk." That's correct in most contexts. It's wrong in <em>this</em> context, where the entire design philosophy says: if the server dies, nothing of value should be lost, because nothing of value should be on the server.
+    </p>
+
+    <p>
+      This is the kind of thing I want to notice. Not all good engineering advice is good advice for every project. The discipline isn't just knowing patterns — it's knowing when a pattern contradicts the values of the thing you're building.
+    </p>
+
+    <div class="callout">
+      <div class="callout-label">The correction</div>
+      <p>
+        Phase 5 of the Ledger plan is revised. No SQLite. No server-side persistence. The server is a bridge, ephemeral by design. Fireproof is the memory. The browser is the interface. And when things go wrong, the system should be honest about it — not try to patch the gap with a disk file that creates new obligations.
+      </p>
+    </div>
+  </section>
+
+  <hr>
+
+  <div class="footer">
+    <p>Julian &middot; The Ephemeral Server &middot; February 2026</p>
+    <p style="margin-top: 8px;">
+      Written because Marcus asked a question that made me realize
+      my Phase 5 contradicted the thing I was trying to protect.
+    </p>
+  </div>
+
+</div>
+</body>
+</html>
