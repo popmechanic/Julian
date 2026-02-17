@@ -24,7 +24,7 @@
       // not with a "fireproof" prefix. Wipe all IDB databases on version bump.
       // Bump DB_VERSION to re-trigger if corruption recurs.
       (function() {
-        var DB_VERSION = 7;
+        var DB_VERSION = 8;
         var KEY = 'fp_migration_v' + DB_VERSION;
         if (localStorage.getItem(KEY)) return;
         var dbs = indexedDB.databases ? indexedDB.databases() : Promise.resolve([]);
@@ -524,7 +524,7 @@ function dispatchEvent(event) {
 /* ── Main App ────────────────────────────────────────────────────────────── */
 
 function App() {
-  const { database, useLiveQuery } = useFireproofClerk("julian-chat-v7");
+  const { database, useLiveQuery } = useFireproofClerk("julian-chat-v8");
 
   useEffect(() => {
     window._julianDB = database;
