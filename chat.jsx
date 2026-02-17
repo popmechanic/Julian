@@ -331,6 +331,7 @@ const EYE_KEYS = Object.keys(EYE_VARIANTS);
 const MOUTH_KEYS = Object.keys(MOUTH_VARIANTS);
 
 function hashNameToFaceVariant(name) {
+  if (!name) return { eyes: EYE_KEYS[0], mouth: MOUTH_KEYS[0] };
   let hash = 0;
   for (let i = 0; i < name.length; i++) {
     hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
