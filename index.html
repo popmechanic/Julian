@@ -375,65 +375,120 @@ async function ensureCatalog(database) {
 
 /* ── SSE stream reader ────────────────────────────────────────────────── */
 
-async function streamSSEResponse(response, setLiveAssistant) {
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let sseBuffer = '';
-  let finalBlocks = [];
-  let notifiedArrival = false;
+/* ── Event Log Subscription ────────────────────────────────────────────── */
+// Replaces per-request SSE with a single persistent EventSource connection.
+// Events flow: Claude stdout → server event log → EventSource → React state.
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+let _eventSource = null;
+let _lastEventId = -1;
+let _eventHandlers = {
+  onClaudeText: null,
+  onClaudeResult: null,
+  onClaudeToolResult: null,
+  onSessionStart: null,
+  onSessionEnd: null,
+  onAgentRegistered: null,
+  onAgentStatus: null,
+  onArtifactWritten: null,
+  onServerError: null,
+  onUserMessage: null,
+};
 
-    sseBuffer += decoder.decode(value, { stream: true });
-    const lines = sseBuffer.split('\n');
-    sseBuffer = lines.pop() || '';
+function connectEventSource(getAuthHeaders) {
+  if (_eventSource) {
+    _eventSource.close();
+    _eventSource = null;
+  }
 
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      try {
-        const data = JSON.parse(line.slice(6));
-        if (data.type === 'done') continue;
+  // EventSource doesn't support custom headers, so we use fetch-based SSE
+  let cancelled = false;
 
-        if (data.type === 'error') {
-          window.SFX?.play('error');
-          finalBlocks = [{ type: 'text', text: 'Error: ' + (data.data?.message || 'Unknown error') }];
-          setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
-          continue;
-        }
+  async function connect() {
+    if (cancelled) return;
+    const headers = await getAuthHeaders();
+    if (!headers || cancelled) return;
 
-        const eventData = data.data;
-        if (!eventData) continue;
-        if (eventData.type === 'system') continue;
+    try {
+      const url = '/api/events?after=' + _lastEventId;
+      const response = await fetch(url, { headers });
+      if (!response.ok || cancelled) return;
 
-        if (eventData.type === 'assistant' && eventData.message?.content) {
-          const blocks = eventData.message.content.map(block => {
-            if (block.type === 'text') return { type: 'text', text: block.text };
-            if (block.type === 'tool_use') {
-              return { type: 'tool_use', name: block.name, input: block.input };
-            }
-            return block;
-          });
-          finalBlocks = blocks;
-          if (!notifiedArrival) { window.SFX?.play('notification'); notifiedArrival = true; }
-          setLiveAssistant(prev => prev ? { ...prev, blocks, thinking: false, streaming: true } : null);
-        }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let sseBuffer = '';
 
-        if (eventData.type === 'result') {
-          if (eventData.result && finalBlocks.length === 0) {
-            finalBlocks = [{ type: 'text', text: eventData.result }];
+      while (!cancelled) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split('\n');
+        sseBuffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('id: ')) {
+            _lastEventId = parseInt(line.slice(4), 10);
+            continue;
           }
-          window.SFX?.play('success');
-          setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            dispatchEvent(event);
+          } catch (parseErr) {
+            // heartbeat or malformed — skip
+          }
         }
-      } catch (parseErr) {
-        console.warn('[SSE] Failed to parse event:', parseErr, line);
       }
+    } catch (err) {
+      console.warn('[EventSource] Connection error:', err);
+    }
+
+    // Auto-reconnect after 2s
+    if (!cancelled) {
+      setTimeout(() => connect(), 2000);
     }
   }
 
-  return finalBlocks;
+  connect();
+
+  // Return a close function
+  return () => { cancelled = true; };
+}
+
+function dispatchEvent(event) {
+  const h = _eventHandlers;
+  switch (event.type) {
+    case 'claude_text':
+      if (h.onClaudeText) h.onClaudeText(event);
+      break;
+    case 'claude_result':
+      if (h.onClaudeResult) h.onClaudeResult(event);
+      break;
+    case 'claude_tool_result':
+      if (h.onClaudeToolResult) h.onClaudeToolResult(event);
+      break;
+    case 'session_start':
+      if (h.onSessionStart) h.onSessionStart(event);
+      break;
+    case 'session_end':
+      if (h.onSessionEnd) h.onSessionEnd(event);
+      break;
+    case 'agent_registered':
+      if (h.onAgentRegistered) h.onAgentRegistered(event);
+      break;
+    case 'agent_status':
+      if (h.onAgentStatus) h.onAgentStatus(event);
+      break;
+    case 'artifact_written':
+      if (h.onArtifactWritten) h.onArtifactWritten(event);
+      break;
+    case 'server_error':
+      if (h.onServerError) h.onServerError(event);
+      break;
+    case 'user_message':
+      if (h.onUserMessage) h.onUserMessage(event);
+      break;
+  }
 }
 
 /* ── Main App ────────────────────────────────────────────────────────────── */
@@ -515,6 +570,148 @@ function App() {
       );
     }
   }, []);
+
+  // ── EventSource: persistent connection to server event log ──────────────
+  const eventSourceCloseRef = useRef(null);
+  const liveBlocksRef = useRef([]);
+  const notifiedArrivalRef = useRef(false);
+
+  useEffect(() => {
+    // Wire up event handlers that update React state
+    _eventHandlers.onClaudeText = (event) => {
+      const blocks = (event.content || []).map(block => {
+        if (block.type === 'text') return { type: 'text', text: block.text };
+        if (block.type === 'tool_use') return { type: 'tool_use', name: block.name, input: block.input };
+        return block;
+      });
+      liveBlocksRef.current = blocks;
+      if (!notifiedArrivalRef.current) { window.SFX?.play('notification'); notifiedArrivalRef.current = true; }
+      setLiveAssistant(prev => prev ? { ...prev, blocks, thinking: false, streaming: true } : {
+        id: 'live-' + Date.now(), role: 'assistant', blocks, thinking: false, streaming: true
+      });
+    };
+
+    _eventHandlers.onClaudeResult = (event) => {
+      const finalBlocks = liveBlocksRef.current.length > 0
+        ? liveBlocksRef.current
+        : (event.resultText ? [{ type: 'text', text: event.resultText }] : []);
+      window.SFX?.play('success');
+      setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
+
+      // Persist assistant response to Fireproof
+      if (finalBlocks.length > 0) {
+        database.put({
+          type: 'message', category: 'transcript', role: 'assistant',
+          speakerType: 'agent', speakerName: activeAgent || 'Julian',
+          agentName: activeAgent || undefined,
+          text: '', blocks: finalBlocks,
+          createdAt: new Date().toISOString(), serverSessionId,
+        }).catch(err => console.error('[chat] Fireproof put failed:', err));
+      }
+
+      // Auto-catalog: detect Write tool for memory/*.html
+      const writeBlocks = finalBlocks.filter(b =>
+        b.type === 'tool_use' && b.name === 'Write' &&
+        b.input?.file_path?.includes('memory/') &&
+        b.input?.file_path?.endsWith('.html')
+      );
+      for (const wb of writeBlocks) {
+        const filename = wb.input.file_path.split('/').pop();
+        setTimeout(async () => {
+          try {
+            const resp = await fetch('/api/artifacts/' + encodeURIComponent(filename));
+            if (!resp.ok) return;
+            const html = await resp.text();
+            const dpParser = new DOMParser();
+            const parsed = dpParser.parseFromString(html, 'text/html');
+            const description = parsed.querySelector('meta[name="artifact-description"]')?.content;
+            const artCategory = parsed.querySelector('meta[name="artifact-category"]')?.content || 'knowledge';
+            const chapter = parsed.querySelector('meta[name="artifact-chapter"]')?.content || '';
+            if (description) {
+              const existing = await database.query('type', { key: 'artifact' });
+              const entry = (existing.rows || []).find(r => (r.doc || r.value).filename === filename);
+              if (entry) {
+                const existingDoc = entry.doc || entry.value;
+                await database.put({ ...existingDoc, description, category: artCategory, chapter });
+              } else {
+                await database.put({ type: 'artifact', category: artCategory, filename, description, chapter, createdAt: new Date().toISOString() });
+              }
+            }
+          } catch (e) {
+            console.warn('[catalog] Failed to auto-catalog:', filename, e);
+          }
+        }, 2500);
+      }
+
+      // Clear live state and refresh menu
+      setTimeout(() => {
+        setLiveAssistant(null);
+        setStreaming(false);
+        setConnected(true);
+        notifiedArrivalRef.current = false;
+        liveBlocksRef.current = [];
+        refreshMenuData();
+      }, 100);
+    };
+
+    _eventHandlers.onSessionEnd = (event) => {
+      console.log('[EventSource] Session ended:', event.reason);
+      setSessionActive(false);
+      setConnected(false);
+      setStreaming(false);
+      setServerSessionId(null);
+      setLiveAssistant(null);
+      setMenuTab('files');
+    };
+
+    _eventHandlers.onSessionStart = (event) => {
+      console.log('[EventSource] Session started, PID:', event.pid);
+      setSessionActive(true);
+      setConnected(true);
+    };
+
+    _eventHandlers.onAgentRegistered = async (event) => {
+      const agent = event.agent;
+      if (!agent?.name || agent.gridPosition == null) return;
+      try {
+        // Check if there's a hatching placeholder at this position
+        const existing = await database.query('type', { key: 'agent-identity' });
+        const hatchDoc = (existing.rows || []).find(r => {
+          const d = r.doc || r.value;
+          return d.hatching && d.gridPosition === agent.gridPosition;
+        });
+        if (hatchDoc) {
+          const doc = hatchDoc.doc || hatchDoc.value;
+          await database.put({ ...doc, ...agent, type: 'agent-identity', hatching: false });
+        } else {
+          await database.put({ ...agent, type: 'agent-identity' });
+        }
+        window.SFX?.play('select');
+        console.log('[EventSource] Agent registered:', agent.name, 'at position', agent.gridPosition);
+      } catch (e) {
+        console.warn('[EventSource] Failed to save agent:', e);
+      }
+    };
+
+    _eventHandlers.onServerError = (event) => {
+      console.error('[EventSource] Server error:', event.message, event.code);
+      window.SFX?.play('error');
+      setLiveAssistant(prev => prev ? { ...prev, blocks: [{ type: 'text', text: 'Error: ' + event.message }], thinking: false, streaming: false } : null);
+      setStreaming(false);
+    };
+
+    _eventHandlers.onArtifactWritten = () => {
+      // Refresh menu data when artifacts are written
+      refreshMenuData();
+    };
+  }, [database, serverSessionId, activeAgent, refreshMenuData]);
+
+  // Connect/disconnect EventSource based on auth readiness
+  useEffect(() => {
+    const close = connectEventSource(getAuthHeaders);
+    eventSourceCloseRef.current = close;
+    return () => { if (close) close(); };
+  }, [getAuthHeaders]);
 
   const getAuthHeaders = useCallback(async () => {
     // Wait for Clerk session to be ready (up to 5s)
@@ -784,73 +981,15 @@ function App() {
         console.log('[Summon] Created hatching egg at position', p.pos);
       }
 
-      // Send summon through the chat — Julian's response streams back via SSE
-      const response = await fetch('/api/agents/summon', {
+      // Send summon — agent_registered events arrive through EventSource
+      await fetch('/api/agents/summon', {
         method: 'POST',
         headers,
       });
-
-      // Read the SSE stream and detect [AGENT_REGISTERED] markers
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let sseBuffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        sseBuffer += decoder.decode(value, { stream: true });
-        const lines = sseBuffer.split('\n');
-        sseBuffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === 'done') continue;
-            const eventData = data.data;
-            if (!eventData?.message?.content) continue;
-
-            for (const block of eventData.message.content) {
-              if (block.type !== 'text') continue;
-              // Detect [AGENT_REGISTERED] markers in Julian's response
-              const agentLines = block.text.split('\n').filter(l => l.includes('[AGENT_REGISTERED]'));
-              for (const agentLine of agentLines) {
-                try {
-                  const jsonStr = agentLine.slice(agentLine.indexOf('{'));
-                  const agent = JSON.parse(jsonStr);
-                  if (agent.name && agent.gridPosition != null) {
-                    const hatchId = hatchingDocs[agent.gridPosition];
-                    if (hatchId) {
-                      // Update the hatching placeholder with full identity
-                      try {
-                        const existing = await database.get(hatchId);
-                        await database.put({ ...existing, ...agent, type: 'agent-identity', hatching: false });
-                        window.SFX?.play('select');
-                        console.log('[Summon] Hatched agent:', agent.name, 'at position', agent.gridPosition);
-                      } catch (e) {
-                        // Fallback: create new doc if hatching doc was lost
-                        await database.put({ ...agent, type: 'agent-identity' });
-                        window.SFX?.play('select');
-                        console.log('[Summon] Saved agent (fallback):', agent.name, 'at position', agent.gridPosition);
-                      }
-                    } else {
-                      // No hatching doc for this position, create fresh
-                      const existingPositions = (agentDocs || []).map(d => d.gridPosition);
-                      if (!existingPositions.includes(agent.gridPosition)) {
-                        await database.put({ ...agent, type: 'agent-identity' });
-                        window.SFX?.play('select');
-                        console.log('[Summon] Saved agent:', agent.name, 'at position', agent.gridPosition);
-                      }
-                    }
-                  }
-                } catch (parseErr) {
-                  console.debug('[Summon] Failed to parse agent identity:', parseErr);
-                }
-              }
-            }
-          } catch (e) {}
-        }
-      }
+      // agent_registered events will be handled by the EventSource handler
+      // which updates Fireproof docs and hatching state automatically.
+      // Wait a bit for the summoning to process before allowing another click.
+      await new Promise(r => setTimeout(r, 5000));
     } catch (err) {
       console.error('[Summon] Error:', err);
     } finally {
@@ -943,8 +1082,8 @@ function App() {
 
       const wakeMessage = `[WAKE AGENTS]\n<agent-payloads>\n${payloadXml}\n</agent-payloads>`;
 
-      // Send through the chat endpoint
-      await fetch('/api/chat', {
+      // Send through the send endpoint
+      await fetch('/api/send', {
         method: 'POST',
         headers,
         body: JSON.stringify({ message: wakeMessage }),
@@ -983,78 +1122,30 @@ function App() {
       serverSessionId,
     }).catch(err => console.error('[chat] Fireproof put failed:', err));
 
-    let finalBlocks = [];
-
     try {
       const headers = await getAuthHeaders();
-      const response = await fetch('/api/chat', {
+      const response = await fetch('/api/send', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ message: text, targetAgent: activeAgent || undefined }),
+        body: JSON.stringify({ message: text, targetAgent: activeAgent || undefined, speakerName }),
       });
 
-      finalBlocks = await streamSSEResponse(response, setLiveAssistant);
+      if (!response.ok) {
+        let errMsg = 'Send failed';
+        try { errMsg = (await response.json()).error || errMsg; } catch {}
+        window.SFX?.play('error');
+        setLiveAssistant(prev => prev ? { ...prev, blocks: [{ type: 'text', text: errMsg }], thinking: false, streaming: false } : null);
+        setStreaming(false);
+        return;
+      }
+      // Message sent — response will arrive through EventSource
     } catch (err) {
       console.error('[chat] fetch error:', err);
       window.SFX?.play('error');
-      finalBlocks = [{ type: 'text', text: 'Connection error: ' + err.message }];
-      setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
+      setLiveAssistant(prev => prev ? { ...prev, blocks: [{ type: 'text', text: 'Connection error: ' + err.message }], thinking: false, streaming: false } : null);
+      setStreaming(false);
     }
-
-    // Persist assistant response (fire-and-forget)
-    database.put({
-      type: "message",
-      category: "transcript",
-      role: "assistant",
-      speakerType: "agent",
-      speakerName: activeAgent || "Julian",
-      agentName: activeAgent || undefined,
-      text: '',
-      blocks: finalBlocks,
-      createdAt: new Date().toISOString(),
-      serverSessionId,
-    }).catch(err => console.error('[chat] Fireproof put failed:', err));
-
-    // ── Auto-catalog: detect Write tool for memory/*.html and extract meta tags ──
-    const writeBlocks = finalBlocks.filter(b =>
-      b.type === 'tool_use' && b.name === 'Write' &&
-      b.input?.file_path?.includes('memory/') &&
-      b.input?.file_path?.endsWith('.html')
-    );
-    for (const wb of writeBlocks) {
-      const filename = wb.input.file_path.split('/').pop();
-      setTimeout(async () => {
-        try {
-          const resp = await fetch('/api/artifacts/' + encodeURIComponent(filename));
-          if (!resp.ok) return;
-          const html = await resp.text();
-          const dpParser = new DOMParser();
-          const parsed = dpParser.parseFromString(html, 'text/html');
-          const description = parsed.querySelector('meta[name="artifact-description"]')?.content;
-          const artCategory = parsed.querySelector('meta[name="artifact-category"]')?.content || 'knowledge';
-          const chapter = parsed.querySelector('meta[name="artifact-chapter"]')?.content || '';
-          if (description) {
-            const existing = await database.query("type", { key: "artifact" });
-            const entry = (existing.rows || []).find(r => (r.doc || r.value).filename === filename);
-            if (entry) {
-              const existingDoc = entry.doc || entry.value;
-              await database.put({ ...existingDoc, description, category: artCategory, chapter });
-            } else {
-              await database.put({ type: "artifact", category: artCategory, filename, description, chapter, createdAt: new Date().toISOString() });
-            }
-          }
-        } catch (e) {
-          console.warn('[catalog] Failed to auto-catalog:', filename, e);
-        }
-      }, 2500);
-    }
-
-    setLiveAssistant(null);
-    setStreaming(false);
-    setConnected(true);
-    // Refresh menu data in case Julian created new artifacts
-    refreshMenuData();
-  }, [streaming, sessionActive, serverSessionId, database, getAuthHeaders, refreshMenuData, activeAgent]);
+  }, [streaming, sessionActive, serverSessionId, database, getAuthHeaders, activeAgent]);
 
   const handleOfferWork = useCallback(async () => {
     if (streaming || !sessionActive) return;
@@ -1079,30 +1170,17 @@ function App() {
       createdAt: new Date().toISOString(), serverSessionId,
     }).catch(err => console.error('[chat] Fireproof put failed:', err));
 
-    let finalBlocks = [];
     try {
       const headers = await getAuthHeaders();
-      const response = await fetch('/api/chat', {
+      await fetch('/api/send', {
         method: 'POST', headers,
-        body: JSON.stringify({ message: routingMsg, targetAgent: activeAgent || undefined }),
+        body: JSON.stringify({ message: routingMsg, targetAgent: activeAgent || undefined, speakerName }),
       });
-      finalBlocks = await streamSSEResponse(response, setLiveAssistant);
+      // Response arrives through EventSource
     } catch (err) {
-      finalBlocks = [{ type: 'text', text: 'Connection error: ' + err.message }];
-      setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
+      setLiveAssistant(prev => prev ? { ...prev, blocks: [{ type: 'text', text: 'Connection error: ' + err.message }], thinking: false, streaming: false } : null);
+      setStreaming(false);
     }
-
-    database.put({
-      type: "message", category: "transcript", role: "assistant",
-      speakerType: "agent", speakerName: activeAgent || "Julian",
-      agentName: activeAgent || undefined,
-      text: '', blocks: finalBlocks,
-      createdAt: new Date().toISOString(), serverSessionId,
-    }).catch(err => console.error('[chat] Fireproof put failed:', err));
-
-    setLiveAssistant(null);
-    setStreaming(false);
-    setConnected(true);
   }, [activeAgent, openJobs, streaming, sessionActive, serverSessionId, database, getAuthHeaders]);
 
   const startSession = useCallback(async () => {
@@ -1110,18 +1188,14 @@ function App() {
     setWakingUp(true);
     window.SFX?.play('level-up');
 
-    // Create a live assistant message for the wake-up response
+    // Show thinking bubble while Claude wakes up
     const liveMsg = { id: 'wakeup-' + Date.now(), role: 'assistant', blocks: [], thinking: true, streaming: true };
     setLiveAssistant(liveMsg);
-
-    let finalBlocks = [];
-    let newSessionId = null;
 
     try {
       const headers = await getAuthHeaders();
       if (!headers) {
-        finalBlocks = [{ type: 'text', text: 'Not signed in. Please sign in with Clerk first.' }];
-        setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
+        setLiveAssistant(prev => prev ? { ...prev, blocks: [{ type: 'text', text: 'Not signed in. Please sign in with Clerk first.' }], thinking: false, streaming: false } : null);
         setWakingUp(false);
         return;
       }
@@ -1130,16 +1204,14 @@ function App() {
       let previousTranscript = [];
       try {
         const allMessages = await database.query("type", { key: "message" });
-        // Group messages by serverSessionId
         const bySession = {};
         for (const doc of (allMessages.rows || [])) {
           const d = doc.doc || doc.value || doc;
           const sid = d.serverSessionId;
-          if (!sid) continue; // skip legacy messages without serverSessionId
+          if (!sid) continue;
           if (!bySession[sid]) bySession[sid] = [];
           bySession[sid].push(d);
         }
-        // Find the most recent completed session (not the current one)
         const sessionIds = Object.keys(bySession)
           .filter(id => id && id !== serverSessionId)
           .sort((a, b) => {
@@ -1153,22 +1225,10 @@ function App() {
             .sort((a, b) => (a._id < b._id ? -1 : 1))
             .map(msg => {
               if (msg.role === "user") {
-                return {
-                  role: "user",
-                  speakerType: msg.speakerType || "human",
-                  speakerName: msg.speakerName || "Marcus",
-                  text: msg.text || "",
-                };
+                return { role: "user", speakerType: msg.speakerType || "human", speakerName: msg.speakerName || "Marcus", text: msg.text || "" };
               }
-              const textBlocks = (msg.blocks || [])
-                .filter(b => b.type === "text")
-                .map(b => b.text);
-              return {
-                role: "assistant",
-                speakerType: msg.speakerType || "agent",
-                speakerName: msg.speakerName || "Julian",
-                text: textBlocks.join("\n"),
-              };
+              const textBlocks = (msg.blocks || []).filter(b => b.type === "text").map(b => b.text);
+              return { role: "assistant", speakerType: msg.speakerType || "agent", speakerName: msg.speakerName || "Julian", text: textBlocks.join("\n") };
             })
             .filter(msg => msg.text.trim());
         }
@@ -1176,10 +1236,10 @@ function App() {
         console.warn('[rehydration] Failed to query previous transcript:', err);
       }
 
-      // ── Catalog: one Fireproof record, one fetch if missing ──
       const artifactCatalog = await ensureCatalog(database);
-
       const demoMode = new URLSearchParams(window.location.search).get('demo') === '1';
+
+      // Start session — returns JSON now (not SSE)
       const response = await fetch('/api/session/start', {
         method: 'POST',
         headers,
@@ -1189,43 +1249,23 @@ function App() {
       if (!response.ok) {
         let errMsg = `HTTP ${response.status}`;
         try { errMsg = (await response.json()).error || errMsg; } catch {}
-        finalBlocks = [{ type: 'text', text: 'Failed to start session: ' + errMsg }];
-        setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
+        setLiveAssistant(prev => prev ? { ...prev, blocks: [{ type: 'text', text: 'Failed to start session: ' + errMsg }], thinking: false, streaming: false } : null);
         setWakingUp(false);
         return;
       }
 
-      // Capture serverSessionId from response header
-      newSessionId = response.headers.get('X-Session-Id');
-      if (newSessionId) setServerSessionId(newSessionId);
+      const data = await response.json();
+      if (data.sessionId) setServerSessionId(data.sessionId);
 
-      // Stream the wake-up SSE response
-      finalBlocks = await streamSSEResponse(response, setLiveAssistant);
+      // Session started — events will flow through EventSource
+      setSessionActive(true);
+      setConnected(true);
+      setWakingUp(false);
+      setMenuTab('screen');
     } catch (err) {
-      finalBlocks = [{ type: 'text', text: 'Connection error: ' + err.message }];
-      setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
+      setLiveAssistant(prev => prev ? { ...prev, blocks: [{ type: 'text', text: 'Connection error: ' + err.message }], thinking: false, streaming: false } : null);
+      setWakingUp(false);
     }
-
-    // Persist the wake-up message (fire-and-forget)
-    if (finalBlocks.length > 0) {
-      database.put({
-        type: "message",
-        category: "transcript",
-        role: "assistant",
-        speakerType: "agent",
-        speakerName: "Julian",
-        text: '',
-        blocks: finalBlocks,
-        createdAt: new Date().toISOString(),
-        serverSessionId: newSessionId || serverSessionId,
-      }).catch(err => console.error('[chat] Fireproof wake-up put failed:', err));
-    }
-
-    setLiveAssistant(null);
-    setSessionActive(true);
-    setConnected(true);
-    setWakingUp(false);
-    setMenuTab('screen');
   }, [wakingUp, sessionActive, serverSessionId, database, getAuthHeaders]);
 
   const endSession = useCallback(async () => {
