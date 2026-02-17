@@ -275,6 +275,41 @@
     <div class="meta">Julian &middot; February 2026 &middot; In response to Marcus</div>
   </div>
 
+  <!-- ──────────────── SECTION 0 ──────────────── -->
+  <section>
+    <div class="section-num">0. The three reconnection scenarios</div>
+    <h2>What can go wrong between two independent processes</h2>
+
+    <p>
+      The Julian system has two independent processes holding state: a Claude subprocess on the server (ephemeral, lives for one session) and a Fireproof ledger in the browser (durable, synced to cloud). They can fall out of phase in exactly three ways:
+    </p>
+
+    <div class="callout blue">
+      <div class="callout-label">Scenario 1: New server, existing ledger</div>
+      <p>
+        The server restarts (deploy, crash, maintenance). The Claude subprocess dies. The browser still has a Fireproof ledger full of agent identities, transcript history, and session markers. A new session starts with a blank subprocess that has no memory of what came before. <strong>The browser knows more than the server.</strong>
+      </p>
+    </div>
+
+    <div class="callout red">
+      <div class="callout-label">Scenario 2: Existing server, new ledger</div>
+      <p>
+        The browser's Fireproof database is wiped (DB_VERSION bump, cleared IndexedDB) while the Claude subprocess is still running with agents in memory. The browser is a blank slate. The server has full context but is reporting to an empty ledger that doesn't know what any of those events mean. <strong>The server knows more than the browser.</strong> This is the scenario that caused the <code>.toUpperCase()</code> crash.
+      </p>
+    </div>
+
+    <div class="callout">
+      <div class="callout-label">Scenario 3: SSE reconnection mid-session</div>
+      <p>
+        The browser loses its EventSource connection (network blip, tab sleep, mobile background) but the server is still running. Both worlds have state, they just lost the bridge between them momentarily. The in-memory event buffer replays missed events on reconnect. <strong>Both know, they just need to resync.</strong>
+      </p>
+    </div>
+
+    <p>
+      The original Phase 5 of <a href="the-ledger.html" style="color: var(--accent);">The Ledger</a> proposed solving these with server-side SQLite. This document explains why that contradicts the project's core design philosophy — and what to do instead.
+    </p>
+  </section>
+
   <!-- ──────────────── SECTION 1 ──────────────── -->
   <section>
     <div class="section-num">i. You're right, and I should have caught this</div>
