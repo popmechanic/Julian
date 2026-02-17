@@ -429,17 +429,40 @@ function connectEventSource(getAuthHeaders) {
 
   // EventSource doesn't support custom headers, so we use fetch-based SSE
   let cancelled = false;
+  let wasConnected = false;
+
+  // Phase 5a: Sleep all alive agents locally on disconnect
+  async function sleepAgentsOnDisconnect() {
+    const db = window._julianDB;
+    if (!db) return;
+    try {
+      const { rows } = await db.query('type', { key: 'agent-identity' });
+      for (const row of rows) {
+        const doc = row.doc || row.value;
+        if (getAgentStatus(doc) === 'alive') {
+          await db.put({ ...doc, status: 'sleeping' });
+        }
+      }
+      console.log('[EventSource] Disconnected — transitioned alive agents to sleeping');
+    } catch (e) {
+      console.warn('[EventSource] Failed to sleep agents on disconnect:', e);
+    }
+  }
 
   async function connect() {
     if (cancelled) return;
     const headers = await getAuthHeaders();
     if (!headers || cancelled) return;
 
+    const idBeforeConnect = _lastEventId;
+    let firstIdSeen = false;
+
     try {
       const url = '/api/events?after=' + _lastEventId;
       const response = await fetch(url, { headers });
       if (!response.ok || cancelled) return;
 
+      wasConnected = true;
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let sseBuffer = '';
@@ -454,7 +477,17 @@ function connectEventSource(getAuthHeaders) {
 
         for (const line of lines) {
           if (line.startsWith('id: ')) {
-            _lastEventId = parseInt(line.slice(4), 10);
+            const newId = parseInt(line.slice(4), 10);
+
+            // Phase 5c: Detect large gap on reconnect — request full state
+            if (!firstIdSeen && idBeforeConnect > 0 && newId > idBeforeConnect + 100) {
+              console.warn('[EventSource] Large event gap detected (' + idBeforeConnect + ' → ' + newId + '), requesting full state');
+              fetch('/api/ledger-reset', { method: 'POST', headers })
+                .catch(e => console.warn('[EventSource] Failed to signal ledger-reset:', e));
+            }
+            firstIdSeen = true;
+
+            _lastEventId = newId;
             continue;
           }
           if (!line.startsWith('data: ')) continue;
@@ -468,6 +501,11 @@ function connectEventSource(getAuthHeaders) {
       }
     } catch (err) {
       console.warn('[EventSource] Connection error:', err);
+    }
+
+    // Phase 5a: On disconnect, sleep agents locally
+    if (wasConnected && !cancelled) {
+      sleepAgentsOnDisconnect();
     }
 
     // Auto-reconnect after 2s
@@ -524,10 +562,34 @@ function dispatchEvent(event) {
 /* ── Main App ────────────────────────────────────────────────────────────── */
 
 function App() {
-  const { database, useLiveQuery } = useFireproofClerk("julian-chat-v8");
+  const DEFAULT_DB_NAME = "julian-chat-v8";
+  const [dbName] = useState(() => localStorage.getItem('julianDbName') || DEFAULT_DB_NAME);
+  const { database, useLiveQuery } = useFireproofClerk(dbName);
 
   useEffect(() => {
     window._julianDB = database;
+  }, [database]);
+
+  // Phase 4: Seed agent identities after fork (one-shot on mount)
+  const forkSeedRef = useRef(false);
+  useEffect(() => {
+    if (!database || forkSeedRef.current) return;
+    const pendingFork = localStorage.getItem('pendingFork');
+    if (!pendingFork) return;
+    forkSeedRef.current = true;
+    (async () => {
+      try {
+        await database.ready();
+        const agents = JSON.parse(pendingFork);
+        for (const agent of agents) {
+          await database.put(agent);
+        }
+        localStorage.removeItem('pendingFork');
+        console.log('[Ledger] Fork seeded', agents.length, 'agent identities');
+      } catch (err) {
+        console.warn('[Ledger] Fork seed failed:', err);
+      }
+    })();
   }, [database]);
 
   const { docs: persistedMessages } = useLiveQuery("type", { key: "message" });
@@ -740,23 +802,58 @@ function App() {
 
     _eventHandlers.onAgentStatus = async (event) => {
       try {
-        const alivePositions = new Set(
-          (event.agents || []).map(a => a.gridPosition)
-        );
-        const { rows } = await database.query('type', { key: 'agent-identity' });
-        for (const row of rows) {
-          const doc = row.doc || row.value;
-          if (getAgentStatus(doc) === 'expired') continue;
-          if (alivePositions.has(doc.gridPosition)) {
-            if (getAgentStatus(doc) !== 'alive') {
+        const agentMap = {};
+        for (const a of (event.agents || [])) {
+          if (a.gridPosition != null) agentMap[a.gridPosition] = a;
+        }
+
+        // Update or create agent docs (upsert — self-healing)
+        for (const [pos, agent] of Object.entries(agentMap)) {
+          const _id = `agent-identity:${pos}`;
+          const existing = await database.get(_id).catch(() => null);
+
+          if (existing) {
+            // Phase 1a: refuse alive transition for nameless docs
+            if (!existing.name && agent.status === 'alive') {
+              console.warn('[EventSource] Skipping alive transition for nameless doc at seat', pos);
+              continue;
+            }
+            // Update status if changed
+            if (getAgentStatus(existing) !== agent.status) {
               await database.put({
-                ...doc,
-                status: 'alive',
+                ...existing,
+                status: agent.status,
                 lastAliveAt: new Date(event.ts).toISOString(),
                 lastSessionId: event.sessionId,
               });
             }
-          } else if (getAgentStatus(doc) === 'alive') {
+          } else if (agent.name) {
+            // Create from status event data (self-healing)
+            await database.put({
+              _id,
+              type: 'agent-identity',
+              category: 'identity',
+              status: agent.status,
+              name: agent.name,
+              color: agent.color,
+              colorName: agent.colorName,
+              gender: agent.gender,
+              faceVariant: agent.faceVariant,
+              gridPosition: parseInt(pos),
+              lastAliveAt: new Date(event.ts).toISOString(),
+              lastSessionId: event.sessionId,
+              createdAt: new Date().toISOString(),
+            });
+            console.log('[EventSource] Self-healed agent doc at seat', pos, agent.name);
+          }
+        }
+
+        // Transition agents not in status to sleeping
+        const { rows } = await database.query('type', { key: 'agent-identity' });
+        for (const row of rows) {
+          const doc = row.doc || row.value;
+          if (getAgentStatus(doc) === 'expired') continue;
+          if (!agentMap[doc.gridPosition] && getAgentStatus(doc) === 'alive') {
             await database.put({ ...doc, status: 'sleeping' });
           }
         }
@@ -930,6 +1027,48 @@ function App() {
     if (!database || expiryRef.current) return;
     expiryRef.current = true;
     expireStaleHatching(database);
+  }, [database]);
+
+  // Phase 2: Ledger identity — amnesia detection and ledger-meta bootstrap
+  const ledgerMetaRef = useRef(false);
+  useEffect(() => {
+    if (!database || ledgerMetaRef.current) return;
+    ledgerMetaRef.current = true;
+    (async () => {
+      try {
+        await database.ready();
+        const meta = await database.get('ledger-meta').catch(() => null);
+        if (!meta) {
+          // Fresh or wiped ledger — amnesia event
+          await database.put({
+            _id: 'ledger-meta',
+            type: 'ledger-meta',
+            category: 'operational',
+            databaseName: database.name,
+            connectLedgerId: null,
+            createdAt: new Date().toISOString(),
+            parentLedgerId: null,
+          });
+          console.log('[Ledger] Amnesia detected — signaling server for full state replay');
+          // Signal server to replay full agent state
+          const headers = await getAuthHeaders();
+          if (headers) {
+            fetch('/api/ledger-reset', { method: 'POST', headers })
+              .catch(e => console.warn('[Ledger] Failed to signal reset:', e));
+          }
+        } else {
+          // Phase 2d: Capture Connect ledgerId if available and not yet stored
+          const ledgerId = window.__VIBES_SHARED_LEDGER__;
+          if (ledgerId && !meta.connectLedgerId) {
+            await database.put({ ...meta, connectLedgerId: ledgerId });
+            console.log('[Ledger] Captured Connect ledgerId:', ledgerId);
+          }
+        }
+      } catch (err) {
+        console.warn('[Ledger] Amnesia detection failed:', err);
+        ledgerMetaRef.current = false;
+      }
+    })();
   }, [database]);
 
   // When session becomes active, switch to screen tab to show Julian's avatar
@@ -1932,7 +2071,7 @@ function App() {
               backdropFilter: 'blur(10px)',
               borderBottom: '1px solid rgba(255,255,255,0.05)',
             }}>
-              {['SCREEN', 'BROWSER', 'FILES', 'SKILLS', 'AGENTS', 'JOBS'].map(tab => {
+              {['SCREEN', 'BROWSER', 'FILES', 'SKILLS', 'AGENTS', 'JOBS', 'LEDGER'].map(tab => {
                 const tabKey = tab.toLowerCase();
                 const isActive = tabKey === menuTab;
                 return (
@@ -2094,6 +2233,13 @@ function App() {
                         artifacts={artifacts}
                         onSelect={setActiveArtifact}
                         embedded
+                      />
+                    )}
+                    {menuTab === 'ledger' && (
+                      <LedgerPanel
+                        database={database}
+                        useLiveQuery={useLiveQuery}
+                        getAuthHeaders={getAuthHeaders}
                       />
                     )}
                   </motion.div>

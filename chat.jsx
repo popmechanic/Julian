@@ -569,6 +569,8 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
     }
     const agent = agents.find(a => a.gridPosition === i);
     if (agent) {
+      // Phase 1b: nameless agents are always hatching, regardless of status
+      if (!agent.name) return { type: 'hatching', agent };
       const status = agent._status || getStatus(agent);
       if (status === 'expired') return { type: 'empty' };
       if (status === 'hatching') return { type: 'hatching', agent };
@@ -620,7 +622,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
             borderColor = cell.agent.color;
             content = <EggHatch color={cell.agent.color} size={56} />;
           } else if (cell.type === 'active') {
-            const variant = cell.agent.faceVariant || hashNameToFaceVariant(cell.agent.name);
+            const variant = cell.agent.faceVariant || hashNameToFaceVariant(cell.agent.name || '');
             borderColor = cell.agent.color;
             content = (
               <PixelFace
@@ -632,11 +634,11 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
                 gender={cell.agent.gender}
               />
             );
-            nameLabel = cell.agent.name.toUpperCase().slice(0, 7);
+            nameLabel = (cell.agent.name || '?').toUpperCase().slice(0, 7);
             clickHandler = () => onSelectAgent(cell.agent.name);
             statusDot = { color: '#4ade80', glow: true };
           } else if (cell.type === 'sleeping') {
-            const variant = cell.agent.faceVariant || hashNameToFaceVariant(cell.agent.name);
+            const variant = cell.agent.faceVariant || hashNameToFaceVariant(cell.agent.name || '');
             borderColor = cell.agent.color;
             opacity = 0.4;
             content = (
@@ -649,7 +651,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
                 gender={cell.agent.gender}
               />
             );
-            nameLabel = cell.agent.name.toUpperCase().slice(0, 7);
+            nameLabel = (cell.agent.name || '?').toUpperCase().slice(0, 7);
             clickHandler = () => onSelectAgent(cell.agent.name);
             statusDot = { color: '#f59e0b', glow: false };
           }
@@ -2866,6 +2868,199 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
   );
 }
 
+// === Ledger Management Panel ===
+
+function bumpDbName(name) {
+  const match = name.match(/^(.+?-v)(\d+)$/);
+  if (match) return match[1] + (parseInt(match[2]) + 1);
+  return name + '-v2';
+}
+
+function LedgerPanel({ database, useLiveQuery, getAuthHeaders }) {
+  const [confirmAction, setConfirmAction] = useState(null);
+  const [restoreTarget, setRestoreTarget] = useState(null);
+
+  const { docs: metaDocs } = useLiveQuery("type", { key: "ledger-meta" });
+  const { docs: messageDocs } = useLiveQuery("type", { key: "message" });
+  const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
+  const { docs: artifactDocs } = useLiveQuery("type", { key: "artifact" });
+  const { docs: jobDocs } = useLiveQuery("type", { key: "job" });
+
+  const meta = metaDocs?.[0] || null;
+  const knownLedgers = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem('knownLedgers') || '[]'); }
+    catch { return []; }
+  }, [confirmAction]); // re-read after operations
+
+  const counts = useMemo(() => ({
+    messages: (messageDocs || []).length,
+    agents: (agentDocs || []).length,
+    artifacts: (artifactDocs || []).length,
+    jobs: (jobDocs || []).length,
+  }), [messageDocs, agentDocs, artifactDocs, jobDocs]);
+
+  const handleNewLedger = async () => {
+    const currentName = database.name;
+    const newName = bumpDbName(currentName);
+    // Store current ledger in known list
+    const known = JSON.parse(localStorage.getItem('knownLedgers') || '[]');
+    if (!known.includes(currentName)) known.push(currentName);
+    localStorage.setItem('knownLedgers', JSON.stringify(known));
+    localStorage.setItem('julianDbName', newName);
+    window.location.reload();
+  };
+
+  const handleForkLedger = async () => {
+    const currentName = database.name;
+    const newName = bumpDbName(currentName);
+    // Copy agent identities for seeding after reload
+    const agents = (agentDocs || []).map(a => ({
+      _id: a._id,
+      type: 'agent-identity',
+      category: 'identity',
+      status: 'sleeping',
+      name: a.name,
+      color: a.color,
+      colorName: a.colorName,
+      gender: a.gender,
+      faceVariant: a.faceVariant,
+      gridPosition: a.gridPosition,
+      individuationArtifact: a.individuationArtifact,
+      createdAt: a.createdAt,
+    }));
+    localStorage.setItem('pendingFork', JSON.stringify(agents));
+    // Store current ledger in known list
+    const known = JSON.parse(localStorage.getItem('knownLedgers') || '[]');
+    if (!known.includes(currentName)) known.push(currentName);
+    localStorage.setItem('knownLedgers', JSON.stringify(known));
+    localStorage.setItem('julianDbName', newName);
+    window.location.reload();
+  };
+
+  const handleRestore = (name) => {
+    localStorage.setItem('julianDbName', name);
+    window.location.reload();
+  };
+
+  const sectionStyle = {
+    padding: '12px 16px',
+    background: 'rgba(255,255,255,0.03)',
+    borderRadius: 8,
+    border: '1px solid rgba(255,255,255,0.06)',
+    marginBottom: 10,
+  };
+  const labelStyle = { fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 };
+  const valueStyle = { fontSize: 13, color: '#e0e0e0', fontFamily: 'monospace' };
+  const btnStyle = {
+    padding: '8px 16px',
+    borderRadius: 6,
+    border: '1px solid rgba(255,255,255,0.15)',
+    background: 'rgba(255,255,255,0.05)',
+    color: '#e0e0e0',
+    fontSize: 12,
+    cursor: 'pointer',
+    flex: 1,
+  };
+
+  // Confirmation dialog overlay
+  if (confirmAction) {
+    const messages = {
+      newLedger: 'This creates a blank ledger. All conversation history and agent identities will be inaccessible until restored. The cloud copy of the current ledger is preserved.',
+      forkLedger: 'Agents will retain their identities but lose conversation history.',
+      restore: `This will switch to "${restoreTarget}". Current ledger is preserved.`,
+    };
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: 32, background: '#0c0c0c' }}>
+        <div style={{ maxWidth: 360, textAlign: 'center' }}>
+          <div style={{ fontSize: 14, color: '#e0e0e0', marginBottom: 16, lineHeight: 1.5 }}>
+            {messages[confirmAction]}
+          </div>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+            <button
+              onClick={() => setConfirmAction(null)}
+              style={{ ...btnStyle, flex: 'none', padding: '8px 24px' }}
+            >Cancel</button>
+            <button
+              onClick={() => {
+                if (confirmAction === 'newLedger') handleNewLedger();
+                else if (confirmAction === 'forkLedger') handleForkLedger();
+                else if (confirmAction === 'restore') handleRestore(restoreTarget);
+              }}
+              style={{ ...btnStyle, flex: 'none', padding: '8px 24px', background: '#00afd1', color: '#000', border: 'none', fontWeight: 600 }}
+            >Confirm</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '16px 20px', overflow: 'auto', background: '#0c0c0c' }}>
+      {/* Health section */}
+      <div style={sectionStyle}>
+        <div style={labelStyle}>Database</div>
+        <div style={valueStyle}>{meta?.databaseName || database?.name || '—'}</div>
+      </div>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+        <div style={{ ...sectionStyle, flex: 1, marginBottom: 0 }}>
+          <div style={labelStyle}>Connect Ledger</div>
+          <div style={{ ...valueStyle, fontSize: 11 }}>{meta?.connectLedgerId || 'not synced'}</div>
+        </div>
+        <div style={{ ...sectionStyle, flex: 1, marginBottom: 0 }}>
+          <div style={labelStyle}>Created</div>
+          <div style={valueStyle}>{meta?.createdAt ? new Date(meta.createdAt).toLocaleDateString() : '—'}</div>
+        </div>
+      </div>
+
+      {/* Document counts */}
+      <div style={sectionStyle}>
+        <div style={labelStyle}>Documents</div>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 4 }}>
+          {Object.entries(counts).map(([type, count]) => (
+            <div key={type} style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 18, color: '#00afd1', fontWeight: 600, fontFamily: 'monospace' }}>{count}</div>
+              <div style={{ fontSize: 10, color: '#666', textTransform: 'uppercase' }}>{type}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Lineage */}
+      {meta?.parentLedgerId && (
+        <div style={sectionStyle}>
+          <div style={labelStyle}>Lineage</div>
+          <div style={{ ...valueStyle, fontSize: 11 }}>{meta.parentLedgerId} → {meta.databaseName}</div>
+        </div>
+      )}
+
+      {/* Operations */}
+      <div style={{ marginTop: 'auto', paddingTop: 16 }}>
+        <div style={{ ...labelStyle, marginBottom: 8 }}>Operations</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={btnStyle} onClick={() => setConfirmAction('newLedger')}>New Ledger</button>
+          <button style={btnStyle} onClick={() => setConfirmAction('forkLedger')}>Fork Ledger</button>
+        </div>
+
+        {/* Restore from known ledgers */}
+        {knownLedgers.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ ...labelStyle, marginBottom: 6 }}>Restore Previous</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {knownLedgers.map(name => (
+                <button
+                  key={name}
+                  style={{ ...btnStyle, textAlign: 'left', fontSize: 11, fontFamily: 'monospace', flex: 'none' }}
+                  onClick={() => { setRestoreTarget(name); setConfirmAction('restore'); }}
+                >{name}</button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // === Window Exports (for App component) ===
 if (typeof window !== 'undefined') {
   window.escapeHtml = escapeHtml;
@@ -2894,4 +3089,5 @@ if (typeof window !== 'undefined') {
   window.JobForm = JobForm;
   window.JobsPanel = JobsPanel;
   window.ScreenGridPanel = ScreenGridPanel;
+  window.LedgerPanel = LedgerPanel;
 }

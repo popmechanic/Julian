@@ -334,13 +334,15 @@ The browser detects these markers in the SSE stream and saves each agent identit
 
 ## Agent Status Reporting
 
-Periodically — and especially after any team change (agent joins, leaves, or goes idle) — emit an `[AGENT_STATUS]` marker on its own line:
+Periodically — and especially after any team change (agent joins, leaves, or goes idle) — emit an `[AGENT_STATUS]` marker on its own line. Include visual identity fields so the browser can self-heal missing agent docs:
 
 ```
-[AGENT_STATUS] {"agents":[{"name":"Lyra","status":"alive","gridPosition":0},{"name":"Cael","status":"alive","gridPosition":1}]}
+[AGENT_STATUS] {"agents":[{"name":"Lyra","status":"alive","gridPosition":0,"color":"#c9b1e8","colorName":"Violet Heaven","gender":"woman","faceVariant":{"eyes":"standard","mouth":"gentle"}},{"name":"Cael","status":"alive","gridPosition":1,"color":"#755d00","colorName":"Ayahuasca Vine","gender":"man","faceVariant":{"eyes":"standard","mouth":"neutral"}}]}
 ```
 
-The server parses this marker and emits an `agent_status` event. The browser uses it to reconcile which agents are alive vs sleeping. If you lose track of your team (context compaction), emit `[AGENT_STATUS] {"agents":[]}` — the browser will show all agents as sleeping and offer the WAKE button.
+Required fields per agent: `name`, `status`, `gridPosition`, `color`, `colorName`, `gender`, `faceVariant`. Omit `individuationArtifact` from periodic heartbeats (too large for SSE). Include it only in full dumps triggered by `[LEDGER RESET]` requests.
+
+The server parses this marker and emits an `agent_status` event. The browser uses it to reconcile which agents are alive vs sleeping. If a doc is missing at a grid position, the browser creates it from the status event data (self-healing). If you lose track of your team (context compaction), emit `[AGENT_STATUS] {"agents":[]}` — the browser will show all agents as sleeping and offer the WAKE button.
 
 ## Agent Reawakening Protocol
 

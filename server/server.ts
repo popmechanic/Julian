@@ -1189,6 +1189,21 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
       return Response.json({ ok: true }, { headers: corsHeaders() });
     }
 
+    // Ledger reset: browser ledger was wiped, ask Julian for full agent state replay
+    if (url.pathname === "/api/ledger-reset" && req.method === "POST") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+      }
+      if (!processAlive || !claudeProc) {
+        return Response.json({ ok: true, note: "No active session" }, { headers: corsHeaders() });
+      }
+      const msg = '[LEDGER RESET] The browser ledger was wiped. ' +
+        'Re-emit [AGENT_STATUS] with full identity data for all known agents, ' +
+        'including individuationArtifact.';
+      writeToStdin(msg);
+      return Response.json({ ok: true }, { headers: corsHeaders() });
+    }
+
     // Send message (legacy /api/chat path — redirects to /api/send)
     if (url.pathname === "/api/chat" && req.method === "POST") {
       if (!(await verifyClerkToken(req))) {
