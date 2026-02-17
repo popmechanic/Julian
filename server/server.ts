@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { join, resolve } from "path";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, watch as fsWatch } from "fs";
 import { homedir } from "os";
 import { createHash, randomBytes } from "crypto";
 
@@ -288,6 +288,15 @@ let sessionId: string | null = null;
 const AGENT_NAME = process.env.AGENT_NAME || "Julian";
 const FORCE_DEMO_MODE = process.env.DEMO_MODE === "1";
 
+// ── Agent inbox constants ────────────────────────────────────────────────
+const TEAM_NAME = 'julian-agents';
+const TEAMS_DIR = join(homedir(), '.claude', 'teams');
+const INBOX_DIR = join(TEAMS_DIR, TEAM_NAME, 'inboxes');
+const SERVER_INBOX = join(INBOX_DIR, 'marcus.json');
+let lastReadIndex = 0;
+let inboxWatcher: ReturnType<typeof fsWatch> | null = null;
+let inboxHealthy = false;
+
 // ── Marker parsing helpers ──────────────────────────────────────────────
 
 function parseMarkersFromContent(content: any[]): void {
@@ -385,7 +394,11 @@ function spawnClaude() {
   const proc = spawn({
     cmd,
     cwd: WORKING_DIR,
-    env: { ...process.env, ...authEnv },
+    env: {
+      ...process.env,
+      ...authEnv,
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+    },
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -534,6 +547,105 @@ function writeToStdin(message: string): boolean {
       message: `stdin write failed: ${err}`,
       code: 'stdin_write_failed',
     });
+    return false;
+  }
+}
+
+// ── Send message directly to agent inbox ─────────────────────────────────
+
+async function sendToAgent(agentName: string, text: string, speakerName: string): Promise<boolean> {
+  const inboxPath = join(INBOX_DIR, agentName.toLowerCase() + '.json');
+  try {
+    let inbox: any[] = [];
+    try {
+      inbox = JSON.parse(await Bun.file(inboxPath).text());
+    } catch { inbox = []; }
+    inbox.push({
+      from: speakerName,
+      text,
+      summary: text.slice(0, 80),
+      timestamp: new Date().toISOString(),
+      read: false,
+    });
+    await Bun.write(inboxPath, JSON.stringify(inbox, null, 2));
+    console.log(`[Inbox] Wrote to ${agentName}'s inbox (${text.length} chars from ${speakerName})`);
+    return true;
+  } catch (err) {
+    console.error(`[Inbox] Failed to write to ${agentName}'s inbox:`, err);
+    return false;
+  }
+}
+
+// ── Inbox watcher — captures agent responses from marcus.json ────────────
+
+function setupInboxWatcher() {
+  if (inboxWatcher) return;
+  if (!existsSync(INBOX_DIR)) {
+    console.log('[Inbox] Team inbox directory does not exist yet, skipping watcher');
+    return;
+  }
+  if (!existsSync(SERVER_INBOX)) {
+    try {
+      writeFileSync(SERVER_INBOX, '[]');
+    } catch (err) {
+      console.error('[Inbox] Failed to create server inbox:', err);
+      return;
+    }
+  }
+
+  // Read current state to set baseline
+  try {
+    const current = JSON.parse(readFileSync(SERVER_INBOX, 'utf-8'));
+    lastReadIndex = current.length;
+  } catch { lastReadIndex = 0; }
+
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  inboxWatcher = fsWatch(SERVER_INBOX, () => {
+    // Debounce rapid writes
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(async () => {
+      try {
+        const messages = JSON.parse(await Bun.file(SERVER_INBOX).text());
+        for (let i = lastReadIndex; i < messages.length; i++) {
+          const msg = messages[i];
+          if (msg.from === '_healthcheck') continue;
+          append({
+            sessionId,
+            type: 'agent_message',
+            agentName: msg.from,
+            content: [{ type: 'text', text: msg.text }],
+          });
+          console.log(`[Inbox] Agent response from ${msg.from} (${msg.text.length} chars)`);
+        }
+        lastReadIndex = messages.length;
+      } catch (err) {
+        console.error('[Inbox] Failed to read server inbox:', err);
+      }
+    }, 100);
+  });
+  console.log('[Inbox] Watching', SERVER_INBOX, 'for agent responses');
+}
+
+async function verifyInboxHealth(): Promise<boolean> {
+  if (!existsSync(INBOX_DIR)) return false;
+  try {
+    if (!existsSync(SERVER_INBOX)) {
+      writeFileSync(SERVER_INBOX, '[]');
+    }
+    const testMsg = { from: '_healthcheck', text: '_ping', timestamp: new Date().toISOString(), read: false };
+    let inbox: any[] = [];
+    try { inbox = JSON.parse(readFileSync(SERVER_INBOX, 'utf-8')); } catch {}
+    inbox.push(testMsg);
+    writeFileSync(SERVER_INBOX, JSON.stringify(inbox));
+    await Bun.sleep(100);
+    const readBack = JSON.parse(readFileSync(SERVER_INBOX, 'utf-8'));
+    const found = readBack.some((m: any) => m.from === '_healthcheck');
+    // Clean up
+    writeFileSync(SERVER_INBOX, JSON.stringify(readBack.filter((m: any) => m.from !== '_healthcheck')));
+    return found;
+  } catch (err) {
+    console.error('[Inbox] Health check failed:', err);
     return false;
   }
 }
@@ -842,22 +954,39 @@ const server = Bun.serve({
         return Response.json({ error: `Message required (max ${MAX_MESSAGE_SIZE / 1000}KB)` }, { status: 400, headers: corsHeaders() });
       }
 
-      const routedMessage = body.targetAgent
-        ? `[ROUTE TO AGENT: ${body.targetAgent}] ${body.message}`
-        : body.message;
+      const speakerName = body.speakerName || 'Marcus';
 
       // Append user_message event to the log
       const evt = append({
         sessionId,
         type: 'user_message',
         text: body.message,
-        speakerName: body.speakerName || 'Marcus',
+        speakerName,
         targetAgent: body.targetAgent || null,
       });
 
-      // Write to Claude stdin
-      if (!writeToStdin(routedMessage)) {
-        return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders() });
+      if (body.targetAgent && inboxHealthy) {
+        // Direct inbox injection — bypasses Julian's context window
+        const sent = await sendToAgent(body.targetAgent, body.message, speakerName);
+        if (!sent) {
+          // Fall back to Julian relay
+          console.warn(`[Send] Inbox injection failed for ${body.targetAgent}, falling back to Julian relay`);
+          const routedMessage = `[ROUTE TO AGENT: ${body.targetAgent}] ${body.message}`;
+          if (!writeToStdin(routedMessage)) {
+            return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders() });
+          }
+        }
+      } else if (body.targetAgent) {
+        // Inbox not healthy — use Julian relay
+        const routedMessage = `[ROUTE TO AGENT: ${body.targetAgent}] ${body.message}`;
+        if (!writeToStdin(routedMessage)) {
+          return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders() });
+        }
+      } else {
+        // No target agent — write to Julian's stdin
+        if (!writeToStdin(body.message)) {
+          return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders() });
+        }
       }
 
       return Response.json({ eventId: evt.id }, { status: 202, headers: corsHeaders() });
@@ -1110,6 +1239,17 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
       if (!writeToStdin(summonMessage)) {
         return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders() });
       }
+
+      // Set up inbox watcher for agent responses (idempotent)
+      setTimeout(async () => {
+        inboxHealthy = await verifyInboxHealth();
+        if (inboxHealthy) {
+          setupInboxWatcher();
+          console.log('[Summon] Inbox system healthy, direct messaging enabled');
+        } else {
+          console.warn('[Summon] Inbox system unhealthy, using Julian relay');
+        }
+      }, 5000); // Wait for TeamCreate to finish
 
       return Response.json({ eventId: evt.id }, { status: 202, headers: corsHeaders() });
     }

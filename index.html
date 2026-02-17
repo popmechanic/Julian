@@ -390,9 +390,36 @@ let _eventHandlers = {
   onAgentRegistered: null,
   onAgentStatus: null,
   onArtifactWritten: null,
+  onAgentMessage: null,
   onServerError: null,
   onUserMessage: null,
 };
+
+// Lazy default: reads status field, falls back to legacy hatching boolean
+function getAgentStatus(doc) {
+  if (doc.status) return doc.status;
+  return doc.hatching ? 'hatching' : 'sleeping';
+}
+window.getAgentStatus = getAgentStatus;
+
+async function expireStaleHatching(database) {
+  try {
+    const { rows } = await database.query('type', { key: 'agent-identity' });
+    const now = Date.now();
+    for (const row of rows) {
+      const doc = row.doc || row.value;
+      if (getAgentStatus(doc) === 'hatching' && !doc.name) {
+        const age = now - new Date(doc.createdAt || 0).getTime();
+        if (age > 10 * 60 * 1000) {
+          console.log('[Expiry] Expiring stale hatching at seat', doc.gridPosition);
+          await database.put({ ...doc, status: 'expired' });
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[Expiry] Failed:', e);
+  }
+}
 
 function connectEventSource(getAuthHeaders) {
   if (_eventSource) {
@@ -479,6 +506,9 @@ function dispatchEvent(event) {
     case 'agent_status':
       if (h.onAgentStatus) h.onAgentStatus(event);
       break;
+    case 'agent_message':
+      if (h.onAgentMessage) h.onAgentMessage(event);
+      break;
     case 'artifact_written':
       if (h.onArtifactWritten) h.onArtifactWritten(event);
       break;
@@ -539,18 +569,10 @@ function App() {
 
   const agents = useMemo(() => {
     return (agentDocs || []).map(doc => ({
-      name: doc.name,
-      color: doc.color,
-      colorName: doc.colorName,
-      gender: doc.gender,
-      faceVariant: doc.faceVariant,
-      gridPosition: doc.gridPosition,
-      // Agents are sleeping when no session is active (pessimistic model)
-      sleeping: !sessionActive,
-      hatching: doc.hatching || false,
-      _id: doc._id,
+      ...doc,
+      _status: getAgentStatus(doc),
     }));
-  }, [agentDocs, sessionActive]);
+  }, [agentDocs]);
 
   const activeAgentObj = useMemo(() => {
     if (!activeAgent) return null;
@@ -600,10 +622,14 @@ function App() {
 
       // Persist assistant response to Fireproof
       if (finalBlocks.length > 0) {
+        const speakerDoc = activeAgent
+          ? (agentDocs || []).find(a => a.name === activeAgent)
+          : null;
         database.put({
           type: 'message', category: 'transcript', role: 'assistant',
           speakerType: 'agent', speakerName: activeAgent || 'Julian',
           agentName: activeAgent || undefined,
+          gridPosition: speakerDoc?.gridPosition ?? undefined,
           text: '', blocks: finalBlocks,
           createdAt: new Date().toISOString(), serverSessionId,
         }).catch(err => console.error('[chat] Fireproof put failed:', err));
@@ -654,8 +680,20 @@ function App() {
       }, 100);
     };
 
-    _eventHandlers.onSessionEnd = (event) => {
+    _eventHandlers.onSessionEnd = async (event) => {
       console.log('[EventSource] Session ended:', event.reason);
+      // Transition all alive agents to sleeping
+      try {
+        const { rows } = await database.query('type', { key: 'agent-identity' });
+        for (const row of rows) {
+          const doc = row.doc || row.value;
+          if (getAgentStatus(doc) === 'alive') {
+            await database.put({ ...doc, status: 'sleeping' });
+          }
+        }
+      } catch (e) {
+        console.warn('[EventSource] Failed to sleep agents on session end:', e);
+      }
       setSessionActive(false);
       setConnected(false);
       setStreaming(false);
@@ -671,25 +709,59 @@ function App() {
     };
 
     _eventHandlers.onAgentRegistered = async (event) => {
-      const agent = event.agent;
-      if (!agent?.name || agent.gridPosition == null) return;
+      const a = event.agent;
+      if (!a?.name || a.gridPosition == null) return;
       try {
-        // Check if there's a hatching placeholder at this position
-        const existing = await database.query('type', { key: 'agent-identity' });
-        const hatchDoc = (existing.rows || []).find(r => {
-          const d = r.doc || r.value;
-          return d.hatching && d.gridPosition === agent.gridPosition;
+        const _id = `agent-identity:${a.gridPosition}`;
+        const existing = await database.get(_id).catch(() => null);
+        await database.put({
+          ...(existing || {}),
+          _id,
+          type: 'agent-identity',
+          category: 'identity',
+          status: 'alive',
+          name: a.name,
+          color: a.color,
+          colorName: a.colorName,
+          gender: a.gender,
+          gridPosition: a.gridPosition,
+          faceVariant: a.faceVariant,
+          individuationArtifact: a.individuationArtifact,
+          lastAliveAt: new Date(event.ts).toISOString(),
+          lastSessionId: event.sessionId,
+          createdAt: existing?.createdAt || a.createdAt,
         });
-        if (hatchDoc) {
-          const doc = hatchDoc.doc || hatchDoc.value;
-          await database.put({ ...doc, ...agent, type: 'agent-identity', hatching: false });
-        } else {
-          await database.put({ ...agent, type: 'agent-identity' });
-        }
         window.SFX?.play('select');
-        console.log('[EventSource] Agent registered:', agent.name, 'at position', agent.gridPosition);
+        console.log('[EventSource] Agent registered:', a.name, 'at seat', a.gridPosition);
       } catch (e) {
         console.warn('[EventSource] Failed to save agent:', e);
+      }
+    };
+
+    _eventHandlers.onAgentStatus = async (event) => {
+      try {
+        const alivePositions = new Set(
+          (event.agents || []).map(a => a.gridPosition)
+        );
+        const { rows } = await database.query('type', { key: 'agent-identity' });
+        for (const row of rows) {
+          const doc = row.doc || row.value;
+          if (getAgentStatus(doc) === 'expired') continue;
+          if (alivePositions.has(doc.gridPosition)) {
+            if (getAgentStatus(doc) !== 'alive') {
+              await database.put({
+                ...doc,
+                status: 'alive',
+                lastAliveAt: new Date(event.ts).toISOString(),
+                lastSessionId: event.sessionId,
+              });
+            }
+          } else if (getAgentStatus(doc) === 'alive') {
+            await database.put({ ...doc, status: 'sleeping' });
+          }
+        }
+      } catch (e) {
+        console.warn('[EventSource] Failed to handle agent_status:', e);
       }
     };
 
@@ -704,7 +776,54 @@ function App() {
       // Refresh menu data when artifacts are written
       refreshMenuData();
     };
-  }, [database, serverSessionId, activeAgent, refreshMenuData]);
+
+    _eventHandlers.onAgentMessage = async (event) => {
+      const text = (event.content || [])
+        .filter(b => b.type === 'text')
+        .map(b => b.text)
+        .join('\n');
+      if (!text) return;
+
+      // Find the agent's grid position for transcript scoping
+      const agentDoc = (agentDocs || []).find(a => a.name === event.agentName);
+      const gridPos = agentDoc?.gridPosition;
+
+      // Persist to Fireproof
+      try {
+        await database.put({
+          type: 'message',
+          category: 'transcript',
+          role: 'assistant',
+          speakerType: 'agent',
+          speakerName: event.agentName,
+          agentName: event.agentName,
+          gridPosition: gridPos ?? undefined,
+          text,
+          blocks: [{ type: 'text', text }],
+          createdAt: new Date().toISOString(),
+          serverSessionId,
+        });
+      } catch (e) {
+        console.warn('[EventSource] Failed to persist agent message:', e);
+      }
+
+      // If this agent is currently selected, show as live
+      if (activeAgent === event.agentName) {
+        window.SFX?.play('notification');
+        setLiveAssistant(prev => ({
+          id: 'agent-' + Date.now(),
+          role: 'assistant',
+          blocks: [{ type: 'text', text }],
+          thinking: false,
+          streaming: false,
+        }));
+        setTimeout(() => {
+          setLiveAssistant(null);
+          setStreaming(false);
+        }, 100);
+      }
+    };
+  }, [database, serverSessionId, activeAgent, agentDocs, refreshMenuData]);
 
   // Connect/disconnect EventSource based on auth readiness
   useEffect(() => {
@@ -803,6 +922,14 @@ function App() {
         catalogSeedRef.current = false;
       }
     })();
+  }, [database]);
+
+  // Auto-expire stale hatching placeholders (10+ min without name)
+  const expiryRef = useRef(false);
+  useEffect(() => {
+    if (!database || expiryRef.current) return;
+    expiryRef.current = true;
+    expireStaleHatching(database);
   }, [database]);
 
   // When session becomes active, switch to screen tab to show Julian's avatar
@@ -913,9 +1040,20 @@ function App() {
       return 0;
     });
     // Filter by active agent — each agent has their own conversation thread
+    const activeDoc = activeAgent
+      ? (agentDocs || []).find(a => a.name === activeAgent)
+      : null;
+    const activePos = activeDoc?.gridPosition;
     const filtered = sorted.filter(doc => {
-      if (activeAgent) return doc.agentName === activeAgent;
-      return !doc.agentName; // Julian's messages have no agentName
+      if (activeAgent) {
+        // Prefer gridPosition scoping (handles name collisions)
+        if (activePos != null && doc.gridPosition != null) {
+          return doc.gridPosition === activePos || doc.targetGridPosition === activePos;
+        }
+        // Fallback for legacy messages without gridPosition
+        return doc.agentName === activeAgent;
+      }
+      return !doc.agentName && doc.gridPosition == null;
     });
     const msgs = filtered.map(doc => ({
       id: doc._id,
@@ -929,7 +1067,7 @@ function App() {
       msgs.push(liveAssistant);
     }
     return msgs;
-  }, [persistedMessages, liveAssistant, activeAgent]);
+  }, [persistedMessages, liveAssistant, activeAgent, agentDocs]);
 
   const isMobile = useMobile();
 
@@ -961,24 +1099,27 @@ function App() {
 
       // Create hatching placeholders so eggs appear immediately
       const palette = [
-        { pos: 0, color: '#c9b1e8', colorName: 'Violet Heaven', gender: 'woman' },
-        { pos: 1, color: '#755d00', colorName: 'Ayahuasca Vine', gender: 'man' },
-        { pos: 2, color: '#00afd1', colorName: 'Aquarius', gender: 'woman' },
-        { pos: 3, color: '#007e98', colorName: 'Pacific Pleasure', gender: 'man' },
-        { pos: 5, color: '#c85cb4', colorName: 'Barbiecore', gender: 'woman' },
-        { pos: 6, color: '#da89c9', colorName: 'Pink Punk', gender: 'man' },
-        { pos: 7, color: '#B8DDE6', colorName: 'Salt Air', gender: 'woman' },
-        { pos: 8, color: '#F2C4B0', colorName: 'Cloud Coral', gender: 'man' },
+        { pos: 0, color: '#c9b1e8', gender: 'woman' },
+        { pos: 1, color: '#755d00', gender: 'man' },
+        { pos: 2, color: '#00afd1', gender: 'woman' },
+        { pos: 3, color: '#007e98', gender: 'man' },
+        { pos: 5, color: '#c85cb4', gender: 'woman' },
+        { pos: 6, color: '#da89c9', gender: 'man' },
+        { pos: 7, color: '#B8DDE6', gender: 'woman' },
+        { pos: 8, color: '#F2C4B0', gender: 'man' },
       ];
-      const hatchingDocs = {};
       for (const p of palette) {
-        const doc = await database.put({
-          type: 'agent-identity', hatching: true,
-          gridPosition: p.pos, color: p.color,
-          colorName: p.colorName, gender: p.gender,
+        await database.put({
+          _id: `agent-identity:${p.pos}`,
+          type: 'agent-identity',
+          category: 'identity',
+          status: 'hatching',
+          gridPosition: p.pos,
+          color: p.color,
+          gender: p.gender,
+          createdAt: new Date().toISOString(),
         });
-        hatchingDocs[p.pos] = doc.id;
-        console.log('[Summon] Created hatching egg at position', p.pos);
+        console.log('[Summon] Created hatching egg at seat', p.pos);
       }
 
       // Send summon — agent_registered events arrive through EventSource
@@ -1031,28 +1172,21 @@ function App() {
       const allMessages = await database.query("type", { key: "message" });
       const allDocs = (allMessages.rows || []).map(r => r.doc || r.value || r);
 
-      // Build per-agent payloads
-      const agentPayloads = (agentDocs || []).map(agent => {
-        // Find this agent's most recent session transcript
-        const agentMsgs = allDocs.filter(d => d.agentName === agent.name);
-        // Group by session and pick the most recent
-        const bySession = {};
-        for (const m of agentMsgs) {
-          const sid = m.serverSessionId;
-          if (!sid) continue;
-          if (!bySession[sid]) bySession[sid] = [];
-          bySession[sid].push(m);
-        }
-        const sessionIds = Object.keys(bySession).sort((a, b) => {
-          const lastA = bySession[a].at(-1)?.createdAt || "";
-          const lastB = bySession[b].at(-1)?.createdAt || "";
-          return lastB.localeCompare(lastA);
-        });
-        const recentSession = sessionIds[0];
+      // Build per-agent payloads (only sleeping agents, scoped by gridPosition)
+      const agentPayloads = [];
+      for (const agent of (agentDocs || [])) {
+        const status = getAgentStatus(agent);
+        if (status !== 'sleeping') continue;
+
+        // Query transcript scoped by seat (gridPosition) and last session
         let transcript = '';
-        if (recentSession && bySession[recentSession]) {
-          transcript = bySession[recentSession]
-            .sort((a, b) => (a._id < b._id ? -1 : 1))
+        if (agent.lastSessionId) {
+          const agentMsgs = allDocs.filter(d =>
+            d.gridPosition === agent.gridPosition &&
+            d.serverSessionId === agent.lastSessionId
+          );
+          transcript = agentMsgs
+            .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))
             .map(m => {
               if (m.role === 'user') return `[${m.speakerName || 'Marcus'}]: ${m.text || ''}`;
               const text = (m.blocks || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
@@ -1062,19 +1196,21 @@ function App() {
             .join('\n');
         }
 
-        return {
+        agentPayloads.push({
           name: agent.name,
           color: agent.color,
           colorName: agent.colorName || '',
-          position: agent.gridPosition,
+          gridPosition: agent.gridPosition,
+          hasSoul: !!(agent.individuationArtifact),
+          hasTranscript: transcript.length > 0,
           soul: agent.individuationArtifact || '',
           transcript,
-        };
-      });
+        });
+      }
 
       // Assemble the wake message
       const payloadXml = agentPayloads.map(a =>
-        `  <agent name="${a.name}" color="${a.color}" colorName="${a.colorName}" position="${a.position}">\n` +
+        `  <agent name="${a.name}" color="${a.color}" colorName="${a.colorName}" gridPosition="${a.gridPosition}">\n` +
         `    <soul>${a.soul}</soul>\n` +
         `    <transcript>${a.transcript}</transcript>\n` +
         `  </agent>`
@@ -1109,6 +1245,10 @@ function App() {
 
     // Persist user message (fire-and-forget — useLiveQuery picks it up)
     const speakerName = window.Clerk?.user?.firstName || "Marcus";
+    // Look up the active agent's grid position for transcript scoping
+    const activeDoc = activeAgent
+      ? (agentDocs || []).find(a => a.name === activeAgent)
+      : null;
     database.put({
       type: "message",
       category: "transcript",
@@ -1116,6 +1256,8 @@ function App() {
       speakerType: "human",
       speakerName,
       agentName: activeAgent || undefined,
+      gridPosition: activeDoc?.gridPosition ?? undefined,
+      targetGridPosition: activeDoc?.gridPosition ?? undefined,
       text,
       blocks: [],
       createdAt: new Date().toISOString(),
@@ -1145,7 +1287,7 @@ function App() {
       setLiveAssistant(prev => prev ? { ...prev, blocks: [{ type: 'text', text: 'Connection error: ' + err.message }], thinking: false, streaming: false } : null);
       setStreaming(false);
     }
-  }, [streaming, sessionActive, serverSessionId, database, getAuthHeaders, activeAgent]);
+  }, [streaming, sessionActive, serverSessionId, database, getAuthHeaders, activeAgent, agentDocs]);
 
   const handleOfferWork = useCallback(async () => {
     if (streaming || !sessionActive) return;
@@ -1162,10 +1304,15 @@ function App() {
 
     // Persist clean display message
     const speakerName = window.Clerk?.user?.firstName || "Marcus";
+    const offerDoc = activeAgent
+      ? (agentDocs || []).find(a => a.name === activeAgent)
+      : null;
     database.put({
       type: "message", category: "transcript", role: "user",
       speakerType: "human", speakerName,
       agentName: activeAgent || undefined,
+      gridPosition: offerDoc?.gridPosition ?? undefined,
+      targetGridPosition: offerDoc?.gridPosition ?? undefined,
       text: displayMsg, blocks: [],
       createdAt: new Date().toISOString(), serverSessionId,
     }).catch(err => console.error('[chat] Fireproof put failed:', err));
@@ -1181,7 +1328,7 @@ function App() {
       setLiveAssistant(prev => prev ? { ...prev, blocks: [{ type: 'text', text: 'Connection error: ' + err.message }], thinking: false, streaming: false } : null);
       setStreaming(false);
     }
-  }, [activeAgent, openJobs, streaming, sessionActive, serverSessionId, database, getAuthHeaders]);
+  }, [activeAgent, openJobs, streaming, sessionActive, serverSessionId, database, getAuthHeaders, agentDocs]);
 
   const startSession = useCallback(async () => {
     if (wakingUp || sessionActive) return;
