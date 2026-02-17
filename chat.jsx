@@ -633,7 +633,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
                 gender={cell.agent.gender}
               />
             );
-            nameLabel = cell.agent.name.toUpperCase().slice(0, 7);
+            nameLabel = (cell.agent.name || '?').toUpperCase().slice(0, 7);
             clickHandler = () => onSelectAgent(cell.agent.name);
             statusDot = { color: '#4ade80', glow: true };
           } else if (cell.type === 'sleeping') {
@@ -650,7 +650,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
                 gender={cell.agent.gender}
               />
             );
-            nameLabel = cell.agent.name.toUpperCase().slice(0, 7);
+            nameLabel = (cell.agent.name || '?').toUpperCase().slice(0, 7);
             clickHandler = () => onSelectAgent(cell.agent.name);
             statusDot = { color: '#f59e0b', glow: false };
           }
