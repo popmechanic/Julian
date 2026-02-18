@@ -2317,7 +2317,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
     if (job?._id) jobDoc._id = job._id;
     if (job?._rev) jobDoc._rev = job._rev;
     try {
-      await database.put(jobDoc);
+      await window.resilientPut(database, jobDoc);
       if (onSave) onSave();
     } catch (err) {
       console.error('[JobForm] Save failed:', err);
@@ -2538,7 +2538,7 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
     try {
       // Fetch latest revision to avoid conflicts
       const latestJob = await database.get(job._id);
-      await database.put({
+      await window.resilientPut(database, {
         ...latestJob,
         assignedAgent: agentName,
         status: 'filled',
@@ -2548,7 +2548,7 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
       const agent = (agentDocs || []).find(a => a.name === agentName);
       if (agent) {
         const latestAgent = await database.get(agent._id);
-        await database.put({
+        await window.resilientPut(database, {
           ...latestAgent,
           jobId: job._id,
         });

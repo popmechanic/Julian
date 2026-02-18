@@ -73,6 +73,51 @@ function bumpDbName(name) {
   return name + '-v2';
 }
 
+/**
+ * Retry database.put() on transient WriteQueueImpl errors.
+ * Used as a safety net for runtime writes after boot sequence completes.
+ * @param {object} database - Fireproof database instance
+ * @param {object} doc - Document to write
+ * @param {number} maxRetries - Max retry count (default 3)
+ */
+async function resilientPut(database, doc, maxRetries = 3) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await database.put(doc);
+    } catch (err) {
+      const isStoreError = err?.message?.includes('WriteQueueImpl')
+        || err?.message?.includes('stores');
+      if (!isStoreError || attempt === maxRetries) throw err;
+      const delay = Math.pow(2, attempt) * 1000;
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+}
+
+/**
+ * Compute the current boot phase from step state.
+ * Used by BootUI to select the expression animation pool.
+ * @param {object} steps - Boot step state object
+ * @returns {number} 0=local, 1=cloud, 2=data, 3=complete
+ */
+function getBootPhase(steps) {
+  if (!steps.localStores) return 0;
+  if (steps.cloud === null) return 1;
+  if (!steps.catalog || !steps.agents) return 2;
+  return 3;
+}
+
+/**
+ * Check if boot sequence is ready to transition to App.
+ * @param {object} steps - Boot step state object
+ * @returns {boolean} true when all required steps are resolved
+ */
+function isBootReady(steps) {
+  const cloudResolved = steps.cloud !== null;
+  return steps.database && steps.localStores && cloudResolved
+    && steps.ledgerMeta && steps.catalog && steps.agents;
+}
+
 export {
   escapeHtml,
   truncate,
@@ -83,6 +128,9 @@ export {
   hashNameToFaceVariant,
   getAgentStatus,
   bumpDbName,
+  resilientPut,
+  getBootPhase,
+  isBootReady,
 };
 
 if (typeof window !== 'undefined') {
@@ -93,4 +141,7 @@ if (typeof window !== 'undefined') {
   window.hashNameToFaceVariant = hashNameToFaceVariant;
   window.getAgentStatus = getAgentStatus;
   window.bumpDbName = bumpDbName;
+  window.resilientPut = resilientPut;
+  window.getBootPhase = getBootPhase;
+  window.isBootReady = isBootReady;
 }

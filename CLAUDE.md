@@ -117,14 +117,14 @@ The frontend is split into three files, each under 2,000 lines, loaded via in-br
 
 ## Fireproof Database
 
-The browser database is `julian-chat-v5` (Fireproof with Clerk auth). Cloud sync goes through `connect-share.exe.xyz`.
+The browser database is `julian-chat-v8` (Fireproof with Clerk auth). Cloud sync goes through `connect-share.exe.xyz`.
 
 ### Key facts
 
 - **IndexedDB names** use `fp.` or `fp-` prefix (e.g., `fp.julian-chat-v4`, `fp-keybag`), NOT "fireproof"
 - **Migration script** in `index.html` wipes all IndexedDB databases on `DB_VERSION` bump — use this to recover from corrupted CRDT blocks
 - **Vibes bridge** (`bundles/fireproof-vibes-bridge.js`) patches `ensureCloudToken` to route to the correct cloud ledger by matching `appId`. Previously matched by hostname, which caused stale ledger reuse across database versions
-- **Agent seed** must `await database.ready()` before first `put()` — cloud stores need time to attach after Clerk auth
+- **Boot sequence** gates the app behind full database initialization (local stores + cloud sync). All boot-time writes complete before the chat UI renders — see "Database Write Rules" below
 
 ### Incident record (2026-02-16): Fireproof sync corruption
 
@@ -138,6 +138,32 @@ A cascade of failures corrupted the local CRDT and broke sync:
 6. Resolution: bumped to `julian-chat-v4` with corrected bridge routing → fresh cloud ledger, clean sync
 
 **Lesson:** When Fireproof sync breaks, don't just clear local data — the cloud ledger may also be corrupted. Bump the database name AND ensure the vibes bridge routes to a new ledger (appId-based matching handles this automatically now).
+
+### Database Write Rules
+
+**Never call `database.put()` directly.** Always use `resilientPut(database, doc)`.
+
+The application boots in two phases:
+
+1. **Boot phase** (`BootScreen`) — initializes Fireproof, waits for cloud stores,
+   seeds ledger-meta and catalog. No chat UI renders. All boot-time writes happen
+   here, sequenced after `database.ready()` and cloud sync resolution.
+
+2. **App phase** (`App`) — chat UI, SSE events, agent grid. All writes use
+   `resilientPut()`, which retries on transient `WriteQueueImpl` errors.
+
+**Why:** Fireproof's `WriteQueueImpl` crashes when `database.put()` fires before
+cloud stores finish attaching. `database.ready()` only guarantees local stores.
+The boot sequence eliminates the race for initialization writes; `resilientPut`
+catches transient failures during runtime.
+
+**Enforcement:** Grep for bare `database.put(` — any occurrence outside
+`resilientPut` or `BootScreen` is a bug.
+
+**Adding new writes:**
+- If the write is initialization/setup → add it to `BootScreen` (before App mounts)
+- If the write is runtime (user action, SSE event) → use `resilientPut(database, doc)`
+- Never add `database.put()` inside a `useEffect` that races with cloud attachment
 
 ## WebSocket Management
 

@@ -373,6 +373,25 @@ async function ensureCatalog(database) {
   }
 }
 
+/* ── Resilient database writes ──────────────────────────────────────── */
+// Safety net for runtime puts. Retries on transient WriteQueueImpl errors
+// (cloud store attachment race). In normal operation after boot, never triggers.
+async function resilientPut(database, doc, maxRetries = 3) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await database.put(doc);
+    } catch (err) {
+      const isStoreError = err?.message?.includes('WriteQueueImpl')
+        || err?.message?.includes('stores');
+      if (!isStoreError || attempt === maxRetries) throw err;
+      const delay = Math.pow(2, attempt) * 1000;
+      console.warn(`[resilientPut] Retry ${attempt + 1}/${maxRetries} in ${delay}ms`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+}
+window.resilientPut = resilientPut;
+
 /* ── SSE stream reader ────────────────────────────────────────────────── */
 
 /* ── Event Log Subscription ────────────────────────────────────────────── */
@@ -418,6 +437,22 @@ async function expireStaleHatching(database) {
     }
   } catch (e) {
     console.warn('[Expiry] Failed:', e);
+  }
+}
+
+// Standalone auth header helper (usable outside React components)
+async function getClerkAuthHeaders() {
+  for (let i = 0; i < 10; i++) {
+    if (window.Clerk?.session) break;
+    await new Promise(r => setTimeout(r, 500));
+  }
+  try {
+    const token = await window.Clerk?.session?.getToken();
+    if (!token) return null;
+    return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, 'X-Authorization': `Bearer ${token}` };
+  } catch (err) {
+    console.error('[Auth] Clerk getToken() error:', err);
+    return null;
   }
 }
 
@@ -561,36 +596,8 @@ function dispatchEvent(event) {
 
 /* ── Main App ────────────────────────────────────────────────────────────── */
 
-function App() {
-  const DEFAULT_DB_NAME = "julian-chat-v8";
-  const [dbName] = useState(() => localStorage.getItem('julianDbName') || DEFAULT_DB_NAME);
-  const { database, useLiveQuery } = useFireproofClerk(dbName);
-
-  useEffect(() => {
-    window._julianDB = database;
-  }, [database]);
-
-  // Phase 4: Seed agent identities after fork (one-shot on mount)
-  const forkSeedRef = useRef(false);
-  useEffect(() => {
-    if (!database || forkSeedRef.current) return;
-    const pendingFork = localStorage.getItem('pendingFork');
-    if (!pendingFork) return;
-    forkSeedRef.current = true;
-    (async () => {
-      try {
-        await database.ready();
-        const agents = JSON.parse(pendingFork);
-        for (const agent of agents) {
-          await database.put(agent);
-        }
-        localStorage.removeItem('pendingFork');
-        console.log('[Ledger] Fork seeded', agents.length, 'agent identities');
-      } catch (err) {
-        console.warn('[Ledger] Fork seed failed:', err);
-      }
-    })();
-  }, [database]);
+function App({ bootData }) {
+  const { database, useLiveQuery, localOnly } = bootData;
 
   const { docs: persistedMessages } = useLiveQuery("type", { key: "message" });
 
@@ -687,7 +694,7 @@ function App() {
         const speakerDoc = activeAgent
           ? (agentDocs || []).find(a => a.name === activeAgent)
           : null;
-        database.put({
+        resilientPut(database, {
           type: 'message', category: 'transcript', role: 'assistant',
           speakerType: 'agent', speakerName: activeAgent || 'Julian',
           agentName: activeAgent || undefined,
@@ -720,9 +727,9 @@ function App() {
               const entry = (existing.rows || []).find(r => (r.doc || r.value).filename === filename);
               if (entry) {
                 const existingDoc = entry.doc || entry.value;
-                await database.put({ ...existingDoc, description, category: artCategory, chapter });
+                await resilientPut(database, { ...existingDoc, description, category: artCategory, chapter });
               } else {
-                await database.put({ type: 'artifact', category: artCategory, filename, description, chapter, createdAt: new Date().toISOString() });
+                await resilientPut(database, { type: 'artifact', category: artCategory, filename, description, chapter, createdAt: new Date().toISOString() });
               }
             }
           } catch (e) {
@@ -750,7 +757,7 @@ function App() {
         for (const row of rows) {
           const doc = row.doc || row.value;
           if (getAgentStatus(doc) === 'alive') {
-            await database.put({ ...doc, status: 'sleeping' });
+            await resilientPut(database, { ...doc, status: 'sleeping' });
           }
         }
       } catch (e) {
@@ -776,7 +783,7 @@ function App() {
       try {
         const _id = `agent-identity:${a.gridPosition}`;
         const existing = await database.get(_id).catch(() => null);
-        await database.put({
+        await resilientPut(database, {
           ...(existing || {}),
           _id,
           type: 'agent-identity',
@@ -820,7 +827,7 @@ function App() {
             }
             // Update status if changed
             if (getAgentStatus(existing) !== agent.status) {
-              await database.put({
+              await resilientPut(database, {
                 ...existing,
                 status: agent.status,
                 lastAliveAt: new Date(event.ts).toISOString(),
@@ -829,7 +836,7 @@ function App() {
             }
           } else if (agent.name) {
             // Create from status event data (self-healing)
-            await database.put({
+            await resilientPut(database, {
               _id,
               type: 'agent-identity',
               category: 'identity',
@@ -854,7 +861,7 @@ function App() {
           const doc = row.doc || row.value;
           if (getAgentStatus(doc) === 'expired') continue;
           if (!agentMap[doc.gridPosition] && getAgentStatus(doc) === 'alive') {
-            await database.put({ ...doc, status: 'sleeping' });
+            await resilientPut(database, { ...doc, status: 'sleeping' });
           }
         }
       } catch (e) {
@@ -887,7 +894,7 @@ function App() {
 
       // Persist to Fireproof
       try {
-        await database.put({
+        await resilientPut(database, {
           type: 'message',
           category: 'transcript',
           role: 'assistant',
@@ -929,24 +936,8 @@ function App() {
     return () => { if (close) close(); };
   }, [getAuthHeaders]);
 
-  const getAuthHeaders = useCallback(async () => {
-    // Wait for Clerk session to be ready (up to 5s)
-    for (let i = 0; i < 10; i++) {
-      if (window.Clerk?.session) break;
-      await new Promise(r => setTimeout(r, 500));
-    }
-    try {
-      const token = await window.Clerk?.session?.getToken();
-      if (!token) {
-        console.warn('[Auth] Clerk token unavailable. Clerk loaded:', !!window.Clerk, 'session:', !!window.Clerk?.session);
-        return null;
-      }
-      return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, 'X-Authorization': `Bearer ${token}` };
-    } catch (err) {
-      console.error('[Auth] Clerk getToken() error:', err);
-      return null;
-    }
-  }, []);
+  // Auth headers — delegates to standalone function (shared with BootScreen)
+  const getAuthHeaders = useCallback(() => getClerkAuthHeaders(), []);
 
   const refreshMenuData = useCallback(async () => {
     try {
@@ -999,77 +990,7 @@ function App() {
     refreshMenuData();
   }, [refreshMenuData]);
 
-  // Auto-seed artifact catalog from catalog.xml on fresh Fireproof instances
-  const catalogSeedRef = useRef(false);
-  const catalogSeedAttempts = useRef(0);
-  useEffect(() => {
-    if (!database || catalogSeedRef.current) return;
-    if (catalogSeedAttempts.current >= 5) return;
-    catalogSeedRef.current = true;
-    catalogSeedAttempts.current++;
-    const attempt = catalogSeedAttempts.current;
-    (async () => {
-      try {
-        await database.ready();
-        await new Promise(r => setTimeout(r, 1000 * attempt));
-        await ensureCatalog(database);
-      } catch (err) {
-        if (attempt < 5) console.debug('[CatalogSeed] Retry', attempt, '- stores not ready yet');
-        else console.warn('[CatalogSeed] Failed after 5 attempts:', err);
-        catalogSeedRef.current = false;
-      }
-    })();
-  }, [database]);
-
-  // Auto-expire stale hatching placeholders (10+ min without name)
-  const expiryRef = useRef(false);
-  useEffect(() => {
-    if (!database || expiryRef.current) return;
-    expiryRef.current = true;
-    expireStaleHatching(database);
-  }, [database]);
-
-  // Phase 2: Ledger identity — amnesia detection and ledger-meta bootstrap
-  const ledgerMetaRef = useRef(false);
-  useEffect(() => {
-    if (!database || ledgerMetaRef.current) return;
-    ledgerMetaRef.current = true;
-    (async () => {
-      try {
-        await database.ready();
-        const meta = await database.get('ledger-meta').catch(() => null);
-        if (!meta) {
-          // Fresh or wiped ledger — amnesia event
-          await database.put({
-            _id: 'ledger-meta',
-            type: 'ledger-meta',
-            category: 'operational',
-            databaseName: database.name,
-            connectLedgerId: null,
-            createdAt: new Date().toISOString(),
-            parentLedgerId: null,
-          });
-          console.log('[Ledger] Amnesia detected — signaling server for full state replay');
-          // Signal server to replay full agent state
-          const headers = await getAuthHeaders();
-          if (headers) {
-            fetch('/api/ledger-reset', { method: 'POST', headers })
-              .catch(e => console.warn('[Ledger] Failed to signal reset:', e));
-          }
-        } else {
-          // Phase 2d: Capture Connect ledgerId if available and not yet stored
-          const ledgerId = window.__VIBES_SHARED_LEDGER__;
-          if (ledgerId && !meta.connectLedgerId) {
-            await database.put({ ...meta, connectLedgerId: ledgerId });
-            console.log('[Ledger] Captured Connect ledgerId:', ledgerId);
-          }
-        }
-      } catch (err) {
-        console.warn('[Ledger] Amnesia detection failed:', err);
-        ledgerMetaRef.current = false;
-      }
-    })();
-  }, [database]);
+  // Boot-time effects (catalog seed, hatching expiry, ledger-meta) now run in BootScreen.
 
   // When session becomes active, switch to screen tab to show Julian's avatar
   useEffect(() => {
@@ -1248,7 +1169,7 @@ function App() {
         { pos: 8, color: '#F2C4B0', gender: 'man' },
       ];
       for (const p of palette) {
-        await database.put({
+        await resilientPut(database, {
           _id: `agent-identity:${p.pos}`,
           type: 'agent-identity',
           category: 'identity',
@@ -1388,7 +1309,7 @@ function App() {
     const activeDoc = activeAgent
       ? (agentDocs || []).find(a => a.name === activeAgent)
       : null;
-    database.put({
+    resilientPut(database, {
       type: "message",
       category: "transcript",
       role: "user",
@@ -1446,7 +1367,7 @@ function App() {
     const offerDoc = activeAgent
       ? (agentDocs || []).find(a => a.name === activeAgent)
       : null;
-    database.put({
+    resilientPut(database, {
       type: "message", category: "transcript", role: "user",
       speakerType: "human", speakerName,
       agentName: activeAgent || undefined,
@@ -2255,9 +2176,159 @@ function App() {
 
 export default App;
 
+      // ── Boot Sequence ─────────────────────────────────────────────────────
+      // Two-phase boot: BootScreen gates App behind full database initialization.
+      // No database.put() fires until local stores + cloud sync are resolved.
+      function BootScreen({ dbName, onReady }) {
+        const { database, useLiveQuery } = useFireproofClerk(dbName);
+        const [steps, setSteps] = useState({
+          database: false,
+          localStores: false,
+          cloud: null,      // null=pending, true=connected, false=timed out
+          ledgerMeta: false,
+          catalog: false,
+          agents: false,
+        });
+        const readyRef = useRef(false);
+
+        // Step 1-2: Database + local stores
+        useEffect(() => {
+          if (!database) return;
+          setSteps(s => ({ ...s, database: true }));
+          database.ready().then(() => {
+            setSteps(s => ({ ...s, localStores: true }));
+          });
+        }, [database]);
+
+        // Step 3-5: Cloud sync (with 8s timeout)
+        useEffect(() => {
+          if (!steps.localStores) return;
+          const onSync = () => {
+            const status = window.__VIBES_SYNC_STATUS__;
+            if (status === 'synced') {
+              setSteps(s => ({ ...s, cloud: true }));
+            }
+          };
+          window.addEventListener('vibes-sync-status-change', onSync);
+          // Check if already synced
+          if (window.__VIBES_SYNC_STATUS__ === 'synced') {
+            setSteps(s => ({ ...s, cloud: true }));
+          }
+          const timeout = setTimeout(() => {
+            setSteps(s => s.cloud === null ? { ...s, cloud: false } : s);
+          }, 8000);
+          return () => {
+            window.removeEventListener('vibes-sync-status-change', onSync);
+            clearTimeout(timeout);
+          };
+        }, [steps.localStores]);
+
+        // Step 6a: Fork seed (pendingFork from ledger self-healing)
+        useEffect(() => {
+          if (!steps.localStores || !database) return;
+          const pendingFork = localStorage.getItem('pendingFork');
+          if (!pendingFork) return;
+          (async () => {
+            try {
+              const agents = JSON.parse(pendingFork);
+              for (const agent of agents) {
+                await database.put(agent);
+              }
+              localStorage.removeItem('pendingFork');
+              console.log('[Boot] Fork seeded', agents.length, 'agent identities');
+            } catch (err) {
+              console.warn('[Boot] Fork seed failed:', err);
+            }
+          })();
+        }, [steps.localStores, database]);
+
+        // Step 6b: Ledger-meta (amnesia detection)
+        useEffect(() => {
+          if (!steps.localStores || !database) return;
+          (async () => {
+            try {
+              const meta = await database.get('ledger-meta').catch(() => null);
+              if (!meta) {
+                await database.put({
+                  _id: 'ledger-meta',
+                  type: 'ledger-meta',
+                  category: 'operational',
+                  databaseName: database.name,
+                  connectLedgerId: null,
+                  createdAt: new Date().toISOString(),
+                  parentLedgerId: null,
+                });
+                console.log('[Boot] Amnesia detected — signaling server for full state replay');
+                const headers = await getClerkAuthHeaders();
+                if (headers) {
+                  fetch('/api/ledger-reset', { method: 'POST', headers })
+                    .catch(e => console.warn('[Boot] Failed to signal reset:', e));
+                }
+              } else {
+                // Capture Connect ledgerId if available and not yet stored
+                const ledgerId = window.__VIBES_SHARED_LEDGER__;
+                if (ledgerId && !meta.connectLedgerId) {
+                  await database.put({ ...meta, connectLedgerId: ledgerId });
+                  console.log('[Boot] Captured Connect ledgerId:', ledgerId);
+                }
+              }
+              setSteps(s => ({ ...s, ledgerMeta: true }));
+            } catch (err) {
+              console.warn('[Boot] Ledger-meta failed:', err);
+              // Still mark as done so boot can complete
+              setSteps(s => ({ ...s, ledgerMeta: true }));
+            }
+          })();
+        }, [steps.localStores, database]);
+
+        // Step 7: Catalog seed
+        useEffect(() => {
+          if (!steps.localStores || !database) return;
+          ensureCatalog(database).then(() => {
+            setSteps(s => ({ ...s, catalog: true }));
+          }).catch(() => {
+            setSteps(s => ({ ...s, catalog: true }));
+          });
+        }, [steps.localStores, database]);
+
+        // Step 8: Agent identities + expire stale hatching
+        const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
+        useEffect(() => {
+          if (!steps.localStores || !database) return;
+          expireStaleHatching(database);
+          setSteps(s => ({ ...s, agents: true }));
+        }, [steps.localStores, database]);
+
+        // Expose database globally for debugging
+        useEffect(() => {
+          if (database) window._julianDB = database;
+        }, [database]);
+
+        // Transition to App when ready
+        useEffect(() => {
+          const cloudResolved = steps.cloud !== null;
+          const coreReady = steps.database && steps.localStores && cloudResolved
+            && steps.ledgerMeta && steps.catalog && steps.agents;
+          if (coreReady && !readyRef.current) {
+            readyRef.current = true;
+            onReady({
+              database,
+              useLiveQuery,
+              localOnly: steps.cloud === false,
+              agentDocs,
+            });
+          }
+        }, [steps]);
+
+        const BootUI = window.BootUI;
+        return BootUI ? <BootUI steps={steps} /> : null;
+      }
+
       // App wrapper with Clerk auth gate (always required)
       function AppWrapper() {
+        const [bootData, setBootData] = useState(null);
         const config = window.__VIBES_CONFIG__;
+        const dbName = 'julian-chat-v8';
 
         // Hook must be called unconditionally at top of component (Rules of Hooks)
         window.useVibesPanelEvents('Vibes');
@@ -2305,7 +2376,10 @@ export default App;
               <AuthGate />
             </SignedOut>
             <SignedIn>
-                <App />
+              {bootData
+                ? <App bootData={bootData} />
+                : <BootScreen dbName={dbName} onReady={setBootData} />
+              }
             </SignedIn>
           </ClerkFireproofProvider>
         );
