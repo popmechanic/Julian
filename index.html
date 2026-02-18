@@ -24,7 +24,7 @@
       // not with a "fireproof" prefix. Wipe all IDB databases on version bump.
       // Bump DB_VERSION to re-trigger if corruption recurs.
       (function() {
-        var DB_VERSION = 9;
+        var DB_VERSION = 10;
         var KEY = 'fp_migration_v' + DB_VERSION;
         if (localStorage.getItem(KEY)) return;
         var dbs = indexedDB.databases ? indexedDB.databases() : Promise.resolve([]);
@@ -2552,7 +2552,7 @@ export default App;
       function AppWrapper() {
         const [bootData, setBootData] = useState(null);
         const config = window.__VIBES_CONFIG__;
-        const dbName = 'julian-chat-v9';
+        const dbName = 'julian-chat-v10';
 
         // Hook must be called unconditionally at top of component (Rules of Hooks)
         window.useVibesPanelEvents('Vibes');
