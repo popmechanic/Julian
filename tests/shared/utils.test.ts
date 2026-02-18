@@ -9,6 +9,8 @@ import {
   hashNameToFaceVariant,
   getAgentStatus,
   bumpDbName,
+  classifyHatchingAgent,
+  deriveGridButtons,
 } from '../../shared/utils.js';
 
 describe('escapeHtml', () => {
@@ -256,5 +258,151 @@ describe('bumpDbName', () => {
 
   test('bumps v99 to v100', () => {
     expect(bumpDbName('name-v99')).toBe('name-v100');
+  });
+});
+
+// ── classifyHatchingAgent ────────────────────────────────────────────────
+
+describe('classifyHatchingAgent', () => {
+  const TEN_MIN = 10 * 60 * 1000;
+
+  test('named hatching agent → sleeping (immediate, regardless of age)', () => {
+    expect(classifyHatchingAgent({ name: 'Lyra' }, 0)).toBe('sleeping');
+    expect(classifyHatchingAgent({ name: 'Lyra' }, TEN_MIN + 1)).toBe('sleeping');
+    expect(classifyHatchingAgent({ name: 'Cael' }, 1000)).toBe('sleeping');
+  });
+
+  test('nameless hatching agent, stale (>10 min) → expired', () => {
+    expect(classifyHatchingAgent({}, TEN_MIN + 1)).toBe('expired');
+    expect(classifyHatchingAgent({}, TEN_MIN + 60000)).toBe('expired');
+  });
+
+  test('nameless hatching agent, fresh (<10 min) → null (no transition)', () => {
+    expect(classifyHatchingAgent({}, 0)).toBe(null);
+    expect(classifyHatchingAgent({}, TEN_MIN - 1)).toBe(null);
+    expect(classifyHatchingAgent({}, 5 * 60 * 1000)).toBe(null);
+  });
+
+  test('nameless hatching agent, exactly at threshold → null', () => {
+    expect(classifyHatchingAgent({}, TEN_MIN)).toBe(null);
+  });
+
+  test('custom stale threshold', () => {
+    expect(classifyHatchingAgent({}, 5001, 5000)).toBe('expired');
+    expect(classifyHatchingAgent({}, 4999, 5000)).toBe(null);
+  });
+
+  test('named agent with empty string name → sleeping', () => {
+    // empty string is falsy in JS, so this should be treated as nameless
+    expect(classifyHatchingAgent({ name: '' }, TEN_MIN + 1)).toBe('expired');
+  });
+});
+
+// ── deriveGridButtons ────────────────────────────────────────────────────
+
+describe('deriveGridButtons', () => {
+  // Helper: minimal status function matching getAgentStatus
+  const status = (doc: any) => getAgentStatus(doc);
+
+  test('fresh ledger (no agents) → showSummon only', () => {
+    const result = deriveGridButtons([], status);
+    expect(result.showSummon).toBe(true);
+    expect(result.showWake).toBe(false);
+    expect(result.allAwake).toBe(false);
+  });
+
+  test('all agents sleeping → showWake, not showSummon', () => {
+    const agents = [
+      { name: 'Lyra', status: 'sleeping', gridPosition: 0 },
+      { name: 'Cael', status: 'sleeping', gridPosition: 1 },
+    ];
+    const result = deriveGridButtons(agents, status);
+    expect(result.showSummon).toBe(false);
+    expect(result.showWake).toBe(true);
+    expect(result.allAwake).toBe(false);
+  });
+
+  test('all agents alive → allAwake, no buttons', () => {
+    const agents = [
+      { name: 'Lyra', status: 'alive', gridPosition: 0 },
+      { name: 'Cael', status: 'alive', gridPosition: 1 },
+    ];
+    const result = deriveGridButtons(agents, status);
+    expect(result.showSummon).toBe(false);
+    expect(result.showWake).toBe(false);
+    expect(result.allAwake).toBe(true);
+  });
+
+  test('mix of alive and sleeping → showWake', () => {
+    const agents = [
+      { name: 'Lyra', status: 'alive', gridPosition: 0 },
+      { name: 'Cael', status: 'sleeping', gridPosition: 1 },
+    ];
+    const result = deriveGridButtons(agents, status);
+    expect(result.showSummon).toBe(false);
+    expect(result.showWake).toBe(true);
+    expect(result.allAwake).toBe(false);
+  });
+
+  test('only expired agents → showSummon (treated as fresh)', () => {
+    const agents = [
+      { status: 'expired', gridPosition: 0 },
+      { status: 'expired', gridPosition: 1 },
+    ];
+    const result = deriveGridButtons(agents, status);
+    expect(result.showSummon).toBe(true);
+    expect(result.showWake).toBe(false);
+    expect(result.allAwake).toBe(false);
+  });
+
+  test('hatching eggs (nameless, mid-summon) → no button', () => {
+    const agents = [
+      { status: 'hatching', gridPosition: 0 },
+      { status: 'hatching', gridPosition: 1 },
+    ];
+    const result = deriveGridButtons(agents, status);
+    expect(result.showSummon).toBe(false);
+    expect(result.showWake).toBe(false);
+    expect(result.allAwake).toBe(false);
+  });
+
+  test('partial spawn: 3 named sleeping + 5 nameless hatching → showWake', () => {
+    const agents = [
+      { name: 'Lyra', status: 'sleeping', gridPosition: 0 },
+      { name: 'Cael', status: 'sleeping', gridPosition: 1 },
+      { name: 'Aria', status: 'sleeping', gridPosition: 2 },
+      { status: 'hatching', gridPosition: 3 },
+      { status: 'hatching', gridPosition: 5 },
+      { status: 'hatching', gridPosition: 6 },
+      { status: 'hatching', gridPosition: 7 },
+      { status: 'hatching', gridPosition: 8 },
+    ];
+    const result = deriveGridButtons(agents, status);
+    expect(result.showSummon).toBe(false);
+    expect(result.showWake).toBe(true);
+    expect(result.allAwake).toBe(false);
+  });
+
+  test('named expired agents do not count as named (no RESUMMON)', () => {
+    // Named agents that somehow got expired — should show SUMMON
+    const agents = [
+      { name: 'Lyra', status: 'expired', gridPosition: 0 },
+    ];
+    const result = deriveGridButtons(agents, status);
+    expect(result.showSummon).toBe(true);
+    expect(result.showWake).toBe(false);
+  });
+
+  test('dead state scenario: stale hatching + no named → was broken, now showSummon=false (eggs still visible)', () => {
+    // This was the dead state: hatching eggs with no button.
+    // Now: nameless hatching → no summon (correct, summoning may still be running)
+    const agents = [
+      { status: 'hatching', gridPosition: 0 },
+      { status: 'hatching', gridPosition: 1 },
+    ];
+    const result = deriveGridButtons(agents, status);
+    expect(result.showSummon).toBe(false);
+    expect(result.showWake).toBe(false);
+    // After expireStaleHatching runs (>10 min), these become expired → showSummon
   });
 });

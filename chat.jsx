@@ -582,14 +582,11 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
   });
 
   const hasSleeping = cells.some(c => c.type === 'sleeping');
-  const visibleAgents = agents.filter(a => (a._status || getStatus(a)) !== 'expired');
-  const hasExpired = agents.some(a => (a._status || getStatus(a)) === 'expired');
   const hasHatching = cells.some(c => c.type === 'hatching');
-  const neverSummoned = visibleAgents.length === 0;
-  const showSummon = neverSummoned;
+  const namedAgents = agents.filter(a => a.name && (a._status || getStatus(a)) !== 'expired');
+  const showSummon = namedAgents.length === 0 && !hasHatching;
   const showWake = hasSleeping;
-  const showResummon = hasExpired && !hasHatching && !neverSummoned;
-  const allAwake = visibleAgents.length > 0 && !hasSleeping && !hasHatching;
+  const allAwake = namedAgents.length > 0 && !hasSleeping && !hasHatching;
 
   return (
     <div style={{ padding: fillContainer ? 0 : '12px 8px', display: 'flex', flexDirection: 'column', flex: fillContainer ? 1 : undefined, height: fillContainer ? '100%' : undefined }}>
@@ -711,7 +708,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
           );
         })}
       </div>
-      {(showSummon || showWake || showResummon) && !allAwake && (<div style={{ flexShrink: 0 }}>{
+      {(showSummon || showWake) && !allAwake && (<div style={{ flexShrink: 0 }}>{
         showWake ? (
           <button
             onClick={onWake}
@@ -735,30 +732,6 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
             }}
           >
             {summoning ? 'WAKING...' : 'WAKE'}
-          </button>
-        ) : showResummon ? (
-          <button
-            onClick={onSummon}
-            disabled={summoning}
-            style={{
-              width: '100%',
-              marginTop: 12,
-              padding: '10px 0',
-              fontFamily: "'Inter', sans-serif",
-              fontSize: 11,
-              fontWeight: 600,
-              color: summoning ? '#666' : '#000',
-              background: summoning ? '#1a1a1a' : '#ef4444',
-              border: `1px solid ${summoning ? '#333' : '#ef4444'}`,
-              borderRadius: 9999,
-              cursor: summoning ? 'default' : 'pointer',
-              letterSpacing: '0.15em',
-              textTransform: 'uppercase',
-              transition: 'background 300ms ease, color 300ms ease, border-color 300ms ease, box-shadow 300ms ease',
-              boxShadow: summoning ? 'none' : '0 0 12px rgba(239,68,68,0.3)',
-            }}
-          >
-            {summoning ? 'SUMMONING...' : 'RESUMMON'}
           </button>
         ) : (
           <button

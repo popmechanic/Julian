@@ -427,10 +427,16 @@ async function expireStaleHatching(database) {
     const now = Date.now();
     for (const row of rows) {
       const doc = row.doc || row.value;
-      if (getAgentStatus(doc) === 'hatching' && !doc.name) {
+      if (getAgentStatus(doc) !== 'hatching') continue;
+      if (doc.name) {
+        // Named hatching → sleeping (session died mid-spawn)
+        console.log('[Expiry] Named hatching → sleeping at seat', doc.gridPosition, doc.name);
+        await resilientPut(database, { ...doc, status: 'sleeping' });
+      } else {
         const age = now - new Date(doc.createdAt || 0).getTime();
         if (age > 10 * 60 * 1000) {
-          console.log('[Expiry] Expiring stale hatching at seat', doc.gridPosition);
+          // Nameless hatching → expired (after 10 min)
+          console.log('[Expiry] Expiring stale nameless hatching at seat', doc.gridPosition);
           await resilientPut(database, { ...doc, status: 'expired' });
         }
       }
@@ -475,7 +481,7 @@ function connectEventSource(getAuthHeaders) {
       for (const row of rows) {
         const doc = row.doc || row.value;
         if (getAgentStatus(doc) === 'alive') {
-          await db.put({ ...doc, status: 'sleeping' });
+          await resilientPut(db, { ...doc, status: 'sleeping' });
         }
       }
       console.log('[EventSource] Disconnected — transitioned alive agents to sleeping');
@@ -1138,6 +1144,17 @@ function App({ bootData }) {
     try {
       const headers = await getAuthHeaders();
       if (!headers) return;
+
+      // Guard: SUMMON is once-per-ledger — abort if named agents already exist
+      const existingAgents = await database.query('type', { key: 'agent-identity' });
+      const hasNamedAgents = (existingAgents.rows || []).some(r => {
+        const d = r.doc || r.value;
+        return d.name && getAgentStatus(d) !== 'expired';
+      });
+      if (hasNamedAgents) {
+        console.warn('[Summon] Aborting: named agents already exist. Use WAKE.');
+        return;
+      }
 
       // Start a session if none is active
       if (!sessionActive) {
