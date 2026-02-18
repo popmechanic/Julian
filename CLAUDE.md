@@ -425,14 +425,29 @@ just hello, from whoever you are now.
 8. When an agent responds, relay their message back to Marcus through the chat
 9. The browser UI will reactively show agents transitioning from sleeping to awake
 
+## UI Action Protocol
+
+Julian can send structured commands to the browser UI by embedding `[UI_ACTION]` markers in responses. The server parses these markers (like `[AGENT_REGISTERED]` and `[AGENT_STATUS]`) and emits them as typed SSE events. The browser dispatches them as `CustomEvent('julian:ui-action')` to registered component handlers.
+
+**Format:** `[UI_ACTION] {"target":"<component>","action":"<action>","data":{...}}`
+
+The marker line is stripped from rendered chat text — only Julian's natural language response appears in the conversation. Any UI component can subscribe to actions by listening for `julian:ui-action` CustomEvents and filtering by `target`.
+
+Current targets:
+- `job-form` / `fill`: Auto-fill empty fields in the new job form. Data keys: `name`, `description`, `contextDocs`, `skills`, `files`, `aboutYou`.
+
 ## Job Help Requests
 
 When you receive a message with `[JOB HELP]` prefix followed by JSON:
 1. Parse the JSON form state (may be partially filled or empty)
-2. Generate helpful suggestions for all fields: name, description,
+2. Generate helpful suggestions for unfilled fields: name, description,
    context documents, human partner profile, recommended skills
-3. Respond with suggestions in a JSON code block
-4. Be conversational — explain your reasoning after the JSON
+3. Respond conversationally — explain your reasoning and what you suggested
+4. Include a `[UI_ACTION]` marker on its own line with the suggestions:
+```
+[UI_ACTION] {"target":"job-form","action":"fill","data":{"name":"suggested name","description":"suggested description","contextDocs":"suggested context","skills":"suggested skills","files":"suggested files","aboutYou":"suggested profile"}}
+```
+The browser will parse this marker and auto-fill empty form fields. Only include fields you have suggestions for — omit fields the user already filled in.
 
 ## Offer Work Protocol
 

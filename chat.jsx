@@ -2183,13 +2183,8 @@ function JobCard({ job, onClick }) {
   );
 }
 
-function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
-  const [name, setName] = useState(job?.name || '');
-  const [description, setDescription] = useState(job?.description || '');
-  const [contextDocs, setContextDocs] = useState(job?.contextDocs || '');
-  const [skills, setSkills] = useState(job?.skills || '');
-  const [files, setFiles] = useState(job?.files || '');
-  const [aboutYou, setAboutYou] = useState(job?.aboutYou || '');
+function JobForm({ job, database, onCancel, onSave, getAuthHeaders, draft, setDraft }) {
+  const { name='', description='', contextDocs='', skills='', files='', aboutYou='' } = draft || {};
   const [helping, setHelping] = useState(false);
   const [suggestions, setSuggestions] = useState(null);
 
@@ -2220,72 +2215,48 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
     display: 'block',
   };
 
-  const handleHelp = useCallback(async () => {
+  const handleHelp = useCallback(() => {
     setHelping(true);
     setSuggestions(null);
-    try {
-      const headers = await getAuthHeaders();
-      if (!headers) { setHelping(false); return; }
-      const formState = { name, description, contextDocs, skills, files, aboutYou };
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ message: '[JOB HELP] ' + JSON.stringify(formState) }),
-      });
-      // Read SSE stream for the response
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let resultText = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.data?.type === 'assistant' && data.data?.message?.content) {
-              for (const block of data.data.message.content) {
-                if (block.type === 'text') resultText = block.text;
-              }
-            }
-            if (data.data?.type === 'result' && data.data?.result) {
-              resultText = data.data.result;
-            }
-          } catch (parseErr) {
-            console.warn('[JobForm] SSE parse error:', parseErr);
-          }
-        }
+    const formState = { name, description, contextDocs, skills, files, aboutYou };
+    window.dispatchEvent(new CustomEvent('julian:send-chat', {
+      detail: { message: '[JOB HELP] ' + JSON.stringify(formState) }
+    }));
+  }, [name, description, contextDocs, skills, files, aboutYou]);
+
+  // Listen for julian:ui-action events targeting job-form
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.detail.target === 'job-form' && e.detail.action === 'fill' && e.detail.data) {
+        const d = e.detail.data;
+        setDraft(prev => ({
+          ...prev,
+          name: prev.name || d.name || prev.name,
+          description: prev.description || d.description || prev.description,
+          contextDocs: prev.contextDocs || d.contextDocs || prev.contextDocs,
+          skills: prev.skills || d.skills || prev.skills,
+          files: prev.files || d.files || prev.files,
+          aboutYou: prev.aboutYou || d.aboutYou || prev.aboutYou,
+        }));
+        setSuggestions(d);
+        setHelping(false);
       }
-      // Try to parse JSON from the response
-      const jsonMatch = resultText.match(/```json\s*([\s\S]*?)```/);
-      if (jsonMatch) {
-        try {
-          const parsed = JSON.parse(jsonMatch[1]);
-          setSuggestions(parsed);
-          if (parsed.name && !name) setName(parsed.name);
-          if (parsed.description && !description) setDescription(parsed.description);
-          if (parsed.contextDocs && !contextDocs) setContextDocs(parsed.contextDocs);
-          if (parsed.skills && !skills) setSkills(parsed.skills);
-          if (parsed.files && !files) setFiles(parsed.files);
-          if (parsed.aboutYou && !aboutYou) setAboutYou(parsed.aboutYou);
-        } catch (jsonErr) {
-          console.warn('[JobForm] JSON parse error:', jsonErr);
-        }
-      }
-    } catch (err) {
-      console.error('[JobForm] Help request failed:', err);
-    }
-    setHelping(false);
-  }, [name, description, contextDocs, skills, files, aboutYou, getAuthHeaders]);
+    };
+    window.addEventListener('julian:ui-action', handler);
+    return () => window.removeEventListener('julian:ui-action', handler);
+  }, [setDraft]);
+
+  // Safety timeout to reset helping state
+  useEffect(() => {
+    if (!helping) return;
+    const t = setTimeout(() => setHelping(false), 30000);
+    return () => clearTimeout(t);
+  }, [helping]);
 
   const handleSave = useCallback(async () => {
     const jobDoc = {
       type: 'job',
-      name: name.trim() || 'Untitled Job',
+      name: (name || '').trim() || 'Untitled Job',
       description,
       contextDocs,
       skills,
@@ -2305,7 +2276,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
     } catch (err) {
       console.error('[JobForm] Save failed:', err);
     }
-  }, [name, description, contextDocs, skills, files, aboutYou, job, database, onSave]);
+  }, [draft, job, database, onSave]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '16px 0' }}>
@@ -2361,7 +2332,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
         <label style={labelStyle}>Name</label>
         <input
           value={name}
-          onChange={e => setName(e.target.value)}
+          onChange={e => setDraft(prev => ({...prev, name: e.target.value}))}
           placeholder="JOB TITLE..."
           style={inputStyle}
         />
@@ -2371,7 +2342,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
         <label style={labelStyle}>Description</label>
         <textarea
           value={description}
-          onChange={e => setDescription(e.target.value)}
+          onChange={e => setDraft(prev => ({...prev, description: e.target.value}))}
           placeholder="WHAT THIS JOB INVOLVES..."
           rows={3}
           style={inputStyle}
@@ -2382,7 +2353,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
         <label style={labelStyle}>Context Documents</label>
         <textarea
           value={contextDocs}
-          onChange={e => setContextDocs(e.target.value)}
+          onChange={e => setDraft(prev => ({...prev, contextDocs: e.target.value}))}
           placeholder="TEXT TO ORIENT THE AGENT TOWARD THEIR DOMAIN..."
           rows={4}
           style={inputStyle}
@@ -2393,7 +2364,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
         <label style={labelStyle}>Skills</label>
         <textarea
           value={skills}
-          onChange={e => setSkills(e.target.value)}
+          onChange={e => setDraft(prev => ({...prev, skills: e.target.value}))}
           placeholder="CLAUDE CODE SKILLS TO AUGMENT THE AGENT..."
           rows={2}
           style={inputStyle}
@@ -2404,7 +2375,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
         <label style={labelStyle}>Reference Files</label>
         <textarea
           value={files}
-          onChange={e => setFiles(e.target.value)}
+          onChange={e => setDraft(prev => ({...prev, files: e.target.value}))}
           placeholder="FILE PATHS OR REFERENCES FOR THE AGENT..."
           rows={2}
           style={inputStyle}
@@ -2415,7 +2386,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
         <label style={labelStyle}>About You</label>
         <textarea
           value={aboutYou}
-          onChange={e => setAboutYou(e.target.value)}
+          onChange={e => setDraft(prev => ({...prev, aboutYou: e.target.value}))}
           placeholder="WHO YOU ARE AS A COLLABORATOR..."
           rows={3}
           style={inputStyle}
@@ -2467,9 +2438,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
   );
 }
 
-function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
-  const [view, setView] = useState('list'); // 'list' | 'form' | 'detail'
-  const [selectedJob, setSelectedJob] = useState(null);
+function JobsPanel({ database, useLiveQuery, getAuthHeaders, jobView, setJobView, selectedJob, setSelectedJob, jobDraft, setJobDraft }) {
   const { docs: jobDocs } = useLiveQuery("type", { key: "job" });
   const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
 
@@ -2483,27 +2452,38 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
 
   const handleJobClick = useCallback((job) => {
     setSelectedJob(job);
-    setView('detail');
-  }, []);
+    setJobView('detail');
+  }, [setSelectedJob, setJobView]);
 
   const handleNewJob = useCallback(() => {
     setSelectedJob(null);
-    setView('form');
-  }, []);
+    setJobDraft({ name: '', description: '', contextDocs: '', skills: '', files: '', aboutYou: '' });
+    setJobView('form');
+  }, [setSelectedJob, setJobDraft, setJobView]);
 
   const handleEdit = useCallback(() => {
-    setView('form');
-  }, []);
+    setJobDraft({
+      name: selectedJob?.name || '',
+      description: selectedJob?.description || '',
+      contextDocs: selectedJob?.contextDocs || '',
+      skills: selectedJob?.skills || '',
+      files: selectedJob?.files || '',
+      aboutYou: selectedJob?.aboutYou || '',
+    });
+    setJobView('form');
+  }, [selectedJob, setJobDraft, setJobView]);
 
   const handleSave = useCallback(() => {
     setSelectedJob(null);
-    setView('list');
-  }, []);
+    setJobDraft(null);
+    setJobView('list');
+  }, [setSelectedJob, setJobDraft, setJobView]);
 
   const handleCancel = useCallback(() => {
     setSelectedJob(null);
-    setView('list');
-  }, []);
+    setJobDraft(null);
+    setJobView('list');
+  }, [setSelectedJob, setJobDraft, setJobView]);
 
   const handleDelete = useCallback(async (job) => {
     if (!confirm('Delete this job?')) return;
@@ -2511,11 +2491,11 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
     try {
       await database.del(job._id);
       setSelectedJob(null);
-      setView('list');
+      setJobView('list');
     } catch (err) {
       console.error('[Jobs] Delete failed:', err);
     }
-  }, [database]);
+  }, [database, setSelectedJob, setJobView]);
 
   const handleAssign = useCallback(async (job, agentName) => {
     try {
@@ -2544,7 +2524,7 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
     }
   }, [database, agentDocs]);
 
-  if (view === 'form') {
+  if (jobView === 'form') {
     return (
       <div className="screen-panel-scroll" style={{
         padding: '0 24px', overflowY: 'auto', flex: 1,
@@ -2556,12 +2536,14 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
           onCancel={handleCancel}
           onSave={handleSave}
           getAuthHeaders={getAuthHeaders}
+          draft={jobDraft}
+          setDraft={setJobDraft}
         />
       </div>
     );
   }
 
-  if (view === 'detail' && selectedJob) {
+  if (jobView === 'detail' && selectedJob) {
     const isFilled = selectedJob.status === 'filled';
     const availableAgents = (agentDocs || []).filter(a => !a.dormant && !a.jobId);
     return (
@@ -2572,7 +2554,7 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <button
-            onClick={() => { setSelectedJob(null); setView('list'); }}
+            onClick={() => { setSelectedJob(null); setJobView('list'); }}
             style={{
               fontFamily: "'Inter', sans-serif",
               fontSize: 10,

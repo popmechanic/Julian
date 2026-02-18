@@ -566,6 +566,11 @@ function dispatchEvent(event) {
     case 'artifact_written':
       if (h.onArtifactWritten) h.onArtifactWritten(event);
       break;
+    case 'ui_action':
+      window.dispatchEvent(new CustomEvent('julian:ui-action', {
+        detail: { target: event.target, action: event.action, data: event.data }
+      }));
+      break;
     case 'server_error':
       if (h.onServerError) h.onServerError(event);
       break;
@@ -600,6 +605,11 @@ function App({ bootData }) {
   const [activeAgent, setActiveAgent] = useState(null);
   const [summoning, setSummoning] = useState(false);
   const [menuTab, setMenuTab] = useState('files');
+
+  // Jobs panel state (lifted so it survives tab switches)
+  const [jobView, setJobView] = useState('list');
+  const [selectedJob, setSelectedJob] = useState(null);
+  const [jobDraft, setJobDraft] = useState(null);
   const [sfxMuted, setSfxMuted] = useState(window.SFX?.isMuted ?? false);
   useEffect(() => {
     const handler = (e) => setSfxMuted(e.detail.muted);
@@ -652,7 +662,10 @@ function App({ bootData }) {
     // Wire up event handlers that update React state
     _eventHandlers.onClaudeText = (event) => {
       const blocks = (event.content || []).map(block => {
-        if (block.type === 'text') return { type: 'text', text: block.text };
+        if (block.type === 'text') {
+          const cleaned = block.text.split('\n').filter(l => !l.startsWith('[UI_ACTION]')).join('\n');
+          return { type: 'text', text: cleaned };
+        }
         if (block.type === 'tool_use') return { type: 'tool_use', name: block.name, input: block.input };
         return block;
       });
@@ -688,7 +701,7 @@ function App({ bootData }) {
       }
       const finalBlocks = liveBlocksRef.current.length > 0
         ? liveBlocksRef.current
-        : (event.resultText ? [{ type: 'text', text: event.resultText }] : []);
+        : (event.resultText ? [{ type: 'text', text: event.resultText.split('\n').filter(l => !l.startsWith('[UI_ACTION]')).join('\n') }] : []);
       window.SFX?.play('success');
       setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
 
@@ -938,6 +951,18 @@ function App({ bootData }) {
     eventSourceCloseRef.current = close;
     return () => { if (close) close(); };
   }, [getAuthHeaders]);
+
+  // Listen for programmatic chat sends (e.g. from job form UI actions)
+  useEffect(() => {
+    const handler = (e) => {
+      const msg = e.detail?.message;
+      if (msg && sessionActive && !streaming) {
+        sendMessage(msg);
+      }
+    };
+    window.addEventListener('julian:send-chat', handler);
+    return () => window.removeEventListener('julian:send-chat', handler);
+  }, [sendMessage, sessionActive, streaming]);
 
   // Auth headers — delegates to standalone function (shared with BootScreen)
   const getAuthHeaders = useCallback(() => getClerkAuthHeaders(), []);
@@ -2184,6 +2209,12 @@ function App({ bootData }) {
                         database={database}
                         useLiveQuery={useLiveQuery}
                         getAuthHeaders={getAuthHeaders}
+                        jobView={jobView}
+                        setJobView={setJobView}
+                        selectedJob={selectedJob}
+                        setSelectedJob={setSelectedJob}
+                        jobDraft={jobDraft}
+                        setJobDraft={setJobDraft}
                       />
                     )}
                     {menuTab === 'browser' && (

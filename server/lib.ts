@@ -114,6 +114,18 @@ export function parseMarkersFromContent(
           }
         } catch {}
       }
+
+      // [UI_ACTION] marker
+      const uiActionLines = block.text.split('\n').filter((l: string) => l.includes('[UI_ACTION]'));
+      for (const line of uiActionLines) {
+        try {
+          const jsonStr = line.slice(line.indexOf('{'));
+          const parsed = JSON.parse(jsonStr);
+          if (parsed.target && parsed.action) {
+            appendFn({ sessionId, type: 'ui_action', target: parsed.target, action: parsed.action, data: parsed.data });
+          }
+        } catch {}
+      }
     }
 
     // Detect Write tool targeting memory/
