@@ -345,7 +345,7 @@ function hashNameToFaceVariant(name) {
 
 /* ── Pixel Face Canvas ───────────────────────────────────────────────────── */
 
-function PixelFace({ talking, size = 120, color = '#FFD600', eyes = 'standard', mouth = 'gentle', gender = null }) {
+const PixelFace = React.memo(function PixelFace({ talking, size = 120, color = '#FFD600', eyes = 'standard', mouth = 'gentle', gender = null }) {
   const canvasRef = useRef(null);
   const stateRef = useRef({ talking: false, blinking: false });
   const animRef = useRef(null);
@@ -440,11 +440,11 @@ function PixelFace({ talking, size = 120, color = '#FFD600', eyes = 'standard', 
       }}
     />
   );
-}
+});
 
 /* ── Egg Hatching Animation ──────────────────────────────────────────────── */
 
-function EggHatch({ color = '#FFD600', size = 48, onComplete }) {
+const EggHatch = React.memo(function EggHatch({ color = '#FFD600', size = 48, onComplete }) {
   const canvasRef = useRef(null);
   const animRef = useRef(null);
   const startRef = useRef(null);
@@ -555,7 +555,7 @@ function EggHatch({ color = '#FFD600', size = 48, onComplete }) {
       }}
     />
   );
-}
+});
 
 /* ── Agent Grid (3x3) ───────────────────────────────────────────────────── */
 

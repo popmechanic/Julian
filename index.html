@@ -1147,7 +1147,7 @@ function App({ bootData }) {
     });
     // Filter by active agent — each agent has their own conversation thread
     const activeDoc = activeAgent
-      ? (agentDocs || []).find(a => a.name === activeAgent)
+      ? (agentDocsRef.current || []).find(a => a.name === activeAgent)
       : null;
     const activePos = activeDoc?.gridPosition;
     const filtered = sorted.filter(doc => {
@@ -1178,7 +1178,7 @@ function App({ bootData }) {
       msgs.push(liveAssistant);
     }
     return msgs;
-  }, [persistedMessages, liveAssistant, activeAgent, agentDocs]);
+  }, [persistedMessages, liveAssistant, activeAgent]);
 
   const isMobile = useMobile();
 
@@ -1258,7 +1258,7 @@ function App({ bootData }) {
     } finally {
       setSummoning(false);
     }
-  }, [summoning, sessionActive, getAuthHeaders, database, agentDocs]);
+  }, [summoning, sessionActive, getAuthHeaders, database]);
 
   // Wake sleeping agents — query their transcripts from Fireproof, assemble payloads, send to Julian
   const handleWake = useCallback(async () => {
@@ -1296,7 +1296,7 @@ function App({ bootData }) {
 
       // Build per-agent payloads (only sleeping agents, scoped by gridPosition)
       const agentPayloads = [];
-      for (const agent of (agentDocs || [])) {
+      for (const agent of (agentDocsRef.current || [])) {
         const status = getAgentStatus(agent);
         if (status !== 'sleeping') continue;
 
@@ -1341,7 +1341,7 @@ function App({ bootData }) {
         { position: 7, color: '#B8DDE6', colorName: 'Salt Air', gender: 'woman' },
         { position: 8, color: '#F2C4B0', colorName: 'Cloud Coral', gender: 'man' },
       ];
-      const namedPositions = new Set((agentDocs || []).filter(a => a.name).map(a => a.gridPosition));
+      const namedPositions = new Set((agentDocsRef.current || []).filter(a => a.name).map(a => a.gridPosition));
       const birthPayloads = SEAT_DEFAULTS
         .filter(s => !namedPositions.has(s.position))
         .map(s => `  <agent position="${s.position}" type="birth">\n    <color>${s.color}</color>\n    <colorName>${s.colorName}</colorName>\n    <gender>${s.gender}</gender>\n  </agent>`);
@@ -1372,7 +1372,7 @@ function App({ bootData }) {
     } finally {
       setSummoning(false);
     }
-  }, [summoning, sessionActive, getAuthHeaders, database, agentDocs]);
+  }, [summoning, sessionActive, getAuthHeaders, database]);
 
   const sendMessage = useCallback(async (text) => {
     if (streaming) return;
@@ -1387,8 +1387,9 @@ function App({ bootData }) {
     // Persist user message (fire-and-forget — useLiveQuery picks it up)
     const speakerName = window.Clerk?.user?.firstName || "Marcus";
     // Look up the active agent's grid position for transcript scoping
-    const activeDoc = activeAgent
-      ? (agentDocs || []).find(a => a.name === activeAgent)
+    const _activeAgent = activeAgentRef.current;
+    const activeDoc = _activeAgent
+      ? (agentDocsRef.current || []).find(a => a.name === _activeAgent)
       : null;
     resilientPut(database, {
       type: "message",
@@ -1396,7 +1397,7 @@ function App({ bootData }) {
       role: "user",
       speakerType: "human",
       speakerName,
-      agentName: activeAgent || undefined,
+      agentName: _activeAgent || undefined,
       gridPosition: activeDoc?.gridPosition ?? undefined,
       targetGridPosition: activeDoc?.gridPosition ?? undefined,
       text,
@@ -1410,7 +1411,7 @@ function App({ bootData }) {
       const response = await fetch('/api/send', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ message: text, targetAgent: activeAgent || undefined, speakerName }),
+        body: JSON.stringify({ message: text, targetAgent: _activeAgent || undefined, speakerName }),
       });
 
       if (!response.ok) {
@@ -1428,14 +1429,15 @@ function App({ bootData }) {
       setLiveAssistant(prev => prev ? { ...prev, blocks: [{ type: 'text', text: 'Connection error: ' + err.message }], thinking: false, streaming: false } : null);
       setStreaming(false);
     }
-  }, [streaming, sessionActive, serverSessionId, database, getAuthHeaders, activeAgent, agentDocs]);
+  }, [streaming, sessionActive, serverSessionId, database, getAuthHeaders]);
 
   const handleOfferWork = useCallback(async () => {
     if (streaming || !sessionActive) return;
+    const _activeAgent = activeAgentRef.current;
     const jobSummaries = openJobs
       .map(j => `- ${j.name}: ${j.description}`)
       .join('\n');
-    const routingMsg = `[OFFER WORK TO AGENT: ${activeAgent}] Available jobs:\n${jobSummaries}`;
+    const routingMsg = `[OFFER WORK TO AGENT: ${_activeAgent}] Available jobs:\n${jobSummaries}`;
     const displayMsg = `Would you like to hear about available work?`;
 
     // Show thinking bubble
@@ -1445,13 +1447,13 @@ function App({ bootData }) {
 
     // Persist clean display message
     const speakerName = window.Clerk?.user?.firstName || "Marcus";
-    const offerDoc = activeAgent
-      ? (agentDocs || []).find(a => a.name === activeAgent)
+    const offerDoc = _activeAgent
+      ? (agentDocsRef.current || []).find(a => a.name === _activeAgent)
       : null;
     resilientPut(database, {
       type: "message", category: "transcript", role: "user",
       speakerType: "human", speakerName,
-      agentName: activeAgent || undefined,
+      agentName: _activeAgent || undefined,
       gridPosition: offerDoc?.gridPosition ?? undefined,
       targetGridPosition: offerDoc?.gridPosition ?? undefined,
       text: displayMsg, blocks: [],
@@ -1462,14 +1464,14 @@ function App({ bootData }) {
       const headers = await getAuthHeaders();
       await fetch('/api/send', {
         method: 'POST', headers,
-        body: JSON.stringify({ message: routingMsg, targetAgent: activeAgent || undefined, speakerName }),
+        body: JSON.stringify({ message: routingMsg, targetAgent: _activeAgent || undefined, speakerName }),
       });
       // Response arrives through EventSource
     } catch (err) {
       setLiveAssistant(prev => prev ? { ...prev, blocks: [{ type: 'text', text: 'Connection error: ' + err.message }], thinking: false, streaming: false } : null);
       setStreaming(false);
     }
-  }, [activeAgent, openJobs, streaming, sessionActive, serverSessionId, database, getAuthHeaders, agentDocs]);
+  }, [openJobs, streaming, sessionActive, serverSessionId, database, getAuthHeaders]);
 
   const startSession = useCallback(async () => {
     if (wakingUp || sessionActive) return;
