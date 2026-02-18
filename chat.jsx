@@ -2438,9 +2438,9 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders, draft, setDr
   );
 }
 
-function JobsPanel({ database, useLiveQuery, getAuthHeaders, jobView, setJobView, selectedJob, setSelectedJob, jobDraft, setJobDraft }) {
-  const { docs: jobDocs } = useLiveQuery("type", { key: "job" });
-  const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
+function JobsPanel({ database, getAuthHeaders, jobView, setJobView, jobDocs, agentDocs }) {
+  const [selectedJob, setSelectedJob] = useState(null);
+  const [jobDraft, setJobDraft] = useState(null);
 
   const jobs = useMemo(() => {
     return [...(jobDocs || [])].sort((a, b) => {
@@ -2453,13 +2453,13 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders, jobView, setJobView
   const handleJobClick = useCallback((job) => {
     setSelectedJob(job);
     setJobView('detail');
-  }, [setSelectedJob, setJobView]);
+  }, [setJobView]);
 
   const handleNewJob = useCallback(() => {
     setSelectedJob(null);
     setJobDraft({ name: '', description: '', contextDocs: '', skills: '', files: '', aboutYou: '' });
     setJobView('form');
-  }, [setSelectedJob, setJobDraft, setJobView]);
+  }, [setJobView]);
 
   const handleEdit = useCallback(() => {
     setJobDraft({
@@ -2471,19 +2471,19 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders, jobView, setJobView
       aboutYou: selectedJob?.aboutYou || '',
     });
     setJobView('form');
-  }, [selectedJob, setJobDraft, setJobView]);
+  }, [selectedJob, setJobView]);
 
   const handleSave = useCallback(() => {
     setSelectedJob(null);
     setJobDraft(null);
     setJobView('list');
-  }, [setSelectedJob, setJobDraft, setJobView]);
+  }, [setJobView]);
 
   const handleCancel = useCallback(() => {
     setSelectedJob(null);
     setJobDraft(null);
     setJobView('list');
-  }, [setSelectedJob, setJobDraft, setJobView]);
+  }, [setJobView]);
 
   const handleDelete = useCallback(async (job) => {
     if (!confirm('Delete this job?')) return;
@@ -2495,7 +2495,7 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders, jobView, setJobView
     } catch (err) {
       console.error('[Jobs] Delete failed:', err);
     }
-  }, [database, setSelectedJob, setJobView]);
+  }, [database, setJobView]);
 
   const handleAssign = useCallback(async (job, agentName) => {
     try {

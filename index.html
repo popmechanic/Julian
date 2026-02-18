@@ -606,10 +606,9 @@ function App({ bootData }) {
   const [summoning, setSummoning] = useState(false);
   const [menuTab, setMenuTab] = useState('files');
 
-  // Jobs panel state (lifted so it survives tab switches)
+  // Jobs panel state — only jobView is lifted (survives tab switches)
+  // selectedJob and jobDraft live inside JobsPanel to avoid keystroke re-renders at App level
   const [jobView, setJobView] = useState('list');
-  const [selectedJob, setSelectedJob] = useState(null);
-  const [jobDraft, setJobDraft] = useState(null);
   const [sfxMuted, setSfxMuted] = useState(window.SFX?.isMuted ?? false);
   useEffect(() => {
     const handler = (e) => setSfxMuted(e.detail.muted);
@@ -658,6 +657,15 @@ function App({ bootData }) {
   const liveBlocksRef = useRef([]);
   const notifiedArrivalRef = useRef(false);
 
+  // Refs for values read inside event handlers — avoids re-registering
+  // handlers when these change, breaking the agentDocs render loop.
+  const agentDocsRef = useRef(agentDocs);
+  agentDocsRef.current = agentDocs;
+  const activeAgentRef = useRef(activeAgent);
+  activeAgentRef.current = activeAgent;
+  const refreshMenuDataRef = useRef(refreshMenuData);
+  refreshMenuDataRef.current = refreshMenuData;
+
   useEffect(() => {
     // Wire up event handlers that update React state
     _eventHandlers.onClaudeText = (event) => {
@@ -679,14 +687,16 @@ function App({ bootData }) {
       // Persist each assistant turn immediately so multi-turn messages don't vanish
       // Use messageId as _id to prevent duplicates if the same event re-fires
       if (msgId && blocks.length > 0) {
-        const speakerDoc = activeAgent
-          ? (agentDocs || []).find(a => a.name === activeAgent)
+        const _activeAgent = activeAgentRef.current;
+        const _agentDocs = agentDocsRef.current;
+        const speakerDoc = _activeAgent
+          ? (_agentDocs || []).find(a => a.name === _activeAgent)
           : null;
         resilientPut(database, {
           _id: 'msg-' + msgId,
           type: 'message', category: 'transcript', role: 'assistant',
-          speakerType: 'agent', speakerName: activeAgent || 'Julian',
-          agentName: activeAgent || undefined,
+          speakerType: 'agent', speakerName: _activeAgent || 'Julian',
+          agentName: _activeAgent || undefined,
           gridPosition: speakerDoc?.gridPosition ?? undefined,
           text: '', blocks,
           createdAt: new Date().toISOString(), serverSessionId,
@@ -708,13 +718,15 @@ function App({ bootData }) {
       // Persist resultText fallback only if onClaudeText never fired (no messageId)
       // Normal messages are already persisted by onClaudeText using messageId
       if (finalBlocks.length > 0 && liveBlocksRef.current.length === 0 && event.resultText) {
-        const speakerDoc = activeAgent
-          ? (agentDocs || []).find(a => a.name === activeAgent)
+        const _activeAgent = activeAgentRef.current;
+        const _agentDocs = agentDocsRef.current;
+        const speakerDoc = _activeAgent
+          ? (_agentDocs || []).find(a => a.name === _activeAgent)
           : null;
         resilientPut(database, {
           type: 'message', category: 'transcript', role: 'assistant',
-          speakerType: 'agent', speakerName: activeAgent || 'Julian',
-          agentName: activeAgent || undefined,
+          speakerType: 'agent', speakerName: _activeAgent || 'Julian',
+          agentName: _activeAgent || undefined,
           gridPosition: speakerDoc?.gridPosition ?? undefined,
           text: '', blocks: finalBlocks,
           createdAt: new Date().toISOString(), serverSessionId,
@@ -762,7 +774,7 @@ function App({ bootData }) {
         setConnected(true);
         notifiedArrivalRef.current = false;
         liveBlocksRef.current = [];
-        refreshMenuData();
+        refreshMenuDataRef.current();
       }, 100);
     };
 
@@ -894,7 +906,7 @@ function App({ bootData }) {
 
     _eventHandlers.onArtifactWritten = () => {
       // Refresh menu data when artifacts are written
-      refreshMenuData();
+      refreshMenuDataRef.current();
     };
 
     _eventHandlers.onAgentMessage = async (event) => {
@@ -905,7 +917,8 @@ function App({ bootData }) {
       if (!text) return;
 
       // Find the agent's grid position for transcript scoping
-      const agentDoc = (agentDocs || []).find(a => a.name === event.agentName);
+      const _agentDocs = agentDocsRef.current;
+      const agentDoc = (_agentDocs || []).find(a => a.name === event.agentName);
       const gridPos = agentDoc?.gridPosition;
 
       // Persist to Fireproof
@@ -928,7 +941,7 @@ function App({ bootData }) {
       }
 
       // If this agent is currently selected, show as live
-      if (activeAgent === event.agentName) {
+      if (activeAgentRef.current === event.agentName) {
         window.SFX?.play('notification');
         setLiveAssistant(prev => ({
           id: 'agent-' + Date.now(),
@@ -943,7 +956,7 @@ function App({ bootData }) {
         }, 100);
       }
     };
-  }, [database, serverSessionId, activeAgent, agentDocs, refreshMenuData]);
+  }, [database, serverSessionId]);
 
   // Connect/disconnect EventSource based on auth readiness
   useEffect(() => {
@@ -2212,14 +2225,11 @@ function App({ bootData }) {
                     {menuTab === 'jobs' && (
                       <JobsPanel
                         database={database}
-                        useLiveQuery={useLiveQuery}
                         getAuthHeaders={getAuthHeaders}
                         jobView={jobView}
                         setJobView={setJobView}
-                        selectedJob={selectedJob}
-                        setSelectedJob={setSelectedJob}
-                        jobDraft={jobDraft}
-                        setJobDraft={setJobDraft}
+                        jobDocs={jobDocs}
+                        agentDocs={agentDocs}
                       />
                     )}
                     {menuTab === 'browser' && (
