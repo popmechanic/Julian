@@ -2574,19 +2574,54 @@ export default App;
         const VibesButton = window.VibesButton;
         const RED = window.RED;
 
-        const AuthGate = () => (
-          <AuthScreen
-            title="Sign in to continue"
-            message="This app uses cloud sync and requires authentication."
-            showCard={true}
-          >
-            <SignInButton mode="modal">
-              <VibesButton variant={RED} buttonType="form">
-                Sign In
-              </VibesButton>
-            </SignInButton>
-          </AuthScreen>
-        );
+        const AuthGate = () => {
+          const [confirmed, setConfirmed] = React.useState(false);
+          return (
+            <AuthScreen
+              title="Sign in to continue"
+              message="One server, one user."
+              showCard={true}
+            >
+              <div style={{ opacity: confirmed ? 1 : 0.4, pointerEvents: confirmed ? 'auto' : 'none', transition: 'opacity 0.2s', width: '100%' }}>
+                <SignInButton mode="modal">
+                  <VibesButton variant={RED} buttonType="form">
+                    Sign In
+                  </VibesButton>
+                </SignInButton>
+              </div>
+              <label style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 10,
+                cursor: 'pointer',
+                marginTop: 16,
+                padding: '0 12px',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={confirmed}
+                  onChange={e => setConfirmed(e.target.checked)}
+                  style={{
+                    width: 18,
+                    height: 18,
+                    marginTop: 2,
+                    accentColor: '#d32f2f',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
+                />
+                <span style={{
+                  fontSize: '0.9rem',
+                  color: '#666',
+                  lineHeight: 1.5,
+                  userSelect: 'none',
+                }}>
+                  I confirm that I am the single human user of this server.
+                </span>
+              </label>
+            </AuthScreen>
+          );
+        };
 
         return (
           <ClerkFireproofProvider

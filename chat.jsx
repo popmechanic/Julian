@@ -1389,7 +1389,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
       backgroundColor: '#FFD600',
     }}>
       <div style={{ width: '100%', maxWidth: 480, display: 'flex', flexDirection: 'column', gap: 20 }}>
-        <div style={{ textAlign: 'center' }}>
+        <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <PixelFace talking={false} size={100} />
           <h1 style={{
             fontFamily: "'VT323', monospace",
@@ -1408,6 +1408,32 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
             marginTop: 4,
           }}>
             ONE-TIME SETUP TO LINK YOUR ACCOUNT
+          </p>
+          <p style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '0.95rem',
+            color: '#777',
+            marginTop: 16,
+            lineHeight: 1.6,
+            maxWidth: 420,
+            marginLeft: 'auto',
+            marginRight: 'auto',
+            textAlign: 'left',
+          }}>
+            Julian is a personal interface to Claude Code, built for Anthropic's Claude Code Hackathon. It is not a commercial product or multi-user service — each Julian instance serves a single user, running against that user's own Claude subscription credentials.
+          </p>
+          <p style={{
+            fontFamily: "'VT323', monospace",
+            fontSize: '0.95rem',
+            color: '#777',
+            marginTop: 8,
+            lineHeight: 1.6,
+            maxWidth: 420,
+            marginLeft: 'auto',
+            marginRight: 'auto',
+            textAlign: 'left',
+          }}>
+            No third-party credentials are accepted or routed. This is a hosted wrapper around Claude Code for individual use.
           </p>
         </div>
 

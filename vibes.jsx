@@ -742,7 +742,7 @@ const getAnimationStyles = () => `
 
 
 // === AuthScreen ===
-const CARD_URLS = [];
+const CARD_URLS = ['/assets/vibes-card.png'];
 const AuthScreen = ({
   children,
   title,
