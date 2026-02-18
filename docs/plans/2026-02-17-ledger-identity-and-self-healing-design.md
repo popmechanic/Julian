@@ -303,6 +303,8 @@ The server is a bridge, not a brain. Rather than adding server-side persistence 
 2. **Browser wipes while server runs** — The `.toUpperCase()` crash scenario. Browser is empty; Claude subprocess still has agents.
 3. **SSE drops mid-session** — Both sides have state but the sync bridge is broken.
 
+4. **Ghost-alive agents (page unload before writes complete)** — Browser tab closes or server dies abruptly. `sleepAgentsOnDisconnect` never completes because the page unloads before async Fireproof writes finish. Named agents stay `alive` in the cloud ledger. On next page load, `expireStaleHatching` skipped them because they were named and not hatching. Fix (v3): on boot, transition ALL named alive agents to sleeping — the browser just loaded, so no agent can be genuinely alive. If a live Claude process exists, its `[AGENT_STATUS]` events will transition them back.
+
 ### 5a. Server restart recovery (browser → server)
 
 **File:** `index.html` — SSE reconnection logic

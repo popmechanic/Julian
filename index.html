@@ -434,8 +434,12 @@ async function expireStaleHatching(database) {
         if (status === 'hatching') {
           console.log('[Expiry] Named hatching → sleeping at seat', doc.gridPosition, doc.name);
           await resilientPut(database, { ...doc, status: 'sleeping' });
+        } else if (status === 'alive') {
+          // Named alive → sleeping (ghost from previous session, no active process on boot)
+          console.log('[Expiry] Named alive → sleeping at seat', doc.gridPosition, doc.name);
+          await resilientPut(database, { ...doc, status: 'sleeping' });
         }
-        // Named agents with other statuses (sleeping, alive) are fine — skip
+        // Named agents with other statuses (sleeping) are fine — skip
       } else {
         // Nameless agent in ANY status → expire if stale (cleanup orphaned placeholders)
         const age = now - new Date(doc.createdAt || 0).getTime();

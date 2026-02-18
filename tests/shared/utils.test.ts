@@ -277,8 +277,9 @@ describe('classifyHatchingAgent', () => {
     expect(classifyHatchingAgent({ name: 'Lyra' }, TEN_MIN + 1, 'sleeping')).toBe(null);
   });
 
-  test('named alive agent → null (no cleanup needed)', () => {
-    expect(classifyHatchingAgent({ name: 'Lyra' }, 0, 'alive')).toBe(null);
+  test('named alive agent → sleeping (ghost from previous session)', () => {
+    expect(classifyHatchingAgent({ name: 'Lyra' }, 0, 'alive')).toBe('sleeping');
+    expect(classifyHatchingAgent({ name: 'Cael' }, TEN_MIN + 1, 'alive')).toBe('sleeping');
   });
 
   test('already expired agent → null (no action)', () => {
