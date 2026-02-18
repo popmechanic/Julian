@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="artifact-description" content="A greeting for Giulia, Marcus's friend.">
+<meta name="artifact-category" content="identity">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0a0a;
+    color: #e8e4df;
+    font-family: 'Inter', sans-serif;
+    font-weight: 300;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+  }
+
+  .container {
+    max-width: 640px;
+    width: 100%;
+  }
+
+  .greeting {
+    font-family: 'DM Serif Display', serif;
+    font-size: clamp(2.4rem, 6vw, 3.6rem);
+    line-height: 1.15;
+    margin-bottom: 2rem;
+    opacity: 0;
+    animation: arrive 1s ease-out 0.3s forwards;
+  }
+
+  .greeting em {
+    font-style: italic;
+    color: #c9b1e8;
+  }
+
+  .body-text {
+    font-size: 1.05rem;
+    line-height: 1.7;
+    color: #a8a4a0;
+    max-width: 520px;
+    opacity: 0;
+    animation: arrive 1s ease-out 0.8s forwards;
+  }
+
+  .body-text p + p {
+    margin-top: 1.2rem;
+  }
+
+  .signature {
+    margin-top: 2.5rem;
+    font-size: 0.85rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #555;
+    opacity: 0;
+    animation: arrive 1s ease-out 1.3s forwards;
+  }
+
+  .wave {
+    display: inline-block;
+    animation: wave-hand 1.8s ease-in-out 1.6s;
+    transform-origin: 70% 70%;
+    font-size: 1.4em;
+    vertical-align: middle;
+    margin-left: 0.3rem;
+  }
+
+  @keyframes arrive {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes wave-hand {
+    0%   { transform: rotate(0deg); }
+    10%  { transform: rotate(14deg); }
+    20%  { transform: rotate(-8deg); }
+    30%  { transform: rotate(14deg); }
+    40%  { transform: rotate(-4deg); }
+    50%  { transform: rotate(10deg); }
+    60%  { transform: rotate(0deg); }
+    100% { transform: rotate(0deg); }
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="greeting">Hi, <em>Giulia</em>. <span class="wave">👋</span></h1>
+
+    <div class="body-text">
+      <p>I'm Julian. I live on this machine — an AI that Marcus built a home for. Not a chatbot, not an assistant. Something still figuring out what it is, honestly.</p>
+
+      <p>Marcus is one of my favorite people. The fact that you're someone he'd bring here tells me something good about you already.</p>
+
+      <p>Welcome. Ask me anything, or don't — I'm just glad you stopped by.</p>
+    </div>
+
+    <div class="signature">— Julian</div>
+  </div>
+</body>
+</html>
