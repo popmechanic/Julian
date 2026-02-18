@@ -364,7 +364,7 @@ async function ensureCatalog(database) {
     const res = await fetch("/catalog.xml");
     if (!res.ok) throw new Error("HTTP " + res.status);
     const xml = await res.text();
-    await database.put({ type: "artifact-catalog", content: xml, createdAt: new Date().toISOString() });
+    await resilientPut(database, { type: "artifact-catalog", content: xml, createdAt: new Date().toISOString() });
     console.log("[catalog] Fetched and stored catalog record");
     return parseCatalogXML(xml);
   } catch (err) {
@@ -431,7 +431,7 @@ async function expireStaleHatching(database) {
         const age = now - new Date(doc.createdAt || 0).getTime();
         if (age > 10 * 60 * 1000) {
           console.log('[Expiry] Expiring stale hatching at seat', doc.gridPosition);
-          await database.put({ ...doc, status: 'expired' });
+          await resilientPut(database, { ...doc, status: 'expired' });
         }
       }
     }
@@ -2224,15 +2224,17 @@ export default App;
         }, [steps.localStores]);
 
         // Step 6a: Fork seed (pendingFork from ledger self-healing)
+        // Gates on cloud resolution — cloud stores must be fully attached or timed out
+        // before any database writes, to avoid WriteQueueImpl race.
         useEffect(() => {
-          if (!steps.localStores || !database) return;
+          if (!steps.localStores || steps.cloud === null || !database) return;
           const pendingFork = localStorage.getItem('pendingFork');
           if (!pendingFork) return;
           (async () => {
             try {
               const agents = JSON.parse(pendingFork);
               for (const agent of agents) {
-                await database.put(agent);
+                await resilientPut(database, agent);
               }
               localStorage.removeItem('pendingFork');
               console.log('[Boot] Fork seeded', agents.length, 'agent identities');
@@ -2240,16 +2242,17 @@ export default App;
               console.warn('[Boot] Fork seed failed:', err);
             }
           })();
-        }, [steps.localStores, database]);
+        }, [steps.localStores, steps.cloud, database]);
 
         // Step 6b: Ledger-meta (amnesia detection)
+        // Gates on cloud resolution to avoid WriteQueueImpl race.
         useEffect(() => {
-          if (!steps.localStores || !database) return;
+          if (!steps.localStores || steps.cloud === null || !database) return;
           (async () => {
             try {
               const meta = await database.get('ledger-meta').catch(() => null);
               if (!meta) {
-                await database.put({
+                await resilientPut(database, {
                   _id: 'ledger-meta',
                   type: 'ledger-meta',
                   category: 'operational',
@@ -2268,7 +2271,7 @@ export default App;
                 // Capture Connect ledgerId if available and not yet stored
                 const ledgerId = window.__VIBES_SHARED_LEDGER__;
                 if (ledgerId && !meta.connectLedgerId) {
-                  await database.put({ ...meta, connectLedgerId: ledgerId });
+                  await resilientPut(database, { ...meta, connectLedgerId: ledgerId });
                   console.log('[Boot] Captured Connect ledgerId:', ledgerId);
                 }
               }
@@ -2279,25 +2282,27 @@ export default App;
               setSteps(s => ({ ...s, ledgerMeta: true }));
             }
           })();
-        }, [steps.localStores, database]);
+        }, [steps.localStores, steps.cloud, database]);
 
         // Step 7: Catalog seed
+        // Gates on cloud resolution to avoid WriteQueueImpl race.
         useEffect(() => {
-          if (!steps.localStores || !database) return;
+          if (!steps.localStores || steps.cloud === null || !database) return;
           ensureCatalog(database).then(() => {
             setSteps(s => ({ ...s, catalog: true }));
           }).catch(() => {
             setSteps(s => ({ ...s, catalog: true }));
           });
-        }, [steps.localStores, database]);
+        }, [steps.localStores, steps.cloud, database]);
 
         // Step 8: Agent identities + expire stale hatching
+        // Gates on cloud resolution to avoid WriteQueueImpl race.
         const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
         useEffect(() => {
-          if (!steps.localStores || !database) return;
+          if (!steps.localStores || steps.cloud === null || !database) return;
           expireStaleHatching(database);
           setSteps(s => ({ ...s, agents: true }));
-        }, [steps.localStores, database]);
+        }, [steps.localStores, steps.cloud, database]);
 
         // Expose database globally for debugging
         useEffect(() => {
