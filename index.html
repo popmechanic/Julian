@@ -427,16 +427,20 @@ async function expireStaleHatching(database) {
     const now = Date.now();
     for (const row of rows) {
       const doc = row.doc || row.value;
-      if (getAgentStatus(doc) !== 'hatching') continue;
+      const status = getAgentStatus(doc);
+      if (status === 'expired') continue;
       if (doc.name) {
-        // Named hatching → sleeping (session died mid-spawn)
-        console.log('[Expiry] Named hatching → sleeping at seat', doc.gridPosition, doc.name);
-        await resilientPut(database, { ...doc, status: 'sleeping' });
+        // Named agent with hatching status → sleeping (session died mid-spawn)
+        if (status === 'hatching') {
+          console.log('[Expiry] Named hatching → sleeping at seat', doc.gridPosition, doc.name);
+          await resilientPut(database, { ...doc, status: 'sleeping' });
+        }
+        // Named agents with other statuses (sleeping, alive) are fine — skip
       } else {
+        // Nameless agent in ANY status → expire if stale (cleanup orphaned placeholders)
         const age = now - new Date(doc.createdAt || 0).getTime();
         if (age > 10 * 60 * 1000) {
-          // Nameless hatching → expired (after 10 min)
-          console.log('[Expiry] Expiring stale nameless hatching at seat', doc.gridPosition);
+          console.log('[Expiry] Expiring stale nameless agent at seat', doc.gridPosition, 'status:', status);
           await resilientPut(database, { ...doc, status: 'expired' });
         }
       }

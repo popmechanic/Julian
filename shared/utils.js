@@ -119,16 +119,22 @@ function isBootReady(steps) {
 }
 
 /**
- * Classify a hatching agent doc for boot cleanup.
- * Named hatching agents → 'sleeping' (session died mid-spawn, identity preserved).
- * Nameless hatching agents → 'expired' after staleMs, null (no action) if fresh.
- * @param {object} doc - Agent identity doc with hatching status
+ * Classify an agent doc for boot cleanup.
+ * Named hatching → 'sleeping' (session died mid-spawn, identity preserved).
+ * Named in other states → null (no action needed).
+ * Nameless in any state → 'expired' after staleMs, null if fresh.
+ * @param {object} doc - Agent identity doc
  * @param {number} ageMs - Age of the doc in milliseconds
- * @param {number} staleMs - Threshold for expiring nameless hatching (default 10 min)
+ * @param {string} currentStatus - Current status from getAgentStatus()
+ * @param {number} staleMs - Threshold for expiring nameless agents (default 10 min)
  * @returns {'sleeping'|'expired'|null} Target status, or null for no transition
  */
-function classifyHatchingAgent(doc, ageMs, staleMs = 10 * 60 * 1000) {
-  if (doc.name) return 'sleeping';
+function classifyHatchingAgent(doc, ageMs, currentStatus, staleMs = 10 * 60 * 1000) {
+  if (currentStatus === 'expired') return null;
+  if (doc.name) {
+    return currentStatus === 'hatching' ? 'sleeping' : null;
+  }
+  // Nameless agent in any status — expire if stale
   if (ageMs > staleMs) return 'expired';
   return null;
 }

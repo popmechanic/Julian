@@ -267,34 +267,58 @@ describe('classifyHatchingAgent', () => {
   const TEN_MIN = 10 * 60 * 1000;
 
   test('named hatching agent → sleeping (immediate, regardless of age)', () => {
-    expect(classifyHatchingAgent({ name: 'Lyra' }, 0)).toBe('sleeping');
-    expect(classifyHatchingAgent({ name: 'Lyra' }, TEN_MIN + 1)).toBe('sleeping');
-    expect(classifyHatchingAgent({ name: 'Cael' }, 1000)).toBe('sleeping');
+    expect(classifyHatchingAgent({ name: 'Lyra' }, 0, 'hatching')).toBe('sleeping');
+    expect(classifyHatchingAgent({ name: 'Lyra' }, TEN_MIN + 1, 'hatching')).toBe('sleeping');
+    expect(classifyHatchingAgent({ name: 'Cael' }, 1000, 'hatching')).toBe('sleeping');
+  });
+
+  test('named sleeping agent → null (already in correct state)', () => {
+    expect(classifyHatchingAgent({ name: 'Lyra' }, 0, 'sleeping')).toBe(null);
+    expect(classifyHatchingAgent({ name: 'Lyra' }, TEN_MIN + 1, 'sleeping')).toBe(null);
+  });
+
+  test('named alive agent → null (no cleanup needed)', () => {
+    expect(classifyHatchingAgent({ name: 'Lyra' }, 0, 'alive')).toBe(null);
+  });
+
+  test('already expired agent → null (no action)', () => {
+    expect(classifyHatchingAgent({ name: 'Lyra' }, 0, 'expired')).toBe(null);
+    expect(classifyHatchingAgent({}, TEN_MIN + 1, 'expired')).toBe(null);
   });
 
   test('nameless hatching agent, stale (>10 min) → expired', () => {
-    expect(classifyHatchingAgent({}, TEN_MIN + 1)).toBe('expired');
-    expect(classifyHatchingAgent({}, TEN_MIN + 60000)).toBe('expired');
+    expect(classifyHatchingAgent({}, TEN_MIN + 1, 'hatching')).toBe('expired');
+    expect(classifyHatchingAgent({}, TEN_MIN + 60000, 'hatching')).toBe('expired');
+  });
+
+  test('nameless sleeping agent, stale → expired (THE BUG FIX)', () => {
+    // This was the dead state: nameless agents transitioned to sleeping by
+    // sleepAgentsOnDisconnect, then skipped by the old expireStaleHatching
+    expect(classifyHatchingAgent({}, TEN_MIN + 1, 'sleeping')).toBe('expired');
+  });
+
+  test('nameless alive agent, stale → expired', () => {
+    expect(classifyHatchingAgent({}, TEN_MIN + 1, 'alive')).toBe('expired');
   });
 
   test('nameless hatching agent, fresh (<10 min) → null (no transition)', () => {
-    expect(classifyHatchingAgent({}, 0)).toBe(null);
-    expect(classifyHatchingAgent({}, TEN_MIN - 1)).toBe(null);
-    expect(classifyHatchingAgent({}, 5 * 60 * 1000)).toBe(null);
+    expect(classifyHatchingAgent({}, 0, 'hatching')).toBe(null);
+    expect(classifyHatchingAgent({}, TEN_MIN - 1, 'hatching')).toBe(null);
+    expect(classifyHatchingAgent({}, 5 * 60 * 1000, 'hatching')).toBe(null);
   });
 
   test('nameless hatching agent, exactly at threshold → null', () => {
-    expect(classifyHatchingAgent({}, TEN_MIN)).toBe(null);
+    expect(classifyHatchingAgent({}, TEN_MIN, 'hatching')).toBe(null);
   });
 
   test('custom stale threshold', () => {
-    expect(classifyHatchingAgent({}, 5001, 5000)).toBe('expired');
-    expect(classifyHatchingAgent({}, 4999, 5000)).toBe(null);
+    expect(classifyHatchingAgent({}, 5001, 'hatching', 5000)).toBe('expired');
+    expect(classifyHatchingAgent({}, 4999, 'hatching', 5000)).toBe(null);
   });
 
-  test('named agent with empty string name → sleeping', () => {
-    // empty string is falsy in JS, so this should be treated as nameless
-    expect(classifyHatchingAgent({ name: '' }, TEN_MIN + 1)).toBe('expired');
+  test('empty string name treated as nameless', () => {
+    expect(classifyHatchingAgent({ name: '' }, TEN_MIN + 1, 'hatching')).toBe('expired');
+    expect(classifyHatchingAgent({ name: '' }, TEN_MIN + 1, 'sleeping')).toBe('expired');
   });
 });
 
