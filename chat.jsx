@@ -562,7 +562,27 @@ const EggHatch = React.memo(function EggHatch({ color = '#FFD600', size = 48, on
 const JULIAN_POSITION = 4;
 const AGENT_POSITIONS = [0, 1, 2, 3, 5, 6, 7, 8];
 
-function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, onWake, summoning = false, fillContainer = false }) {
+const AgentGrid = React.memo(function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, onWake, summoning = false, fillContainer = false }) {
+  // Perf counters (debug only)
+  const _perfRef = React.useRef({ renders: 0, lastAgents: null, lastSample: Date.now() });
+  if (window.PERF_DEBUG) {
+    _perfRef.current.renders++;
+    const agentsChanged = _perfRef.current.lastAgents !== agents;
+    _perfRef.current.lastAgents = agents;
+    if (agentsChanged) console.log('[PERF] AgentGrid render #' + _perfRef.current.renders, { agentsChanged, agentsLen: agents.length });
+  }
+  React.useEffect(() => {
+    if (!window.PERF_DEBUG) return;
+    const iv = setInterval(() => {
+      const p = _perfRef.current;
+      const elapsed = (Date.now() - p.lastSample) / 1000;
+      console.log('[PERF] AgentGrid rate:', (p.renders / elapsed).toFixed(2) + '/sec', 'total:', p.renders);
+      p.renders = 0;
+      p.lastSample = Date.now();
+    }, 2000);
+    return () => clearInterval(iv);
+  }, []);
+
   const getStatus = window.getAgentStatus || ((d) => d.status || 'sleeping');
   const cells = Array.from({ length: 9 }, (_, i) => {
     if (i === JULIAN_POSITION) {
@@ -771,7 +791,15 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
       }</div>)}
     </div>
   );
-}
+}, (prev, next) =>
+  prev.agents === next.agents &&
+  prev.activeAgent === next.activeAgent &&
+  prev.summoning === next.summoning &&
+  prev.onSelectAgent === next.onSelectAgent &&
+  prev.onSummon === next.onSummon &&
+  prev.onWake === next.onWake &&
+  prev.fillContainer === next.fillContainer
+);
 
 /* ── Agent Face Header ──────────────────────────────────────────────────── */
 

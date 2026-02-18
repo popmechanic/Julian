@@ -118,6 +118,83 @@ function isBootReady(steps) {
     && steps.ledgerMeta && steps.catalog && steps.agents;
 }
 
+const AGENT_SIGNIFICANT_FIELDS = ['name', 'status', 'gridPosition', 'jobId', 'dormant', 'color', 'colorName', 'gender'];
+
+/**
+ * Stabilize an array of documents by preserving previous object references
+ * for items whose significant fields haven't changed. Prevents unnecessary
+ * React re-renders when Fireproof emits structurally identical query results.
+ * @param {Array} prev - Previous array of docs
+ * @param {Array} next - Next array of docs
+ * @param {Function} keyFn - Function to extract a unique key from a doc
+ * @param {string[]} significantFields - Fields to compare for equality
+ * @returns {Array} Stabilized array reusing prev references where possible
+ */
+function stabilizeDocsByKey(prev, next, keyFn, significantFields) {
+  if (!prev || !next) return next || [];
+  if (prev === next) return prev;
+
+  const prevMap = new Map();
+  for (const doc of prev) {
+    const key = keyFn(doc);
+    if (key != null) prevMap.set(key, doc);
+  }
+
+  let allSame = prev.length === next.length;
+  const result = next.map((doc, i) => {
+    const key = keyFn(doc);
+    const prevDoc = key != null ? prevMap.get(key) : undefined;
+    if (!prevDoc) { allSame = false; return doc; }
+
+    const changed = significantFields.some(f => prevDoc[f] !== doc[f]);
+    if (changed) { allSame = false; return doc; }
+
+    if (prevDoc !== prev[i]) allSame = false;
+    return prevDoc;
+  });
+
+  return allSame ? prev : result;
+}
+
+/**
+ * Derive a stable array of agent UI objects from Fireproof docs,
+ * preserving references for unchanged agents. Adds `_status` derived
+ * from getAgentStatus().
+ * @param {Array} prevAgents - Previous agent array (with _status)
+ * @param {Array} docs - Raw Fireproof agent docs
+ * @returns {Array} Stabilized agent array
+ */
+function deriveStableAgents(prevAgents, docs) {
+  if (!docs || docs.length === 0) return prevAgents && prevAgents.length === 0 ? prevAgents : [];
+
+  const next = docs.map(doc => ({
+    ...doc,
+    _status: getAgentStatus(doc),
+  }));
+
+  if (!prevAgents || prevAgents.length === 0) return next;
+
+  const prevMap = new Map();
+  for (const a of prevAgents) {
+    if (a.name) prevMap.set(a.name, a);
+  }
+
+  let allSame = prevAgents.length === next.length;
+  const result = next.map((agent, i) => {
+    const prev = agent.name ? prevMap.get(agent.name) : undefined;
+    if (!prev) { allSame = false; return agent; }
+
+    const changed = AGENT_SIGNIFICANT_FIELDS.some(f => prev[f] !== agent[f])
+      || prev._status !== agent._status;
+    if (changed) { allSame = false; return agent; }
+
+    if (prev !== prevAgents[i]) allSame = false;
+    return prev;
+  });
+
+  return allSame ? prevAgents : result;
+}
+
 export {
   escapeHtml,
   truncate,
@@ -131,6 +208,9 @@ export {
   resilientPut,
   getBootPhase,
   isBootReady,
+  stabilizeDocsByKey,
+  deriveStableAgents,
+  AGENT_SIGNIFICANT_FIELDS,
 };
 
 if (typeof window !== 'undefined') {
@@ -144,4 +224,7 @@ if (typeof window !== 'undefined') {
   window.resilientPut = resilientPut;
   window.getBootPhase = getBootPhase;
   window.isBootReady = isBootReady;
+  window.stabilizeDocsByKey = stabilizeDocsByKey;
+  window.deriveStableAgents = deriveStableAgents;
+  window.AGENT_SIGNIFICANT_FIELDS = AGENT_SIGNIFICANT_FIELDS;
 }

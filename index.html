@@ -580,6 +580,12 @@ function dispatchEvent(event) {
   }
 }
 
+/* ── Perf Debug (activate with ?perfDebug=1) ─────────────────────────────── */
+
+const PERF_DEBUG = new URLSearchParams(location.search).has('perfDebug');
+window.PERF_DEBUG = PERF_DEBUG;
+function perfLog(...args) { if (PERF_DEBUG) console.log('[PERF]', ...args); }
+
 /* ── Main App ────────────────────────────────────────────────────────────── */
 
 function App({ bootData }) {
@@ -617,7 +623,18 @@ function App({ bootData }) {
   }, []);
 
   // Query agent identities from Fireproof
-  const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
+  const { docs: rawAgentDocs } = useLiveQuery("type", { key: "agent-identity" });
+
+  // Stabilize agent docs — preserve references when only non-significant fields change
+  const stableAgentDocsRef = useRef([]);
+  const agentDocs = useMemo(() => {
+    const stable = stabilizeDocsByKey(
+      stableAgentDocsRef.current, rawAgentDocs || [],
+      doc => doc._id, AGENT_SIGNIFICANT_FIELDS
+    );
+    stableAgentDocsRef.current = stable;
+    return stable;
+  }, [rawAgentDocs]);
 
   // Query jobs from Fireproof
   const { docs: jobDocs } = useLiveQuery("type", { key: "job" });
@@ -626,17 +643,49 @@ function App({ bootData }) {
     [jobDocs]
   );
 
+  // Derive stable agents — preserves references for unchanged agents
+  const stableAgentsRef = useRef([]);
   const agents = useMemo(() => {
-    return (agentDocs || []).map(doc => ({
-      ...doc,
-      _status: getAgentStatus(doc),
-    }));
+    const stable = deriveStableAgents(stableAgentsRef.current, agentDocs);
+    stableAgentsRef.current = stable;
+    return stable;
   }, [agentDocs]);
 
   const activeAgentObj = useMemo(() => {
     if (!activeAgent) return null;
     return agents.find(a => a.name === activeAgent) || null;
   }, [activeAgent, agents]);
+
+  // ── Perf counters (debug only) ──────────────────────────────────────────
+  const perfRef = useRef({ renders: 0, rawChanged: 0, stableChanged: 0, lastAgents: null, lastRawDocs: null, lastSample: Date.now() });
+  if (PERF_DEBUG) {
+    perfRef.current.renders++;
+    const p = perfRef.current;
+    const rawDocsChanged = p.lastRawDocs !== rawAgentDocs;
+    const agentsChanged = p.lastAgents !== agents;
+    if (rawDocsChanged) p.rawChanged++;
+    if (agentsChanged) p.stableChanged++;
+    p.lastRawDocs = rawAgentDocs;
+    p.lastAgents = agents;
+    if (rawDocsChanged) {
+      perfLog('App render #' + p.renders, {
+        rawDocsChanged, stableAgentsChanged: agentsChanged,
+        suppressed: rawDocsChanged && !agentsChanged,
+        agentDocsLen: agentDocs?.length
+      });
+    }
+  }
+  useEffect(() => {
+    if (!PERF_DEBUG) return;
+    const iv = setInterval(() => {
+      const p = perfRef.current;
+      const elapsed = (Date.now() - p.lastSample) / 1000;
+      perfLog('App rate:', (p.renders / elapsed).toFixed(2) + '/sec', 'total:', p.renders);
+      p.renders = 0;
+      p.lastSample = Date.now();
+    }, 2000);
+    return () => clearInterval(iv);
+  }, []);
 
   const handleSelectAgent = useCallback((agentName) => {
     setActiveAgent(agentName);
@@ -657,14 +706,18 @@ function App({ bootData }) {
   const liveBlocksRef = useRef([]);
   const notifiedArrivalRef = useRef(false);
 
-  // Refs for values read inside event handlers — avoids re-registering
-  // handlers when these change, breaking the agentDocs render loop.
+  // Refs for values read inside event handlers and callbacks — avoids
+  // re-registering handlers when these change, which would break memoization.
   const agentDocsRef = useRef(agentDocs);
   agentDocsRef.current = agentDocs;
   const activeAgentRef = useRef(activeAgent);
   activeAgentRef.current = activeAgent;
   const refreshMenuDataRef = useRef(refreshMenuData);
   refreshMenuDataRef.current = refreshMenuData;
+  const summoningRef = useRef(summoning);
+  summoningRef.current = summoning;
+  const sessionActiveRef = useRef(sessionActive);
+  sessionActiveRef.current = sessionActive;
 
   useEffect(() => {
     // Wire up event handlers that update React state
@@ -1183,7 +1236,7 @@ function App({ bootData }) {
   const isMobile = useMobile();
 
   const handleSummon = useCallback(async () => {
-    if (summoning) return;
+    if (summoningRef.current) return;
     setSummoning(true);
     window.SFX?.play('open');
     try {
@@ -1202,7 +1255,7 @@ function App({ bootData }) {
       }
 
       // Start a session if none is active
-      if (!sessionActive) {
+      if (!sessionActiveRef.current) {
         const startRes = await fetch('/api/session/start', {
           method: 'POST',
           headers,
@@ -1258,11 +1311,11 @@ function App({ bootData }) {
     } finally {
       setSummoning(false);
     }
-  }, [summoning, sessionActive, getAuthHeaders, database]);
+  }, [getAuthHeaders, database]);
 
   // Wake sleeping agents — query their transcripts from Fireproof, assemble payloads, send to Julian
   const handleWake = useCallback(async () => {
-    if (summoning) return;
+    if (summoningRef.current) return;
     setSummoning(true);
     window.SFX?.play('navigate');
     try {
@@ -1270,7 +1323,7 @@ function App({ bootData }) {
       if (!headers) return;
 
       // Start a session if none is active
-      if (!sessionActive) {
+      if (!sessionActiveRef.current) {
         // Trigger startSession first — reuse the same flow as clicking the chat
         // We need a session for Julian to receive the wake message
         const startRes = await fetch('/api/session/start', {
@@ -1372,7 +1425,7 @@ function App({ bootData }) {
     } finally {
       setSummoning(false);
     }
-  }, [summoning, sessionActive, getAuthHeaders, database]);
+  }, [getAuthHeaders, database]);
 
   const sendMessage = useCallback(async (text) => {
     if (streaming) return;

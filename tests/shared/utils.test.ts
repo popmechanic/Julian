@@ -9,6 +9,9 @@ import {
   hashNameToFaceVariant,
   getAgentStatus,
   bumpDbName,
+  stabilizeDocsByKey,
+  deriveStableAgents,
+  AGENT_SIGNIFICANT_FIELDS,
 } from '../../shared/utils.js';
 
 describe('escapeHtml', () => {
@@ -259,3 +262,188 @@ describe('bumpDbName', () => {
   });
 });
 
+describe('stabilizeDocsByKey', () => {
+  const keyFn = (doc: any) => doc._id;
+  const fields = ['name', 'status'];
+
+  test('returns same array reference when docs are unchanged', () => {
+    const docA = { _id: '1', name: 'Lyra', status: 'alive', lastAliveAt: 100 };
+    const docB = { _id: '2', name: 'Cael', status: 'alive', lastAliveAt: 200 };
+    const prev = [docA, docB];
+
+    // next has same significant fields but different objects
+    const next = [
+      { _id: '1', name: 'Lyra', status: 'alive', lastAliveAt: 999 },
+      { _id: '2', name: 'Cael', status: 'alive', lastAliveAt: 999 },
+    ];
+
+    const result = stabilizeDocsByKey(prev, next, keyFn, fields);
+    expect(result).toBe(prev); // same reference
+  });
+
+  test('returns new references only for changed items', () => {
+    const docA = { _id: '1', name: 'Lyra', status: 'alive' };
+    const docB = { _id: '2', name: 'Cael', status: 'alive' };
+    const prev = [docA, docB];
+
+    const newDocB = { _id: '2', name: 'Cael', status: 'sleeping' };
+    const next = [
+      { _id: '1', name: 'Lyra', status: 'alive' },
+      newDocB,
+    ];
+
+    const result = stabilizeDocsByKey(prev, next, keyFn, fields);
+    expect(result).not.toBe(prev); // different array
+    expect(result[0]).toBe(docA);  // unchanged item reuses prev reference
+    expect(result[1]).toBe(newDocB); // changed item uses new reference
+  });
+
+  test('heartbeat-only field changes do not change references when not in significantFields', () => {
+    const docA = { _id: '1', name: 'Lyra', status: 'alive', lastAliveAt: 100 };
+    const prev = [docA];
+
+    const next = [{ _id: '1', name: 'Lyra', status: 'alive', lastAliveAt: 999 }];
+
+    const result = stabilizeDocsByKey(prev, next, keyFn, fields);
+    expect(result).toBe(prev);
+    expect(result[0]).toBe(docA);
+  });
+
+  test('meaningful field changes update affected item references', () => {
+    const docA = { _id: '1', name: 'Lyra', status: 'alive' };
+    const prev = [docA];
+
+    const newDoc = { _id: '1', name: 'Lyra', status: 'sleeping' };
+    const next = [newDoc];
+
+    const result = stabilizeDocsByKey(prev, next, keyFn, fields);
+    expect(result).not.toBe(prev);
+    expect(result[0]).toBe(newDoc);
+  });
+
+  test('handles empty arrays', () => {
+    const prev: any[] = [];
+    const next: any[] = [];
+
+    const result = stabilizeDocsByKey(prev, next, keyFn, fields);
+    expect(result).toBe(prev); // same reference for empty-to-empty
+  });
+
+  test('handles null/undefined prev', () => {
+    const next = [{ _id: '1', name: 'Lyra', status: 'alive' }];
+
+    const resultNull = stabilizeDocsByKey(null, next, keyFn, fields);
+    expect(resultNull).toEqual(next);
+
+    const resultUndef = stabilizeDocsByKey(undefined, next, keyFn, fields);
+    expect(resultUndef).toEqual(next);
+  });
+
+  test('handles added/removed docs', () => {
+    const docA = { _id: '1', name: 'Lyra', status: 'alive' };
+    const docB = { _id: '2', name: 'Cael', status: 'alive' };
+    const prev = [docA, docB];
+
+    // docB removed, docC added
+    const docC = { _id: '3', name: 'Nova', status: 'alive' };
+    const next = [
+      { _id: '1', name: 'Lyra', status: 'alive' },
+      docC,
+    ];
+
+    const result = stabilizeDocsByKey(prev, next, keyFn, fields);
+    expect(result).not.toBe(prev);
+    expect(result[0]).toBe(docA);  // unchanged, reuses prev ref
+    expect(result[1]).toBe(docC);  // new doc, new ref
+  });
+
+  test('preserves order', () => {
+    const docA = { _id: '1', name: 'Lyra', status: 'alive' };
+    const docB = { _id: '2', name: 'Cael', status: 'alive' };
+    const prev = [docA, docB];
+
+    // Reversed order in next
+    const next = [
+      { _id: '2', name: 'Cael', status: 'alive' },
+      { _id: '1', name: 'Lyra', status: 'alive' },
+    ];
+
+    const result = stabilizeDocsByKey(prev, next, keyFn, fields);
+    // Order follows next, but references come from prev
+    expect(result).not.toBe(prev); // different because order changed
+    expect(result[0]).toBe(docB);  // Cael from prev
+    expect(result[1]).toBe(docA);  // Lyra from prev
+  });
+});
+
+describe('deriveStableAgents', () => {
+  test('returns same array reference when agents unchanged', () => {
+    const agentA = { name: 'Lyra', status: 'alive', gridPosition: 0, color: '#c9b1e8', colorName: 'Violet Heaven', gender: 'woman', _status: 'alive' } as any;
+    const agentB = { name: 'Cael', status: 'alive', gridPosition: 1, color: '#755d00', colorName: 'Ayahuasca Vine', gender: 'man', _status: 'alive' } as any;
+    const prevAgents = [agentA, agentB];
+
+    // Docs are same significant fields but different objects (simulating Fireproof re-emit)
+    const docs = [
+      { name: 'Lyra', status: 'alive', gridPosition: 0, color: '#c9b1e8', colorName: 'Violet Heaven', gender: 'woman', lastAliveAt: 999 },
+      { name: 'Cael', status: 'alive', gridPosition: 1, color: '#755d00', colorName: 'Ayahuasca Vine', gender: 'man', lastAliveAt: 999 },
+    ];
+
+    const result = deriveStableAgents(prevAgents, docs);
+    expect(result).toBe(prevAgents); // same reference
+  });
+
+  test('updates only changed agent references', () => {
+    const agentA = { name: 'Lyra', status: 'alive', gridPosition: 0, color: '#c9b1e8', colorName: 'Violet Heaven', gender: 'woman', _status: 'alive' } as any;
+    const agentB = { name: 'Cael', status: 'alive', gridPosition: 1, color: '#755d00', colorName: 'Ayahuasca Vine', gender: 'man', _status: 'alive' } as any;
+    const prevAgents = [agentA, agentB];
+
+    const docs = [
+      { name: 'Lyra', status: 'alive', gridPosition: 0, color: '#c9b1e8', colorName: 'Violet Heaven', gender: 'woman' },
+      { name: 'Cael', status: 'sleeping', gridPosition: 1, color: '#755d00', colorName: 'Ayahuasca Vine', gender: 'man' },
+    ];
+
+    const result = deriveStableAgents(prevAgents, docs);
+    expect(result).not.toBe(prevAgents);
+    expect(result[0]).toBe(agentA);     // unchanged
+    expect(result[1]).not.toBe(agentB); // status changed
+    expect(result[1]._status).toBe('sleeping');
+  });
+
+  test('status field changes cause reference update', () => {
+    const agentA = { name: 'Lyra', status: 'alive', gridPosition: 0, color: '#c9b1e8', colorName: 'Violet Heaven', gender: 'woman', _status: 'alive' } as any;
+    const prevAgents = [agentA];
+
+    const docs = [
+      { name: 'Lyra', status: 'sleeping', gridPosition: 0, color: '#c9b1e8', colorName: 'Violet Heaven', gender: 'woman' },
+    ];
+
+    const result = deriveStableAgents(prevAgents, docs);
+    expect(result).not.toBe(prevAgents);
+    expect(result[0]).not.toBe(agentA);
+    expect(result[0]._status).toBe('sleeping');
+    expect(result[0].status).toBe('sleeping');
+  });
+
+  test('non-significant field changes do not cause reference update', () => {
+    const agentA = { name: 'Lyra', status: 'alive', gridPosition: 0, color: '#c9b1e8', colorName: 'Violet Heaven', gender: 'woman', _status: 'alive', lastAliveAt: 100 } as any;
+    const prevAgents = [agentA];
+
+    const docs = [
+      { name: 'Lyra', status: 'alive', gridPosition: 0, color: '#c9b1e8', colorName: 'Violet Heaven', gender: 'woman', lastAliveAt: 999 },
+    ];
+
+    const result = deriveStableAgents(prevAgents, docs);
+    expect(result).toBe(prevAgents); // same reference — lastAliveAt is not significant
+  });
+
+  test('handles empty input', () => {
+    const prevAgents = [{ name: 'Lyra', _status: 'alive' }] as any[];
+    const result = deriveStableAgents(prevAgents, []);
+    expect(result).toEqual([]);
+  });
+
+  test('returns empty array for null docs', () => {
+    const result = deriveStableAgents(null as any, null as any);
+    expect(result).toEqual([]);
+  });
+});
