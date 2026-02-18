@@ -581,12 +581,22 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
     return { type: 'empty' };
   });
 
-  const hasSleeping = cells.some(c => c.type === 'sleeping');
-  const hasHatching = cells.some(c => c.type === 'hatching');
-  const namedAgents = agents.filter(a => a.name && (a._status || getStatus(a)) !== 'expired');
-  const showSummon = namedAgents.length === 0 && !hasHatching;
-  const showWake = hasSleeping;
-  const allAwake = namedAgents.length > 0 && !hasSleeping && !hasHatching;
+  // Derive button state from agents directly (not cells) to avoid gridPosition mismatches
+  const _deriveButtons = window.deriveGridButtons || function(ag, fn) {
+    const hs = ag.some(a => fn(a) === 'sleeping');
+    const hh = ag.some(a => fn(a) === 'hatching');
+    const named = ag.filter(a => a.name && fn(a) !== 'expired');
+    return { showSummon: named.length === 0 && !hh, showWake: hs, allAwake: named.length > 0 && !hs && !hh };
+  };
+  const { showSummon, showWake, allAwake } = _deriveButtons(agents, a => a._status || getStatus(a));
+
+  React.useEffect(() => {
+    if (agents.length > 0) {
+      console.log('[AgentGrid] agents:', agents.length,
+        'showSummon:', showSummon, 'showWake:', showWake, 'allAwake:', allAwake,
+        agents.map(a => ({ name: a.name, status: a._status || getStatus(a), pos: a.gridPosition })));
+    }
+  }, [agents, showSummon, showWake, allAwake]);
 
   return (
     <div style={{ padding: fillContainer ? 0 : '12px 8px', display: 'flex', flexDirection: 'column', flex: fillContainer ? 1 : undefined, height: fillContainer ? '100%' : undefined }}>

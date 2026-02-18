@@ -2325,8 +2325,9 @@ export default App;
         const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
         useEffect(() => {
           if (!steps.localStores || steps.cloud === null || !database) return;
-          expireStaleHatching(database);
-          setSteps(s => ({ ...s, agents: true }));
+          expireStaleHatching(database).then(() => {
+            setSteps(s => ({ ...s, agents: true }));
+          });
         }, [steps.localStores, steps.cloud, database]);
 
         // Expose database globally for debugging
