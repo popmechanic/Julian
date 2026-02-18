@@ -2492,9 +2492,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders, draft, setDr
   );
 }
 
-function JobsPanel({ database, getAuthHeaders, jobView, setJobView, jobDocs, agentDocs }) {
-  const [selectedJob, setSelectedJob] = useState(null);
-  const [jobDraft, setJobDraft] = useState(null);
+const JobsPanel = React.memo(function JobsPanel({ database, getAuthHeaders, jobView, setJobView, selectedJob, setSelectedJob, jobDraft, setJobDraft, jobDocs, agentDocs }) {
 
   const jobs = useMemo(() => {
     return [...(jobDocs || [])].sort((a, b) => {
@@ -2886,7 +2884,15 @@ function JobsPanel({ database, getAuthHeaders, jobView, setJobView, jobDocs, age
       )}
     </div>
   );
-}
+}, (prev, next) =>
+  prev.database === next.database &&
+  prev.getAuthHeaders === next.getAuthHeaders &&
+  prev.jobView === next.jobView &&
+  prev.selectedJob === next.selectedJob &&
+  prev.jobDraft === next.jobDraft &&
+  prev.jobDocs === next.jobDocs &&
+  prev.agentDocs === next.agentDocs
+);
 
 // === Ledger Management Panel ===
 

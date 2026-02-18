@@ -667,9 +667,11 @@ function App({ bootData }) {
   const [summoning, setSummoning] = useState(false);
   const [menuTab, setMenuTab] = useState('files');
 
-  // Jobs panel state — only jobView is lifted (survives tab switches)
-  // selectedJob and jobDraft live inside JobsPanel to avoid keystroke re-renders at App level
+  // Jobs panel state — lifted to App so state survives tab switches (JobsPanel unmounts)
+  // AgentGrid React.memo prevents keystroke cascades that motivated the original move to local state
   const [jobView, setJobView] = useState('list');
+  const [selectedJob, setSelectedJob] = useState(null);
+  const [jobDraft, setJobDraft] = useState(null);
   const [sfxMuted, setSfxMuted] = useState(window.SFX?.isMuted ?? false);
   useEffect(() => {
     const handler = (e) => setSfxMuted(e.detail.muted);
@@ -2340,6 +2342,10 @@ function App({ bootData }) {
                         getAuthHeaders={getAuthHeaders}
                         jobView={jobView}
                         setJobView={setJobView}
+                        selectedJob={selectedJob}
+                        setSelectedJob={setSelectedJob}
+                        jobDraft={jobDraft}
+                        setJobDraft={setJobDraft}
                         jobDocs={jobDocs}
                         agentDocs={agentDocs}
                       />

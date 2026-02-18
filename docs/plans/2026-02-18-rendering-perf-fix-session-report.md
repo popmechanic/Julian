@@ -9,7 +9,9 @@
 
 ## Context
 
-A previous debugging session (see prior handoff) identified the root cause of progressive UI slowdown: every Fireproof write (including chat messages) triggers `useLiveQuery` which returns new array references for `agentDocs`, cascading through `agents` useMemo → AgentGrid → 8x PixelFace. Three prior fix attempts (ref-ifying event handlers, moving state back into JobsPanel, memoizing PixelFace/EggHatch) were partial — they reduced the blast radius but didn't stop the cascade at the source.
+**Update (post-fix analysis):** The work documented here is **defensive hardening**, not the root-cause fix. The actual performance crash was caused by unbounded SSE historical event replay on page load (fixed in commit `775c575`). The React render cascade documented below is a real inefficiency that amplified the SSE replay flood, but was not the primary cause. See `docs/plans/2026-02-18-rendering-fix-final-analysis.md` for the complete root cause hierarchy.
+
+A previous debugging session (see prior handoff) identified the render cascade: every Fireproof write (including chat messages) triggers `useLiveQuery` which returns new array references for `agentDocs`, cascading through `agents` useMemo → AgentGrid → 8x PixelFace. Three prior fix attempts (ref-ifying event handlers, moving state back into JobsPanel, memoizing PixelFace/EggHatch) were partial — they reduced the blast radius but didn't stop the cascade at the source.
 
 A second agent wrote the implementation plan (`2026-02-18-rendering-performance-fix-plan.md`) with 6 tasks. This session executed that plan.
 
@@ -32,7 +34,7 @@ Pure functions that preserve object references when Fireproof re-emits structura
 
 **Files:** `shared/utils.js`, `tests/shared/utils.test.ts`
 
-- `AGENT_SIGNIFICANT_FIELDS` — the fields that matter for rendering: `name`, `status`, `gridPosition`, `jobId`, `dormant`, `color`, `colorName`, `gender`
+- `AGENT_SIGNIFICANT_FIELDS` — the fields that matter for rendering: `name`, `status`, `gridPosition`, `jobId`, `dormant`, `color`, `colorName`, `gender`, `faceVariant`
 - `stabilizeDocsByKey(prev, next, keyFn, significantFields)` — generic: builds a Map from prev, compares significant fields for each doc in next, reuses prev reference if unchanged, returns prev array itself if all elements match
 - `deriveStableAgents(prevAgents, docs)` — agent-specific: maps docs to UI shape (adding `_status`), then stabilizes using `AGENT_SIGNIFICANT_FIELDS` + `_status`
 - 14 new tests covering reference stability, heartbeat suppression, added/removed docs, ordering

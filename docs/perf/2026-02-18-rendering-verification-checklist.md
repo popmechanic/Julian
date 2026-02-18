@@ -48,4 +48,4 @@ Collect and paste:
 
 ## If Fail
 
-Next action: execute the split-subscription refactor path (`TranscriptPane` vs `AgentPane`) in `/Users/marcusestes/Websites/Julian/index.html` and re-run this same checklist.
+Next action: Profile in Chrome DevTools first (flame chart during the slowdown). The SSE replay fix (`775c575`) should prevent unbounded event replay, but if issues recur, identify the actual hot path before optimizing. See `docs/plans/2026-02-18-rendering-fix-final-analysis.md` for lessons learned.

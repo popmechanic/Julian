@@ -5,7 +5,7 @@
 ### 1. Reference Stabilization (shared/utils.js)
 - `stabilizeDocsByKey()` — generic array stabilizer that preserves object references for unchanged docs
 - `deriveStableAgents()` — agent-specific wrapper adding `_status`, preserving refs for unchanged agents
-- `AGENT_SIGNIFICANT_FIELDS` — only these fields trigger reference updates: `name`, `status`, `gridPosition`, `jobId`, `dormant`, `color`, `colorName`, `gender`
+- `AGENT_SIGNIFICANT_FIELDS` — only these fields trigger reference updates: `name`, `status`, `gridPosition`, `jobId`, `dormant`, `color`, `colorName`, `gender`, `faceVariant`
 
 ### 2. Stable Identity Pipeline (index.html App)
 - `rawAgentDocs` from `useLiveQuery` → `stabilizeDocsByKey` → `agentDocs` (stable) → `deriveStableAgents` → `agents` (stable)
@@ -39,12 +39,14 @@
 
 ## Gate Criteria
 
-| Criterion | Expected | Notes |
-|-----------|----------|-------|
-| No progressive slowdown | PASS | Render cascade eliminated for chat writes |
-| AgentGrid idle rate <= 0.2/sec | PASS | Memo blocks re-renders when agents unchanged |
-| PixelFace idle rate <= 0.2/sec | PASS | Parent memo blocks, plus own memo |
-| DevTools responsive | PASS | No more cascading re-renders during inspection |
+**Note:** These criteria were never verified with actual browser profiling. The stabilization work is defensive hardening — the primary performance fix was the SSE replay skip (commit `775c575`). See `docs/plans/2026-02-18-rendering-fix-final-analysis.md` for the full root cause analysis.
+
+| Criterion | Expected | Verified |
+|-----------|----------|----------|
+| No progressive slowdown | Yes — SSE replay fix prevents unbounded event replay | Not profiled |
+| AgentGrid idle rate <= 0.2/sec | Yes — React.memo blocks re-renders when agents unchanged | Not profiled |
+| PixelFace idle rate <= 0.2/sec | Yes — parent memo blocks, plus own memo | Not profiled |
+| DevTools responsive | Yes — no cascading re-renders during inspection | Not profiled |
 
 ## Verification
 

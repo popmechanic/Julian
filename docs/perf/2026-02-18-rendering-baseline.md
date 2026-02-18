@@ -21,7 +21,9 @@ Every chat message write to Fireproof triggers `useLiveQuery` for ALL query type
 
 ## Baseline Metrics
 
-To be captured with `?perfDebug=1` after instrumentation is deployed:
+**These metrics were never captured.** The performance issue was resolved before baseline profiling occurred. The root cause turned out to be SSE historical event replay (commit `775c575`), not the React render cascade documented above. See `docs/plans/2026-02-18-rendering-fix-final-analysis.md` for the full analysis.
+
+Planned but not executed:
 - [ ] App renders/sec (idle, with agents present)
 - [ ] AgentGrid renders/sec (idle)
 - [ ] Whether render counts rise progressively
