@@ -436,6 +436,35 @@ describe('deriveStableAgents', () => {
     expect(result).toBe(prevAgents); // same reference — lastAliveAt is not significant
   });
 
+  test('faceVariant changes cause reference update', () => {
+    const agentA = {
+      name: 'Lyra',
+      status: 'alive',
+      gridPosition: 0,
+      color: '#c9b1e8',
+      colorName: 'Violet Heaven',
+      gender: 'woman',
+      faceVariant: { eyes: 'standard', mouth: 'gentle' },
+      _status: 'alive'
+    } as any;
+    const prevAgents = [agentA];
+
+    const docs = [{
+      name: 'Lyra',
+      status: 'alive',
+      gridPosition: 0,
+      color: '#c9b1e8',
+      colorName: 'Violet Heaven',
+      gender: 'woman',
+      faceVariant: { eyes: 'round', mouth: 'gentle' }
+    }];
+
+    const result = deriveStableAgents(prevAgents, docs);
+    expect(result).not.toBe(prevAgents);
+    expect(result[0]).not.toBe(agentA);
+    expect(result[0].faceVariant?.eyes).toBe('round');
+  });
+
   test('handles empty input', () => {
     const prevAgents = [{ name: 'Lyra', _status: 'alive' }] as any[];
     const result = deriveStableAgents(prevAgents, []);

@@ -118,7 +118,7 @@ function isBootReady(steps) {
     && steps.ledgerMeta && steps.catalog && steps.agents;
 }
 
-const AGENT_SIGNIFICANT_FIELDS = ['name', 'status', 'gridPosition', 'jobId', 'dormant', 'color', 'colorName', 'gender'];
+const AGENT_SIGNIFICANT_FIELDS = ['name', 'status', 'gridPosition', 'jobId', 'dormant', 'color', 'colorName', 'gender', 'faceVariant'];
 
 /**
  * Stabilize an array of documents by preserving previous object references

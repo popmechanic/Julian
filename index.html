@@ -588,7 +588,7 @@ function perfLog(...args) { if (PERF_DEBUG) console.log('[PERF]', ...args); }
 
 /* ── Identity Stabilization (canonical impl in shared/utils.js) ──────────── */
 
-const AGENT_SIGNIFICANT_FIELDS = ['name', 'status', 'gridPosition', 'jobId', 'dormant', 'color', 'colorName', 'gender'];
+const AGENT_SIGNIFICANT_FIELDS = ['name', 'status', 'gridPosition', 'jobId', 'dormant', 'color', 'colorName', 'gender', 'faceVariant'];
 
 function stabilizeDocsByKey(prev, next, keyFn, significantFields) {
   if (!prev || !next) return next || [];
@@ -752,8 +752,10 @@ function App({ bootData }) {
 
   // Refs for values read inside event handlers and callbacks — avoids
   // re-registering handlers when these change, which would break memoization.
-  const agentDocsRef = useRef(agentDocs);
-  agentDocsRef.current = agentDocs;
+  // Keep raw docs here for event handlers that need freshest non-render fields
+  // (e.g. timestamps/metadata that are intentionally excluded from stabilization).
+  const agentDocsRef = useRef(rawAgentDocs || []);
+  agentDocsRef.current = rawAgentDocs || [];
   const activeAgentRef = useRef(activeAgent);
   activeAgentRef.current = activeAgent;
   const refreshMenuDataRef = useRef(refreshMenuData);
