@@ -118,45 +118,6 @@ function isBootReady(steps) {
     && steps.ledgerMeta && steps.catalog && steps.agents;
 }
 
-/**
- * Classify an agent doc for boot cleanup.
- * Named hatching → 'sleeping' (session died mid-spawn, identity preserved).
- * Named alive → 'sleeping' (ghost from previous session, no active process on boot).
- * Named in other states → null (no action needed).
- * Nameless in any state → 'expired' after staleMs, null if fresh.
- * @param {object} doc - Agent identity doc
- * @param {number} ageMs - Age of the doc in milliseconds
- * @param {string} currentStatus - Current status from getAgentStatus()
- * @param {number} staleMs - Threshold for expiring nameless agents (default 10 min)
- * @returns {'sleeping'|'expired'|null} Target status, or null for no transition
- */
-function classifyHatchingAgent(doc, ageMs, currentStatus, staleMs = 10 * 60 * 1000) {
-  if (currentStatus === 'expired') return null;
-  if (doc.name) {
-    return (currentStatus === 'hatching' || currentStatus === 'alive') ? 'sleeping' : null;
-  }
-  // Nameless agent in any status — expire if stale
-  if (ageMs > staleMs) return 'expired';
-  return null;
-}
-
-/**
- * Derive agent grid button visibility from agent docs.
- * @param {Array} agents - Array of agent identity docs
- * @param {Function} getStatusFn - Function to get status from a doc
- * @returns {{ showSummon: boolean, showWake: boolean, allAwake: boolean }}
- */
-function deriveGridButtons(agents, getStatusFn) {
-  const hasSleeping = agents.some(a => getStatusFn(a) === 'sleeping');
-  const hasHatching = agents.some(a => getStatusFn(a) === 'hatching');
-  const namedAgents = agents.filter(a => a.name && getStatusFn(a) !== 'expired');
-  return {
-    showSummon: namedAgents.length === 0 && !hasHatching,
-    showWake: hasSleeping,
-    allAwake: namedAgents.length > 0 && !hasSleeping && !hasHatching,
-  };
-}
-
 export {
   escapeHtml,
   truncate,
@@ -170,8 +131,6 @@ export {
   resilientPut,
   getBootPhase,
   isBootReady,
-  classifyHatchingAgent,
-  deriveGridButtons,
 };
 
 if (typeof window !== 'undefined') {
@@ -185,6 +144,4 @@ if (typeof window !== 'undefined') {
   window.resilientPut = resilientPut;
   window.getBootPhase = getBootPhase;
   window.isBootReady = isBootReady;
-  window.classifyHatchingAgent = classifyHatchingAgent;
-  window.deriveGridButtons = deriveGridButtons;
 }

@@ -421,39 +421,6 @@ function getAgentStatus(doc) {
 }
 window.getAgentStatus = getAgentStatus;
 
-async function expireStaleHatching(database) {
-  try {
-    const { rows } = await database.query('type', { key: 'agent-identity' });
-    const now = Date.now();
-    for (const row of rows) {
-      const doc = row.doc || row.value;
-      const status = getAgentStatus(doc);
-      if (status === 'expired') continue;
-      if (doc.name) {
-        // Named agent with hatching status → sleeping (session died mid-spawn)
-        if (status === 'hatching') {
-          console.log('[Expiry] Named hatching → sleeping at seat', doc.gridPosition, doc.name);
-          await resilientPut(database, { ...doc, status: 'sleeping' });
-        } else if (status === 'alive') {
-          // Named alive → sleeping (ghost from previous session, no active process on boot)
-          console.log('[Expiry] Named alive → sleeping at seat', doc.gridPosition, doc.name);
-          await resilientPut(database, { ...doc, status: 'sleeping' });
-        }
-        // Named agents with other statuses (sleeping) are fine — skip
-      } else {
-        // Nameless agent in ANY status → expire if stale (cleanup orphaned placeholders)
-        const age = now - new Date(doc.createdAt || 0).getTime();
-        if (age > 10 * 60 * 1000) {
-          console.log('[Expiry] Expiring stale nameless agent at seat', doc.gridPosition, 'status:', status);
-          await resilientPut(database, { ...doc, status: 'expired' });
-        }
-      }
-    }
-  } catch (e) {
-    console.warn('[Expiry] Failed:', e);
-  }
-}
-
 // Standalone auth header helper (usable outside React components)
 async function getClerkAuthHeaders() {
   for (let i = 0; i < 10; i++) {
@@ -873,7 +840,6 @@ function App({ bootData }) {
         const { rows } = await database.query('type', { key: 'agent-identity' });
         for (const row of rows) {
           const doc = row.doc || row.value;
-          if (getAgentStatus(doc) === 'expired') continue;
           if (!agentMap[doc.gridPosition] && getAgentStatus(doc) === 'alive') {
             await resilientPut(database, { ...doc, status: 'sleeping' });
           }
@@ -1157,7 +1123,7 @@ function App({ bootData }) {
       const existingAgents = await database.query('type', { key: 'agent-identity' });
       const hasNamedAgents = (existingAgents.rows || []).some(r => {
         const d = r.doc || r.value;
-        return d.name && getAgentStatus(d) !== 'expired';
+        return !!d.name;
       });
       if (hasNamedAgents) {
         console.warn('[Summon] Aborting: named agents already exist. Use WAKE.');
@@ -1293,15 +1259,34 @@ function App({ bootData }) {
         });
       }
 
+      // Identify empty seats (positions with no named agent) for gap filling
+      const SEAT_DEFAULTS = [
+        { position: 0, color: '#c9b1e8', colorName: 'Violet Heaven', gender: 'woman' },
+        { position: 1, color: '#755d00', colorName: 'Ayahuasca Vine', gender: 'man' },
+        { position: 2, color: '#00afd1', colorName: 'Aquarius', gender: 'woman' },
+        { position: 3, color: '#007e98', colorName: 'Pacific Pleasure', gender: 'man' },
+        { position: 5, color: '#c85cb4', colorName: 'Barbiecore', gender: 'woman' },
+        { position: 6, color: '#da89c9', colorName: 'Pink Punk', gender: 'man' },
+        { position: 7, color: '#B8DDE6', colorName: 'Salt Air', gender: 'woman' },
+        { position: 8, color: '#F2C4B0', colorName: 'Cloud Coral', gender: 'man' },
+      ];
+      const namedPositions = new Set((agentDocs || []).filter(a => a.name).map(a => a.gridPosition));
+      const birthPayloads = SEAT_DEFAULTS
+        .filter(s => !namedPositions.has(s.position))
+        .map(s => `  <agent position="${s.position}" type="birth">\n    <color>${s.color}</color>\n    <colorName>${s.colorName}</colorName>\n    <gender>${s.gender}</gender>\n  </agent>`);
+
       // Assemble the wake message
-      const payloadXml = agentPayloads.map(a =>
-        `  <agent name="${a.name}" color="${a.color}" colorName="${a.colorName}" gridPosition="${a.gridPosition}">\n` +
+      const wakeXml = agentPayloads.map(a =>
+        `  <agent position="${a.gridPosition}" type="wake">\n` +
+        `    <name>${a.name}</name>\n` +
+        `    <color>${a.color}</color>\n` +
+        `    <colorName>${a.colorName}</colorName>\n` +
         `    <soul>${a.soul}</soul>\n` +
         `    <transcript>${a.transcript}</transcript>\n` +
         `  </agent>`
-      ).join('\n');
-
-      const wakeMessage = `[WAKE AGENTS]\n<agent-payloads>\n${payloadXml}\n</agent-payloads>`;
+      );
+      const allPayloads = [...wakeXml, ...birthPayloads].join('\n');
+      const wakeMessage = `[WAKE AGENTS]\n<agent-payloads>\n${allPayloads}\n</agent-payloads>`;
 
       // Send through the send endpoint
       await fetch('/api/send', {
@@ -1310,7 +1295,7 @@ function App({ bootData }) {
         body: JSON.stringify({ message: wakeMessage }),
       });
 
-      console.log('[Wake] Sent wake message for', agentPayloads.length, 'agents');
+      console.log('[Wake] Sent wake message for', agentPayloads.length, 'sleeping +', birthPayloads.length, 'empty seats');
     } catch (err) {
       console.error('[Wake] Error:', err);
     } finally {
@@ -2320,14 +2305,11 @@ export default App;
           });
         }, [steps.localStores, steps.cloud, database]);
 
-        // Step 8: Agent identities + expire stale hatching
-        // Gates on cloud resolution to avoid WriteQueueImpl race.
+        // Step 8: Agent identities
         const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
         useEffect(() => {
           if (!steps.localStores || steps.cloud === null || !database) return;
-          expireStaleHatching(database).then(() => {
-            setSteps(s => ({ ...s, agents: true }));
-          });
+          setSteps(s => ({ ...s, agents: true }));
         }, [steps.localStores, steps.cloud, database]);
 
         // Expose database globally for debugging

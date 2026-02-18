@@ -569,26 +569,26 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
       return { type: 'julian' };
     }
     const agent = agents.find(a => a.gridPosition === i);
-    if (agent) {
-      // Phase 1b: nameless agents are always hatching, regardless of status
-      if (!agent.name) return { type: 'hatching', agent };
-      const status = agent._status || getStatus(agent);
-      if (status === 'expired') return { type: 'empty' };
-      if (status === 'hatching') return { type: 'hatching', agent };
-      if (status === 'sleeping') return { type: 'sleeping', agent };
-      return { type: 'active', agent };
+    // No doc or nameless: check if fresh hatch (< 10 min)
+    if (!agent || !agent.name) {
+      if (agent && (Date.now() - new Date(agent.createdAt).getTime()) < 600000) {
+        return { type: 'hatching', agent };
+      }
+      return { type: 'empty' };
     }
-    return { type: 'empty' };
+    // Named agent: alive or sleeping
+    const status = agent._status || getStatus(agent);
+    if (status === 'sleeping') return { type: 'sleeping', agent };
+    return { type: 'active', agent };
   });
 
-  // Derive button state from agents directly (not cells) to avoid gridPosition mismatches
-  const _deriveButtons = window.deriveGridButtons || function(ag, fn) {
-    const hs = ag.some(a => fn(a) === 'sleeping');
-    const hh = ag.some(a => fn(a) === 'hatching');
-    const named = ag.filter(a => a.name && fn(a) !== 'expired');
-    return { showSummon: named.length === 0 && !hh, showWake: hs, allAwake: named.length > 0 && !hs && !hh };
-  };
-  const { showSummon, showWake, allAwake } = _deriveButtons(agents, a => a._status || getStatus(a));
+  // Derive button state: name is the dividing line
+  const named = agents.filter(a => a.name);
+  const sleeping = named.filter(a => (a._status || getStatus(a)) === 'sleeping');
+  const allSeatsNamed = named.length >= 8;
+  const showWake = sleeping.length > 0;
+  const showSummon = !allSeatsNamed && !showWake;
+  const allAwake = allSeatsNamed && !showWake;
 
   React.useEffect(() => {
     if (agents.length > 0) {
