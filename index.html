@@ -664,6 +664,10 @@ function App({ bootData }) {
     };
 
     _eventHandlers.onClaudeResult = (event) => {
+      // Intermediate turn results (tool use) — ignore, don't persist or finalize
+      if (event.subtype && event.subtype !== 'success') {
+        return;
+      }
       const finalBlocks = liveBlocksRef.current.length > 0
         ? liveBlocksRef.current
         : (event.resultText ? [{ type: 'text', text: event.resultText }] : []);
