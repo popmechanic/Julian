@@ -658,13 +658,31 @@ function App({ bootData }) {
       });
       liveBlocksRef.current = blocks;
       if (!notifiedArrivalRef.current) { window.SFX?.play('notification'); notifiedArrivalRef.current = true; }
-      setLiveAssistant(prev => prev ? { ...prev, blocks, thinking: false, streaming: true } : {
-        id: 'live-' + Date.now(), role: 'assistant', blocks, thinking: false, streaming: true
+      const msgId = event.messageId || null;
+      setLiveAssistant(prev => prev ? { ...prev, blocks, messageId: msgId, thinking: false, streaming: true } : {
+        id: 'live-' + Date.now(), role: 'assistant', blocks, messageId: msgId, thinking: false, streaming: true
       });
+
+      // Persist each assistant turn immediately so multi-turn messages don't vanish
+      // Use messageId as _id to prevent duplicates if the same event re-fires
+      if (msgId && blocks.length > 0) {
+        const speakerDoc = activeAgent
+          ? (agentDocs || []).find(a => a.name === activeAgent)
+          : null;
+        resilientPut(database, {
+          _id: 'msg-' + msgId,
+          type: 'message', category: 'transcript', role: 'assistant',
+          speakerType: 'agent', speakerName: activeAgent || 'Julian',
+          agentName: activeAgent || undefined,
+          gridPosition: speakerDoc?.gridPosition ?? undefined,
+          text: '', blocks,
+          createdAt: new Date().toISOString(), serverSessionId,
+        }).catch(err => console.error('[chat] Fireproof put failed:', err));
+      }
     };
 
     _eventHandlers.onClaudeResult = (event) => {
-      // Intermediate turn results (tool use) — ignore, don't persist or finalize
+      // Intermediate turn results (tool use) — ignore, don't finalize
       if (event.subtype && event.subtype !== 'success') {
         return;
       }
@@ -674,8 +692,9 @@ function App({ bootData }) {
       window.SFX?.play('success');
       setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
 
-      // Persist assistant response to Fireproof
-      if (finalBlocks.length > 0) {
+      // Persist resultText fallback only if onClaudeText never fired (no messageId)
+      // Normal messages are already persisted by onClaudeText using messageId
+      if (finalBlocks.length > 0 && liveBlocksRef.current.length === 0 && event.resultText) {
         const speakerDoc = activeAgent
           ? (agentDocs || []).find(a => a.name === activeAgent)
           : null;
@@ -1099,14 +1118,19 @@ function App({ bootData }) {
       }
       return !doc.agentName && doc.gridPosition == null;
     });
-    const msgs = filtered.map(doc => ({
-      id: doc._id,
-      role: doc.role,
-      text: doc.text || '',
-      blocks: doc.blocks || [],
-      thinking: false,
-      streaming: false,
-    }));
+    // When liveAssistant is active, its persisted twin (msg-{messageId}) may already
+    // be in the list. Suppress the persisted copy so the streaming version takes its place.
+    const livePersistedId = liveAssistant?.messageId ? ('msg-' + liveAssistant.messageId) : null;
+    const msgs = filtered
+      .filter(doc => !livePersistedId || doc._id !== livePersistedId)
+      .map(doc => ({
+        id: doc._id,
+        role: doc.role,
+        text: doc.text || '',
+        blocks: doc.blocks || [],
+        thinking: false,
+        streaming: false,
+      }));
     if (liveAssistant) {
       msgs.push(liveAssistant);
     }
