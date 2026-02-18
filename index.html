@@ -2238,11 +2238,12 @@ export default App;
             resolved = true;
             setSteps(s => ({ ...s, localStores: true }));
           });
-          // Self-healing: if database.ready() hangs for 5s, IDB is likely corrupt.
+          // Self-healing: if database.ready() hangs for 15s, IDB is likely corrupt.
+          // 15s gives 300x headroom over typical 50ms resolution — safe for slow devices and backgrounded tabs.
           // Wipe all databases, clear migration keys, and reload.
           const healTimeout = setTimeout(() => {
             if (resolved) return;
-            console.error('[Boot] database.ready() hung for 5s — wiping IndexedDB and reloading');
+            console.error('[Boot] database.ready() hung for 15s — wiping IndexedDB and reloading');
             // Clear migration keys so the migration re-runs
             Object.keys(localStorage).filter(k => k.startsWith('fp_migration')).forEach(k => localStorage.removeItem(k));
             indexedDB.databases().then(dbs => {
@@ -2258,7 +2259,7 @@ export default App;
               // Fallback: if deletes hang too, just reload after 2s
               setTimeout(() => location.reload(), 2000);
             }).catch(() => location.reload());
-          }, 5000);
+          }, 15000);
           return () => clearTimeout(healTimeout);
         }, [database]);
 
