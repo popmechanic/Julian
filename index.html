@@ -953,16 +953,21 @@ function App({ bootData }) {
   }, [getAuthHeaders]);
 
   // Listen for programmatic chat sends (e.g. from job form UI actions)
+  // Use refs to avoid re-registering the listener on every sendMessage/streaming change
+  const sendMessageRef = useRef(sendMessage);
+  sendMessageRef.current = sendMessage;
+  const streamingRef = useRef(streaming);
+  streamingRef.current = streaming;
   useEffect(() => {
     const handler = (e) => {
       const msg = e.detail?.message;
-      if (msg && sessionActive && !streaming) {
-        sendMessage(msg);
+      if (msg && sessionActive && !streamingRef.current) {
+        sendMessageRef.current(msg);
       }
     };
     window.addEventListener('julian:send-chat', handler);
     return () => window.removeEventListener('julian:send-chat', handler);
-  }, [sendMessage, sessionActive, streaming]);
+  }, [sessionActive]);
 
   // Auth headers — delegates to standalone function (shared with BootScreen)
   const getAuthHeaders = useCallback(() => getClerkAuthHeaders(), []);

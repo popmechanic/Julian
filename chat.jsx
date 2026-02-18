@@ -2276,7 +2276,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders, draft, setDr
     } catch (err) {
       console.error('[JobForm] Save failed:', err);
     }
-  }, [draft, job, database, onSave]);
+  }, [name, description, contextDocs, skills, files, aboutYou, job, database, onSave]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '16px 0' }}>
