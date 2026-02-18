@@ -1002,6 +1002,13 @@ function VibesButton({
 // Uses window.PixelFace from chat.jsx (available at render time, not parse time).
 function BootUI({ steps }) {
   const [faceProps, setFaceProps] = useState({ eyes: 'narrow', mouth: 'gentle' });
+  const [showReset, setShowReset] = useState(false);
+
+  // Show manual reset button after 10s of no progress
+  useEffect(() => {
+    const t = setTimeout(() => setShowReset(true), 10000);
+    return () => clearTimeout(t);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -1070,7 +1077,26 @@ function BootUI({ steps }) {
             }, s.label)
           )
         )
-      )
+      ),
+      showReset && React.createElement('button', {
+        onClick: () => {
+          Object.keys(localStorage).filter(k => k.startsWith('fp_migration')).forEach(k => localStorage.removeItem(k));
+          indexedDB.databases().then(dbs => {
+            let done = 0;
+            if (dbs.length === 0) { location.reload(); return; }
+            dbs.forEach(db => {
+              const req = indexedDB.deleteDatabase(db.name);
+              req.onsuccess = req.onerror = req.onblocked = () => { done++; if (done === dbs.length) location.reload(); };
+            });
+            setTimeout(() => location.reload(), 2000);
+          }).catch(() => location.reload());
+        },
+        style: {
+          marginTop: 24, padding: '8px 24px', fontFamily: "'VT323', monospace",
+          fontSize: 16, color: '#f87171', background: 'transparent',
+          border: '1px solid #f87171', borderRadius: 4, cursor: 'pointer',
+        }
+      }, 'Reset local data')
     )
   );
 }

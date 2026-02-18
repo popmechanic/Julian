@@ -2201,13 +2201,37 @@ export default App;
         });
         const readyRef = useRef(false);
 
-        // Step 1-2: Database + local stores
+        // Step 1-2: Database + local stores (with self-healing timeout)
         useEffect(() => {
           if (!database) return;
           setSteps(s => ({ ...s, database: true }));
+          let resolved = false;
           database.ready().then(() => {
+            resolved = true;
             setSteps(s => ({ ...s, localStores: true }));
           });
+          // Self-healing: if database.ready() hangs for 5s, IDB is likely corrupt.
+          // Wipe all databases, clear migration keys, and reload.
+          const healTimeout = setTimeout(() => {
+            if (resolved) return;
+            console.error('[Boot] database.ready() hung for 5s — wiping IndexedDB and reloading');
+            // Clear migration keys so the migration re-runs
+            Object.keys(localStorage).filter(k => k.startsWith('fp_migration')).forEach(k => localStorage.removeItem(k));
+            indexedDB.databases().then(dbs => {
+              let done = 0;
+              if (dbs.length === 0) { location.reload(); return; }
+              dbs.forEach(db => {
+                const req = indexedDB.deleteDatabase(db.name);
+                req.onsuccess = req.onerror = req.onblocked = () => {
+                  done++;
+                  if (done === dbs.length) location.reload();
+                };
+              });
+              // Fallback: if deletes hang too, just reload after 2s
+              setTimeout(() => location.reload(), 2000);
+            }).catch(() => location.reload());
+          }, 5000);
+          return () => clearTimeout(healTimeout);
         }, [database]);
 
         // Step 3-5: Cloud sync (with 8s timeout)
