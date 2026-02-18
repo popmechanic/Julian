@@ -586,6 +586,50 @@ const PERF_DEBUG = new URLSearchParams(location.search).has('perfDebug');
 window.PERF_DEBUG = PERF_DEBUG;
 function perfLog(...args) { if (PERF_DEBUG) console.log('[PERF]', ...args); }
 
+/* ── Identity Stabilization (canonical impl in shared/utils.js) ──────────── */
+
+const AGENT_SIGNIFICANT_FIELDS = ['name', 'status', 'gridPosition', 'jobId', 'dormant', 'color', 'colorName', 'gender'];
+
+function stabilizeDocsByKey(prev, next, keyFn, significantFields) {
+  if (!prev || !next) return next || [];
+  if (prev === next) return prev;
+  const prevMap = new Map();
+  for (const doc of prev) {
+    const key = keyFn(doc);
+    if (key != null) prevMap.set(key, doc);
+  }
+  let allSame = prev.length === next.length;
+  const result = next.map((doc, i) => {
+    const key = keyFn(doc);
+    const prevDoc = key != null ? prevMap.get(key) : undefined;
+    if (!prevDoc) { allSame = false; return doc; }
+    const changed = significantFields.some(f => prevDoc[f] !== doc[f]);
+    if (changed) { allSame = false; return doc; }
+    if (prevDoc !== prev[i]) allSame = false;
+    return prevDoc;
+  });
+  return allSame ? prev : result;
+}
+
+function deriveStableAgents(prevAgents, docs) {
+  if (!docs || docs.length === 0) return prevAgents && prevAgents.length === 0 ? prevAgents : [];
+  const next = docs.map(doc => ({ ...doc, _status: getAgentStatus(doc) }));
+  if (!prevAgents || prevAgents.length === 0) return next;
+  const prevMap = new Map();
+  for (const a of prevAgents) { if (a.name) prevMap.set(a.name, a); }
+  let allSame = prevAgents.length === next.length;
+  const result = next.map((agent, i) => {
+    const prev = agent.name ? prevMap.get(agent.name) : undefined;
+    if (!prev) { allSame = false; return agent; }
+    const changed = AGENT_SIGNIFICANT_FIELDS.some(f => prev[f] !== agent[f])
+      || prev._status !== agent._status;
+    if (changed) { allSame = false; return agent; }
+    if (prev !== prevAgents[i]) allSame = false;
+    return prev;
+  });
+  return allSame ? prevAgents : result;
+}
+
 /* ── Main App ────────────────────────────────────────────────────────────── */
 
 function App({ bootData }) {
