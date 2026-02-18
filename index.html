@@ -399,7 +399,17 @@ window.resilientPut = resilientPut;
 // Events flow: Claude stdout → server event log → EventSource → React state.
 
 let _eventSource = null;
-let _lastEventId = -1;
+// Skip historical replay on first page load to avoid reprocessing a large event backlog.
+// We persist the last seen id per-tab and resume from there on reconnect.
+let _lastEventId = (() => {
+  try {
+    const raw = sessionStorage.getItem('julian:last-event-id');
+    const parsed = raw == null ? NaN : parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+  } catch {
+    return Number.MAX_SAFE_INTEGER;
+  }
+})();
 let _eventHandlers = {
   onClaudeText: null,
   onClaudeResult: null,
@@ -504,6 +514,7 @@ function connectEventSource(getAuthHeaders) {
             firstIdSeen = true;
 
             _lastEventId = newId;
+            try { sessionStorage.setItem('julian:last-event-id', String(newId)); } catch {}
             continue;
           }
           if (!line.startsWith('data: ')) continue;
