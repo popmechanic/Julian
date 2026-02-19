@@ -771,8 +771,7 @@ function App({ bootData }) {
   agentDocsRef.current = rawAgentDocs || [];
   const activeAgentRef = useRef(activeAgent);
   activeAgentRef.current = activeAgent;
-  const refreshMenuDataRef = useRef(refreshMenuData);
-  refreshMenuDataRef.current = refreshMenuData;
+  const refreshMenuDataRef = useRef(null);
   const summoningRef = useRef(summoning);
   summoningRef.current = summoning;
   const sessionActiveRef = useRef(sessionActive);
@@ -886,7 +885,7 @@ function App({ bootData }) {
         setConnected(true);
         notifiedArrivalRef.current = false;
         liveBlocksRef.current = [];
-        refreshMenuDataRef.current();
+        if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
       }, 100);
     };
 
@@ -1018,7 +1017,7 @@ function App({ bootData }) {
 
     _eventHandlers.onArtifactWritten = () => {
       // Refresh menu data when artifacts are written
-      refreshMenuDataRef.current();
+      if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
     };
 
     _eventHandlers.onAgentMessage = async (event) => {
@@ -1079,14 +1078,13 @@ function App({ bootData }) {
 
   // Listen for programmatic chat sends (e.g. from job form UI actions)
   // Use refs to avoid re-registering the listener on every sendMessage/streaming change
-  const sendMessageRef = useRef(sendMessage);
-  sendMessageRef.current = sendMessage;
+  const sendMessageRef = useRef(null);
   const streamingRef = useRef(streaming);
   streamingRef.current = streaming;
   useEffect(() => {
     const handler = (e) => {
       const msg = e.detail?.message;
-      if (msg && sessionActive && !streamingRef.current) {
+      if (msg && sessionActive && !streamingRef.current && typeof sendMessageRef.current === 'function') {
         sendMessageRef.current(msg);
       }
     };
@@ -1142,6 +1140,7 @@ function App({ bootData }) {
       console.warn('[Menu] refresh failed:', err);
     }
   }, [getAuthHeaders]);
+  refreshMenuDataRef.current = refreshMenuData;
 
   // Fetch menu data on mount
   useEffect(() => {
@@ -1542,6 +1541,7 @@ function App({ bootData }) {
       setStreaming(false);
     }
   }, [streaming, sessionActive, serverSessionId, database, getAuthHeaders]);
+  sendMessageRef.current = sendMessage;
 
   const handleOfferWork = useCallback(async () => {
     if (streaming || !sessionActive) return;
