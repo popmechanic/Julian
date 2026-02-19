@@ -548,6 +548,8 @@ function connectEventSource(getAuthHeaders) {
 }
 
 function dispatchEvent(event) {
+  // Broadcast on window so any component (e.g. JobForm) can listen
+  window.dispatchEvent(new CustomEvent('julian:' + event.type, { detail: event }));
   const h = _eventHandlers;
   switch (event.type) {
     case 'claude_text':

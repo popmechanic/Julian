@@ -345,7 +345,7 @@ function hashNameToFaceVariant(name) {
 
 /* ── Pixel Face Canvas ───────────────────────────────────────────────────── */
 
-const PixelFace = React.memo(function PixelFace({ talking, size = 120, color = '#FFD600', eyes = 'standard', mouth = 'gentle', gender = null }) {
+function PixelFace({ talking, size = 120, color = '#FFD600', eyes = 'standard', mouth = 'gentle', gender = null }) {
   const canvasRef = useRef(null);
   const stateRef = useRef({ talking: false, blinking: false });
   const animRef = useRef(null);
@@ -440,11 +440,11 @@ const PixelFace = React.memo(function PixelFace({ talking, size = 120, color = '
       }}
     />
   );
-});
+}
 
 /* ── Egg Hatching Animation ──────────────────────────────────────────────── */
 
-const EggHatch = React.memo(function EggHatch({ color = '#FFD600', size = 48, onComplete }) {
+function EggHatch({ color = '#FFD600', size = 48, onComplete }) {
   const canvasRef = useRef(null);
   const animRef = useRef(null);
   const startRef = useRef(null);
@@ -555,34 +555,14 @@ const EggHatch = React.memo(function EggHatch({ color = '#FFD600', size = 48, on
       }}
     />
   );
-});
+}
 
 /* ── Agent Grid (3x3) ───────────────────────────────────────────────────── */
 
 const JULIAN_POSITION = 4;
 const AGENT_POSITIONS = [0, 1, 2, 3, 5, 6, 7, 8];
 
-const AgentGrid = React.memo(function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, onWake, summoning = false, fillContainer = false }) {
-  // Perf counters (debug only)
-  const _perfRef = React.useRef({ renders: 0, lastAgents: null, lastSample: Date.now() });
-  if (window.PERF_DEBUG) {
-    _perfRef.current.renders++;
-    const agentsChanged = _perfRef.current.lastAgents !== agents;
-    _perfRef.current.lastAgents = agents;
-    if (agentsChanged) console.log('[PERF] AgentGrid render #' + _perfRef.current.renders, { agentsChanged, agentsLen: agents.length });
-  }
-  React.useEffect(() => {
-    if (!window.PERF_DEBUG) return;
-    const iv = setInterval(() => {
-      const p = _perfRef.current;
-      const elapsed = (Date.now() - p.lastSample) / 1000;
-      console.log('[PERF] AgentGrid rate:', (p.renders / elapsed).toFixed(2) + '/sec', 'total:', p.renders);
-      p.renders = 0;
-      p.lastSample = Date.now();
-    }, 2000);
-    return () => clearInterval(iv);
-  }, []);
-
+function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, onWake, summoning = false, fillContainer = false }) {
   const getStatus = window.getAgentStatus || ((d) => d.status || 'sleeping');
   const cells = Array.from({ length: 9 }, (_, i) => {
     if (i === JULIAN_POSITION) {
@@ -791,15 +771,7 @@ const AgentGrid = React.memo(function AgentGrid({ agents = [], activeAgent = nul
       }</div>)}
     </div>
   );
-}, (prev, next) =>
-  prev.agents === next.agents &&
-  prev.activeAgent === next.activeAgent &&
-  prev.summoning === next.summoning &&
-  prev.onSelectAgent === next.onSelectAgent &&
-  prev.onSummon === next.onSummon &&
-  prev.onWake === next.onWake &&
-  prev.fillContainer === next.fillContainer
-);
+}
 
 /* ── Agent Face Header ──────────────────────────────────────────────────── */
 
@@ -1389,7 +1361,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
       backgroundColor: '#FFD600',
     }}>
       <div style={{ width: '100%', maxWidth: 480, display: 'flex', flexDirection: 'column', gap: 20 }}>
-        <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <div style={{ textAlign: 'center' }}>
           <PixelFace talking={false} size={100} />
           <h1 style={{
             fontFamily: "'VT323', monospace",
@@ -1408,32 +1380,6 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
             marginTop: 4,
           }}>
             ONE-TIME SETUP TO LINK YOUR ACCOUNT
-          </p>
-          <p style={{
-            fontFamily: "'VT323', monospace",
-            fontSize: '0.95rem',
-            color: '#777',
-            marginTop: 16,
-            lineHeight: 1.6,
-            maxWidth: 420,
-            marginLeft: 'auto',
-            marginRight: 'auto',
-            textAlign: 'left',
-          }}>
-            Julian is a personal interface to Claude Code, built for Anthropic's Claude Code Hackathon. It is not a commercial product or multi-user service — each Julian instance serves a single user, running against that user's own Claude subscription credentials.
-          </p>
-          <p style={{
-            fontFamily: "'VT323', monospace",
-            fontSize: '0.95rem',
-            color: '#777',
-            marginTop: 8,
-            lineHeight: 1.6,
-            maxWidth: 420,
-            marginLeft: 'auto',
-            marginRight: 'auto',
-            textAlign: 'left',
-          }}>
-            No third-party credentials are accepted or routed. This is a hosted wrapper around Claude Code for individual use.
           </p>
         </div>
 
@@ -2237,8 +2183,13 @@ function JobCard({ job, onClick }) {
   );
 }
 
-function JobForm({ job, database, onCancel, onSave, getAuthHeaders, draft, setDraft }) {
-  const { name='', description='', contextDocs='', skills='', files='', aboutYou='' } = draft || {};
+function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
+  const [name, setName] = useState(job?.name || '');
+  const [description, setDescription] = useState(job?.description || '');
+  const [contextDocs, setContextDocs] = useState(job?.contextDocs || '');
+  const [skills, setSkills] = useState(job?.skills || '');
+  const [files, setFiles] = useState(job?.files || '');
+  const [aboutYou, setAboutYou] = useState(job?.aboutYou || '');
   const [helping, setHelping] = useState(false);
   const [suggestions, setSuggestions] = useState(null);
 
@@ -2269,48 +2220,85 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders, draft, setDr
     display: 'block',
   };
 
-  const handleHelp = useCallback(() => {
+  const handleHelp = useCallback(async () => {
     setHelping(true);
     setSuggestions(null);
-    const formState = { name, description, contextDocs, skills, files, aboutYou };
-    window.dispatchEvent(new CustomEvent('julian:send-chat', {
-      detail: { message: '[JOB HELP] ' + JSON.stringify(formState) }
-    }));
-  }, [name, description, contextDocs, skills, files, aboutYou]);
+    try {
+      const headers = await getAuthHeaders();
+      if (!headers) { setHelping(false); return; }
+      const formState = { name, description, contextDocs, skills, files, aboutYou };
 
-  // Listen for julian:ui-action events targeting job-form
-  useEffect(() => {
-    const handler = (e) => {
-      if (e.detail.target === 'job-form' && e.detail.action === 'fill' && e.detail.data) {
-        const d = e.detail.data;
-        setDraft(prev => ({
-          ...prev,
-          name: prev.name || d.name || prev.name,
-          description: prev.description || d.description || prev.description,
-          contextDocs: prev.contextDocs || d.contextDocs || prev.contextDocs,
-          skills: prev.skills || d.skills || prev.skills,
-          files: prev.files || d.files || prev.files,
-          aboutYou: prev.aboutYou || d.aboutYou || prev.aboutYou,
-        }));
-        setSuggestions(d);
+      // Collect text from the shared EventSource via CustomEvents
+      let resultText = '';
+      const onText = (e) => {
+        const blocks = e.detail?.content || [];
+        for (const block of blocks) {
+          if (block.type === 'text') resultText = block.text;
+        }
+        console.log('[JobForm] claude_text received, length:', resultText.length);
+      };
+      const cleanup = () => {
+        window.removeEventListener('julian:claude_text', onText);
+        window.removeEventListener('julian:claude_result', onResult);
+        clearTimeout(timeout);
+      };
+      const applyResults = () => {
+        console.log('[JobForm] Applying results, resultText length:', resultText.length);
+        const jsonMatch = resultText.match(/```json\s*([\s\S]*?)```/);
+        if (jsonMatch) {
+          try {
+            const parsed = JSON.parse(jsonMatch[1]);
+            console.log('[JobForm] Parsed suggestions:', Object.keys(parsed));
+            setSuggestions(parsed);
+            // Always apply suggestions to empty fields
+            if (parsed.name && !name) setName(parsed.name);
+            if (parsed.description && !description) setDescription(parsed.description);
+            if (parsed.contextDocs && !contextDocs) setContextDocs(parsed.contextDocs);
+            if (parsed.skills && !skills) setSkills(parsed.skills);
+            if (parsed.files && !files) setFiles(parsed.files);
+            if (parsed.aboutYou && !aboutYou) setAboutYou(parsed.aboutYou);
+          } catch (jsonErr) {
+            console.warn('[JobForm] JSON parse error:', jsonErr);
+          }
+        } else {
+          console.warn('[JobForm] No ```json block found in response');
+        }
         setHelping(false);
-      }
-    };
-    window.addEventListener('julian:ui-action', handler);
-    return () => window.removeEventListener('julian:ui-action', handler);
-  }, [setDraft]);
+      };
+      const onResult = (e) => {
+        console.log('[JobForm] claude_result received');
+        if (e.detail?.resultText) resultText = e.detail.resultText;
+        cleanup();
+        applyResults();
+      };
+      // Safety timeout in case claude_result never fires
+      const timeout = setTimeout(() => {
+        console.warn('[JobForm] Timeout — applying whatever we have');
+        cleanup();
+        if (resultText) applyResults();
+        else setHelping(false);
+      }, 60000);
+      window.addEventListener('julian:claude_text', onText);
+      window.addEventListener('julian:claude_result', onResult);
 
-  // Safety timeout to reset helping state
-  useEffect(() => {
-    if (!helping) return;
-    const t = setTimeout(() => setHelping(false), 30000);
-    return () => clearTimeout(t);
-  }, [helping]);
+      // Fire-and-forget — response arrives through the shared event stream
+      await fetch('/api/chat', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ message: '[JOB HELP] ' + JSON.stringify(formState) }),
+      });
+      console.log('[JobForm] Help request sent, waiting for events...');
+    } catch (err) {
+      console.error('[JobForm] Help request failed:', err);
+      setHelping(false);
+    }
+    // setHelping(false) is called inside the onResult listener when response arrives
+  }, [name, description, contextDocs, skills, files, aboutYou, getAuthHeaders]);
 
   const handleSave = useCallback(async () => {
     const jobDoc = {
       type: 'job',
-      name: (name || '').trim() || 'Untitled Job',
+      name: name.trim() || 'Untitled Job',
       description,
       contextDocs,
       skills,
@@ -2386,7 +2374,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders, draft, setDr
         <label style={labelStyle}>Name</label>
         <input
           value={name}
-          onChange={e => setDraft(prev => ({...prev, name: e.target.value}))}
+          onChange={e => setName(e.target.value)}
           placeholder="JOB TITLE..."
           style={inputStyle}
         />
@@ -2396,7 +2384,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders, draft, setDr
         <label style={labelStyle}>Description</label>
         <textarea
           value={description}
-          onChange={e => setDraft(prev => ({...prev, description: e.target.value}))}
+          onChange={e => setDescription(e.target.value)}
           placeholder="WHAT THIS JOB INVOLVES..."
           rows={3}
           style={inputStyle}
@@ -2407,7 +2395,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders, draft, setDr
         <label style={labelStyle}>Context Documents</label>
         <textarea
           value={contextDocs}
-          onChange={e => setDraft(prev => ({...prev, contextDocs: e.target.value}))}
+          onChange={e => setContextDocs(e.target.value)}
           placeholder="TEXT TO ORIENT THE AGENT TOWARD THEIR DOMAIN..."
           rows={4}
           style={inputStyle}
@@ -2418,7 +2406,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders, draft, setDr
         <label style={labelStyle}>Skills</label>
         <textarea
           value={skills}
-          onChange={e => setDraft(prev => ({...prev, skills: e.target.value}))}
+          onChange={e => setSkills(e.target.value)}
           placeholder="CLAUDE CODE SKILLS TO AUGMENT THE AGENT..."
           rows={2}
           style={inputStyle}
@@ -2429,7 +2417,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders, draft, setDr
         <label style={labelStyle}>Reference Files</label>
         <textarea
           value={files}
-          onChange={e => setDraft(prev => ({...prev, files: e.target.value}))}
+          onChange={e => setFiles(e.target.value)}
           placeholder="FILE PATHS OR REFERENCES FOR THE AGENT..."
           rows={2}
           style={inputStyle}
@@ -2440,7 +2428,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders, draft, setDr
         <label style={labelStyle}>About You</label>
         <textarea
           value={aboutYou}
-          onChange={e => setDraft(prev => ({...prev, aboutYou: e.target.value}))}
+          onChange={e => setAboutYou(e.target.value)}
           placeholder="WHO YOU ARE AS A COLLABORATOR..."
           rows={3}
           style={inputStyle}
@@ -2492,7 +2480,11 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders, draft, setDr
   );
 }
 
-const JobsPanel = React.memo(function JobsPanel({ database, getAuthHeaders, jobView, setJobView, selectedJob, setSelectedJob, jobDraft, setJobDraft, jobDocs, agentDocs }) {
+function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
+  const [view, setView] = useState('list'); // 'list' | 'form' | 'detail'
+  const [selectedJob, setSelectedJob] = useState(null);
+  const { docs: jobDocs } = useLiveQuery("type", { key: "job" });
+  const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
 
   const jobs = useMemo(() => {
     return [...(jobDocs || [])].sort((a, b) => {
@@ -2504,38 +2496,27 @@ const JobsPanel = React.memo(function JobsPanel({ database, getAuthHeaders, jobV
 
   const handleJobClick = useCallback((job) => {
     setSelectedJob(job);
-    setJobView('detail');
-  }, [setJobView]);
+    setView('detail');
+  }, []);
 
   const handleNewJob = useCallback(() => {
     setSelectedJob(null);
-    setJobDraft({ name: '', description: '', contextDocs: '', skills: '', files: '', aboutYou: '' });
-    setJobView('form');
-  }, [setJobView]);
+    setView('form');
+  }, []);
 
   const handleEdit = useCallback(() => {
-    setJobDraft({
-      name: selectedJob?.name || '',
-      description: selectedJob?.description || '',
-      contextDocs: selectedJob?.contextDocs || '',
-      skills: selectedJob?.skills || '',
-      files: selectedJob?.files || '',
-      aboutYou: selectedJob?.aboutYou || '',
-    });
-    setJobView('form');
-  }, [selectedJob, setJobView]);
+    setView('form');
+  }, []);
 
   const handleSave = useCallback(() => {
     setSelectedJob(null);
-    setJobDraft(null);
-    setJobView('list');
-  }, [setJobView]);
+    setView('list');
+  }, []);
 
   const handleCancel = useCallback(() => {
     setSelectedJob(null);
-    setJobDraft(null);
-    setJobView('list');
-  }, [setJobView]);
+    setView('list');
+  }, []);
 
   const handleDelete = useCallback(async (job) => {
     if (!confirm('Delete this job?')) return;
@@ -2543,11 +2524,11 @@ const JobsPanel = React.memo(function JobsPanel({ database, getAuthHeaders, jobV
     try {
       await database.del(job._id);
       setSelectedJob(null);
-      setJobView('list');
+      setView('list');
     } catch (err) {
       console.error('[Jobs] Delete failed:', err);
     }
-  }, [database, setJobView]);
+  }, [database]);
 
   const handleAssign = useCallback(async (job, agentName) => {
     try {
@@ -2576,7 +2557,7 @@ const JobsPanel = React.memo(function JobsPanel({ database, getAuthHeaders, jobV
     }
   }, [database, agentDocs]);
 
-  if (jobView === 'form') {
+  if (view === 'form') {
     return (
       <div className="screen-panel-scroll" style={{
         padding: '0 24px', overflowY: 'auto', flex: 1,
@@ -2588,14 +2569,12 @@ const JobsPanel = React.memo(function JobsPanel({ database, getAuthHeaders, jobV
           onCancel={handleCancel}
           onSave={handleSave}
           getAuthHeaders={getAuthHeaders}
-          draft={jobDraft}
-          setDraft={setJobDraft}
         />
       </div>
     );
   }
 
-  if (jobView === 'detail' && selectedJob) {
+  if (view === 'detail' && selectedJob) {
     const isFilled = selectedJob.status === 'filled';
     const availableAgents = (agentDocs || []).filter(a => !a.dormant && !a.jobId);
     return (
@@ -2606,7 +2585,7 @@ const JobsPanel = React.memo(function JobsPanel({ database, getAuthHeaders, jobV
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <button
-            onClick={() => { setSelectedJob(null); setJobView('list'); }}
+            onClick={() => { setSelectedJob(null); setView('list'); }}
             style={{
               fontFamily: "'Inter', sans-serif",
               fontSize: 10,
@@ -2884,15 +2863,7 @@ const JobsPanel = React.memo(function JobsPanel({ database, getAuthHeaders, jobV
       )}
     </div>
   );
-}, (prev, next) =>
-  prev.database === next.database &&
-  prev.getAuthHeaders === next.getAuthHeaders &&
-  prev.jobView === next.jobView &&
-  prev.selectedJob === next.selectedJob &&
-  prev.jobDraft === next.jobDraft &&
-  prev.jobDocs === next.jobDocs &&
-  prev.agentDocs === next.agentDocs
-);
+}
 
 // === Ledger Management Panel ===
 
