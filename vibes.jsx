@@ -685,6 +685,8 @@ const getButtonsContainerStyle = () => ({
   gap: "1rem",
   width: "100%",
   maxWidth: "400px",
+  padding: "0 2rem",
+  boxSizing: "border-box",
   position: "relative",
   zIndex: 1
 });
