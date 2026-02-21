@@ -766,6 +766,7 @@ function App({ bootData }) {
   const lastMsgIdRef = useRef(null);
   const notifiedArrivalRef = useRef(false);
   const lastPersistTimeRef = useRef(0);
+  const msgCreatedAtRef = useRef(null);
 
   // Refs for values read inside event handlers and callbacks — avoids
   // re-registering handlers when these change, which would break memoization.
@@ -803,6 +804,10 @@ function App({ bootData }) {
         id: 'live-' + Date.now(), role: 'assistant', blocks, messageId: msgId, thinking: false, streaming: true
       });
 
+      // Capture arrival timestamp on first chunk — preserves original createdAt
+      // across intermediate and final writes for correct chronological sorting.
+      if (!msgCreatedAtRef.current) msgCreatedAtRef.current = new Date().toISOString();
+
       // Persist intermediate writes at most once every 2s to reduce Fireproof CRDT churn.
       // The final write happens in onClaudeResult (awaited).
       const now = Date.now();
@@ -820,7 +825,7 @@ function App({ bootData }) {
           agentName: _activeAgent || undefined,
           gridPosition: speakerDoc?.gridPosition ?? undefined,
           text: '', blocks,
-          createdAt: new Date().toISOString(), serverSessionId,
+          createdAt: msgCreatedAtRef.current, serverSessionId,
         }).catch(err => console.error('[chat] Fireproof put failed:', err));
       }
     };
@@ -859,7 +864,7 @@ function App({ bootData }) {
             agentName: _activeAgent || undefined,
             gridPosition: speakerDoc?.gridPosition ?? undefined,
             text: '', blocks: finalBlocks,
-            createdAt: new Date().toISOString(), serverSessionId,
+            createdAt: msgCreatedAtRef.current || new Date().toISOString(), serverSessionId,
           });
         } catch (err) {
           console.error('[chat] Final Fireproof put failed:', err);
@@ -908,6 +913,7 @@ function App({ bootData }) {
       setStreaming(false);
       liveBlocksRef.current = [];
       lastMsgIdRef.current = null;
+      msgCreatedAtRef.current = null;
       if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
     };
 
@@ -1272,6 +1278,9 @@ function App({ bootData }) {
 
   const displayMessages = React.useMemo(() => {
     const sorted = [...(persistedMessages || [])].sort((a, b) => {
+      if (a.createdAt < b.createdAt) return -1;
+      if (a.createdAt > b.createdAt) return 1;
+      // Tiebreaker: _id for deterministic order within the same millisecond
       if (a._id < b._id) return -1;
       if (a._id > b._id) return 1;
       return 0;
@@ -1517,6 +1526,7 @@ function App({ bootData }) {
 
     // Show thinking bubble immediately
     window.SFX?.play('click');
+    msgCreatedAtRef.current = null;
     const liveMsg = { id: 'live-' + Date.now(), role: 'assistant', blocks: [], thinking: true, streaming: true };
     setLiveAssistant(liveMsg);
     setStreaming(true);
