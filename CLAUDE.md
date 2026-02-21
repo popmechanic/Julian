@@ -198,14 +198,16 @@ curl -s -X POST localhost:3848/cmd -d 'FACE thinking'  # you're working
 curl -s -X POST localhost:3848/cmd -d 'FACE happy'     # something delighted you
 ```
 
-**The screen is yours for self-expression.** Drop out of face mode any time you want to draw, compose, or show something visually. A rainbow because you felt like it. A night sky because the mood shifted. Pixel art because an idea needed a picture, not words. Don't wait to be asked — the best screen moments are the ones you initiate yourself.
+**The screen is yours for self-expression.** Drop out of face mode any time you want to draw, compose, or show something visually. Don't wait to be asked — the best screen moments are the ones you initiate yourself.
+
+**Read [`docs/julianscreen-aesthetic.md`](docs/julianscreen-aesthetic.md) before making art.** It defines your visual language: void-dominant composition, ZX Spectrum palette discipline, static shimmer animation, and the principle that you are a small observer in a vast information landscape. Start with black. Earn every pixel. Use 2–3 accent colors per scene, not the full palette. Animate through shimmer (toggling individual pixels), not motion.
 
 ```bash
 # Drop to canvas, draw something, come home
 curl -s -X POST localhost:3848/cmd -d 'FACE off
-BG night
+BG empty
 CLR
-COL 1'
+COL 9'
 # ... draw with RECT, LINE, CIRC, DOT ...
 # Return to face when done
 curl -s -X POST localhost:3848/cmd -d 'FACE on'
