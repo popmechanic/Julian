@@ -651,6 +651,9 @@ function App({ bootData }) {
   const { docs: persistedMessages } = useLiveQuery("type", { key: "message" });
 
   const [liveAssistant, setLiveAssistant] = useState(null);
+  // pendingClear: when set, we're waiting for persistedMessages to absorb liveAssistant
+  // before clearing it. Shape: { messageId?, persistedId?, fallbackTimer }
+  const pendingClearRef = useRef(null);
   const [streaming, setStreaming] = useState(false);
   const [connected, setConnected] = useState(false);
   const [setupNeeded, setSetupNeeded] = useState(null);
@@ -763,6 +766,7 @@ function App({ bootData }) {
   // ── EventSource: persistent connection to server event log ──────────────
   const eventSourceCloseRef = useRef(null);
   const liveBlocksRef = useRef([]);
+  const lastMsgIdRef = useRef(null);
   const notifiedArrivalRef = useRef(false);
 
   // Refs for values read inside event handlers and callbacks — avoids
@@ -793,6 +797,7 @@ function App({ bootData }) {
       liveBlocksRef.current = blocks;
       if (!notifiedArrivalRef.current) { window.SFX?.play('notification'); notifiedArrivalRef.current = true; }
       const msgId = event.messageId || null;
+      if (msgId) lastMsgIdRef.current = msgId;
       setLiveAssistant(prev => prev ? { ...prev, blocks, messageId: msgId, thinking: false, streaming: true } : {
         id: 'live-' + Date.now(), role: 'assistant', blocks, messageId: msgId, thinking: false, streaming: true
       });
@@ -830,13 +835,16 @@ function App({ bootData }) {
 
       // Persist resultText fallback only if onClaudeText never fired (no messageId)
       // Normal messages are already persisted by onClaudeText using messageId
+      let fallbackDocId = null;
       if (finalBlocks.length > 0 && liveBlocksRef.current.length === 0 && event.resultText) {
+        fallbackDocId = 'msg-fallback-' + Date.now();
         const _activeAgent = activeAgentRef.current;
         const _agentDocs = agentDocsRef.current;
         const speakerDoc = _activeAgent
           ? (_agentDocs || []).find(a => a.name === _activeAgent)
           : null;
         resilientPut(database, {
+          _id: fallbackDocId,
           type: 'message', category: 'transcript', role: 'assistant',
           speakerType: 'agent', speakerName: _activeAgent || 'Julian',
           agentName: _activeAgent || undefined,
@@ -880,15 +888,22 @@ function App({ bootData }) {
         }, 2500);
       }
 
-      // Clear live state and refresh menu
-      setTimeout(() => {
+      // Wait for persistedMessages to absorb the message before clearing live state.
+      // The useEffect watching persistedMessages will handle the actual clear.
+      setConnected(true);
+      notifiedArrivalRef.current = false;
+      const msgId = event.messageId || lastMsgIdRef.current || null;
+      if (pendingClearRef.current) clearTimeout(pendingClearRef.current.fallbackTimer);
+      const fallbackTimer = setTimeout(() => {
+        // Safety: clear after 5s even if persistence hasn't caught up
+        pendingClearRef.current = null;
         setLiveAssistant(null);
         setStreaming(false);
-        setConnected(true);
-        notifiedArrivalRef.current = false;
         liveBlocksRef.current = [];
+        lastMsgIdRef.current = null;
         if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
-      }, 100);
+      }, 5000);
+      pendingClearRef.current = { messageId: msgId, persistedId: fallbackDocId, fallbackTimer };
     };
 
     _eventHandlers.onSessionEnd = async (event) => {
@@ -1034,9 +1049,11 @@ function App({ bootData }) {
       const agentDoc = (_agentDocs || []).find(a => a.name === event.agentName);
       const gridPos = agentDoc?.gridPosition;
 
-      // Persist to Fireproof
+      // Persist to Fireproof with a deterministic _id so we can track absorption
+      const agentMsgId = 'agent-msg-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
       try {
         await resilientPut(database, {
+          _id: agentMsgId,
           type: 'message',
           category: 'transcript',
           role: 'assistant',
@@ -1053,20 +1070,24 @@ function App({ bootData }) {
         console.warn('[EventSource] Failed to persist agent message:', e);
       }
 
-      // If this agent is currently selected, show as live
+      // If this agent is currently selected, show as live and wait for persistence
       if (activeAgentRef.current === event.agentName) {
         window.SFX?.play('notification');
         setLiveAssistant(prev => ({
-          id: 'agent-' + Date.now(),
+          id: agentMsgId,
           role: 'assistant',
           blocks: [{ type: 'text', text }],
           thinking: false,
           streaming: false,
         }));
-        setTimeout(() => {
+        // Wait for persistedMessages to absorb before clearing
+        if (pendingClearRef.current) clearTimeout(pendingClearRef.current.fallbackTimer);
+        const fallbackTimer = setTimeout(() => {
+          pendingClearRef.current = null;
           setLiveAssistant(null);
           setStreaming(false);
-        }, 100);
+        }, 5000);
+        pendingClearRef.current = { persistedId: agentMsgId, fallbackTimer };
       }
     };
   }, [database, serverSessionId]);
@@ -1252,6 +1273,26 @@ function App({ bootData }) {
     }
   }, [persistedMessages, liveAssistant]);
 
+  // Clear liveAssistant only after persistedMessages has absorbed the message
+  useEffect(() => {
+    const pc = pendingClearRef.current;
+    if (!pc || !persistedMessages) return;
+    // Check if the persisted twin is now in the query results
+    const found = persistedMessages.some(doc =>
+      (pc.persistedId && doc._id === pc.persistedId) ||
+      (pc.messageId && doc._id === ('msg-' + pc.messageId))
+    );
+    if (found) {
+      clearTimeout(pc.fallbackTimer);
+      pendingClearRef.current = null;
+      setLiveAssistant(null);
+      setStreaming(false);
+      liveBlocksRef.current = [];
+      lastMsgIdRef.current = null;
+      if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
+    }
+  }, [persistedMessages]);
+
   const displayMessages = React.useMemo(() => {
     const sorted = [...(persistedMessages || [])].sort((a, b) => {
       if (a._id < b._id) return -1;
@@ -1274,11 +1315,17 @@ function App({ bootData }) {
       }
       return !doc.agentName && doc.gridPosition == null;
     });
-    // When liveAssistant is active, its persisted twin (msg-{messageId}) may already
-    // be in the list. Suppress the persisted copy so the streaming version takes its place.
+    // When liveAssistant is active, its persisted twin may already be in the list.
+    // Suppress the persisted copy so the streaming/live version takes its place.
+    // Two cases: Julian messages use msg-{messageId}, agent messages use the _id directly.
     const livePersistedId = liveAssistant?.messageId ? ('msg-' + liveAssistant.messageId) : null;
+    const liveDirectId = liveAssistant?.id || null;
     const msgs = filtered
-      .filter(doc => !livePersistedId || doc._id !== livePersistedId)
+      .filter(doc => {
+        if (livePersistedId && doc._id === livePersistedId) return false;
+        if (liveDirectId && doc._id === liveDirectId) return false;
+        return true;
+      })
       .map(doc => ({
         id: doc._id,
         role: doc.role,
