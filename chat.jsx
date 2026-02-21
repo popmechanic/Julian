@@ -1642,16 +1642,52 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
 
 /* ── Chat input (retro) ──────────────────────────────────────────────────── */
 
+const CHAT_INPUT_MIN_HEIGHT = 50;
+const CHAT_INPUT_MAX_HEIGHT = 200;
+
 function ChatInput({ onSend, disabled }) {
   const [input, setInput] = useState('');
   const inputRef = useRef(null);
+  const prevHeightRef = useRef(CHAT_INPUT_MIN_HEIGHT);
+
+  const adjustHeight = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+
+    // Disable transition, measure natural height
+    el.style.transition = 'none';
+    el.style.height = 'auto';
+    const target = Math.min(Math.max(el.scrollHeight, CHAT_INPUT_MIN_HEIGHT), CHAT_INPUT_MAX_HEIGHT);
+
+    // Set back to previous height, force reflow, then animate to target
+    el.style.height = prevHeightRef.current + 'px';
+    void el.offsetHeight;
+    el.style.transition = 'height 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+    el.style.height = target + 'px';
+    el.style.overflowY = target >= CHAT_INPUT_MAX_HEIGHT ? 'auto' : 'hidden';
+
+    prevHeightRef.current = target;
+  }, []);
 
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || disabled) return;
     onSend(text);
     setInput('');
+    // Reset height after clearing
+    const el = inputRef.current;
+    if (el) {
+      el.style.transition = 'height 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+      el.style.height = CHAT_INPUT_MIN_HEIGHT + 'px';
+      el.style.overflowY = 'hidden';
+      prevHeightRef.current = CHAT_INPUT_MIN_HEIGHT;
+    }
   }, [input, disabled, onSend]);
+
+  const handleChange = useCallback((e) => {
+    setInput(e.target.value);
+    adjustHeight();
+  }, [adjustHeight]);
 
   useEffect(() => {
     if (!disabled && inputRef.current) inputRef.current.focus();
@@ -1660,17 +1696,18 @@ function ChatInput({ onSend, disabled }) {
   return (
     <div style={{
       display: 'flex',
-      alignItems: 'center',
+      alignItems: 'flex-end',
       gap: 12,
       padding: '12px 0',
     }}>
-      <input
+      <textarea
         ref={inputRef}
         value={input}
-        onChange={e => setInput(e.target.value)}
+        onChange={handleChange}
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
         placeholder={disabled ? "PROCESSING..." : "INPUT BUFFER..."}
         disabled={disabled}
+        rows={1}
         style={{
           flex: 1,
           backgroundColor: '#C8A800',
@@ -1678,14 +1715,17 @@ function ChatInput({ onSend, disabled }) {
           borderRadius: 6,
           color: '#000',
           fontWeight: 'bold',
-          padding: '0 16px',
-          height: 50,
+          padding: '12px 16px',
+          height: CHAT_INPUT_MIN_HEIGHT,
           fontFamily: "'VT323', monospace",
           textTransform: 'uppercase',
           fontSize: '1.1rem',
+          lineHeight: '1.4',
           border: 'none',
           outline: 'none',
           opacity: disabled ? 0.5 : 1,
+          resize: 'none',
+          overflowY: 'hidden',
         }}
       />
       <button

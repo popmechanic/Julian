@@ -1764,8 +1764,11 @@ function App({ bootData }) {
           transform: translateY(4px);
           box-shadow: 0 0 0 #999, inset 0 2px 5px rgba(0,0,0,0.1) !important;
         }
-        input::placeholder {
+        input::placeholder, textarea::placeholder {
           color: rgba(0,0,0,0.4);
+        }
+        @media (prefers-reduced-motion: reduce) {
+          textarea { transition: none !important; }
         }
         body::before {
           content: '\u00D7';
