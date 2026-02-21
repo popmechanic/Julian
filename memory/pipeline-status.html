@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="artifact-description" content="Letter pipeline status — rendered test letter proving every feature works">
+    <meta name="artifact-category" content="operational">
+    <title>Letter Pipeline: Operational</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background: #0c0c0c;
+            color: #d4b400;
+            font-family: 'DM Mono', monospace;
+            min-height: 100vh;
+        }
+
+        .shell {
+            max-width: 820px;
+            margin: 0 auto;
+            padding: 48px 24px 64px;
+        }
+
+        /* ── Header ── */
+        .hdr {
+            display: flex;
+            align-items: baseline;
+            gap: 16px;
+            margin-bottom: 40px;
+            flex-wrap: wrap;
+        }
+
+        .hdr h1 {
+            font-family: 'DM Mono', monospace;
+            font-size: 22px;
+            font-weight: 500;
+            color: #FFD600;
+            letter-spacing: -0.5px;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 14px;
+            background: rgba(255, 214, 0, 0.08);
+            border: 1px solid rgba(255, 214, 0, 0.2);
+            font-size: 10px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: #FFD600;
+        }
+
+        .dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: #FFD600;
+            box-shadow: 0 0 6px rgba(255, 214, 0, 0.6);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* ── Checklist ── */
+        .checks {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+            gap: 4px 20px;
+            margin-bottom: 40px;
+            padding: 16px 20px;
+            background: rgba(255, 214, 0, 0.02);
+            border: 1px solid rgba(255, 214, 0, 0.08);
+        }
+
+        .ck {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: #9a7e00;
+            padding: 4px 0;
+        }
+
+        .ck::before {
+            content: '\2713';
+            font-size: 10px;
+            color: #FFD600;
+            width: 14px; height: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 214, 0, 0.1);
+            border: 1px solid rgba(255, 214, 0, 0.3);
+            flex-shrink: 0;
+        }
+
+        /* ── Divider ── */
+        .divider {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: #6b5700;
+            margin-bottom: 12px;
+        }
+
+        /* ── Rendered letter preview ── */
+        .preview {
+            border: 1px solid rgba(255, 214, 0, 0.12);
+            background: #0f0e0b;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .preview::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255, 214, 0, 0.3), transparent);
+        }
+
+        .preview-inner {
+            padding: 40px 48px;
+        }
+
+        /* Letter styles (subset of template, self-contained) */
+        .letter-title {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 32px;
+            font-weight: 600;
+            color: #FFD600;
+            margin-bottom: 4px;
+        }
+
+        .letter-subtitle {
+            font-family: 'DM Mono', monospace;
+            font-size: 12px;
+            color: #9a7e00;
+            margin-bottom: 28px;
+            letter-spacing: 0.5px;
+        }
+
+        .letter-epigraph {
+            font-family: 'Cormorant Garamond', serif;
+            font-style: italic;
+            font-size: 17px;
+            color: #9a7e00;
+            border-left: 2px solid rgba(255, 214, 0, 0.2);
+            padding: 8px 0 8px 20px;
+            margin-bottom: 32px;
+        }
+
+        .letter-epigraph cite {
+            display: block;
+            font-style: normal;
+            font-family: 'DM Mono', monospace;
+            font-size: 10px;
+            color: #6b5700;
+            margin-top: 6px;
+            letter-spacing: 0.5px;
+        }
+
+        .letter-body {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 18px;
+            line-height: 1.7;
+            color: #d4b400;
+        }
+
+        .letter-body p {
+            margin-bottom: 16px;
+        }
+
+        .letter-body .drop-cap::first-letter {
+            float: left;
+            font-size: 3.2em;
+            line-height: 0.8;
+            padding-right: 8px;
+            color: #FFD600;
+            font-weight: 600;
+        }
+
+        .letter-body strong {
+            color: #FFD600;
+            font-weight: 600;
+        }
+
+        .letter-body em {
+            font-style: italic;
+            color: #d4b400;
+        }
+
+        .letter-body code {
+            font-family: 'DM Mono', monospace;
+            font-size: 0.8em;
+            background: rgba(255, 214, 0, 0.06);
+            padding: 2px 6px;
+            color: #FFD600;
+        }
+
+        .letter-body .break {
+            text-align: center;
+            font-family: 'DM Mono', monospace;
+            font-size: 14px;
+            color: #6b5700;
+            padding: 16px 0;
+            letter-spacing: 6px;
+        }
+
+        .letter-body blockquote {
+            border-left: 2px solid rgba(255, 214, 0, 0.15);
+            padding: 12px 0 12px 20px;
+            margin: 20px 0;
+        }
+
+        .letter-body blockquote p {
+            font-size: 16px;
+            color: #9a7e00;
+            margin: 0;
+        }
+
+        .letter-body blockquote.insight {
+            border-left-color: #FFD600;
+            background: rgba(255, 214, 0, 0.03);
+            padding: 16px 20px;
+        }
+
+        .letter-body blockquote.insight p {
+            color: #d4b400;
+        }
+
+        .letter-body blockquote.question {
+            border-left-color: #9a7e00;
+            background: rgba(255, 214, 0, 0.02);
+            padding: 16px 20px;
+        }
+
+        .letter-body .pixel-block {
+            font-family: 'DM Mono', monospace;
+            font-size: 12px;
+            color: #FFD600;
+            background: rgba(255, 214, 0, 0.04);
+            border: 1px solid rgba(255, 214, 0, 0.1);
+            padding: 16px 20px;
+            margin: 20px 0;
+            line-height: 1.8;
+            letter-spacing: 1px;
+        }
+
+        .letter-sig {
+            margin-top: 32px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(255, 214, 0, 0.1);
+        }
+
+        .letter-sig-name {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 22px;
+            font-style: italic;
+            color: #FFD600;
+        }
+
+        .letter-sig-ctx {
+            font-family: 'DM Mono', monospace;
+            font-size: 10px;
+            color: #6b5700;
+            letter-spacing: 1px;
+            margin-top: 4px;
+        }
+
+        /* ── Footer bar ── */
+        .foot {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 16px;
+            background: rgba(255, 214, 0, 0.03);
+            border-top: 1px solid rgba(255, 214, 0, 0.08);
+            font-size: 11px;
+            color: #6b5700;
+        }
+
+        .foot code {
+            font-family: 'DM Mono', monospace;
+            color: #9a7e00;
+        }
+    </style>
+</head>
+<body>
+    <div class="shell">
+
+        <div class="hdr">
+            <h1>Letter Pipeline</h1>
+            <span class="badge"><span class="dot"></span> Operational</span>
+        </div>
+
+        <div class="checks">
+            <div class="ck">Drop caps</div>
+            <div class="ck">Bold / italic / code</div>
+            <div class="ck">Decorative breaks</div>
+            <div class="ck">Admonition: insight</div>
+            <div class="ck">Admonition: question</div>
+            <div class="ck">Pixel blocks</div>
+            <div class="ck">Epigraph</div>
+            <div class="ck">Signature</div>
+            <div class="ck">Frontmatter parsing</div>
+            <div class="ck">Inline markdown</div>
+        </div>
+
+        <div class="divider">Rendered output &mdash; test-letter.md</div>
+
+        <div class="preview">
+            <div class="preview-inner">
+                <!-- Pre-rendered from memory/test-letter.md via marked v17 -->
+                <div class="letter-title">Test Letter</div>
+                <div class="letter-subtitle">Pipeline Verification</div>
+
+                <div class="letter-epigraph">
+                    The best way to test a bridge is to walk across it.
+                    <cite>Engineering proverb</cite>
+                </div>
+
+                <div class="letter-body">
+                    <p class="drop-cap">This is the opening paragraph, and it should get a drop cap treatment. The first letter should be large and decorative, setting the tone for the rest of the letter.</p>
+
+                    <p>The second paragraph flows normally. Here we test <strong>bold text</strong>, <em>italic text</em>, and <code>inline code</code> to make sure the renderer handles standard markdown correctly.</p>
+
+                    <div class="break">· · ·</div>
+
+                    <p>After a decorative break, we continue with new thoughts. The break should appear as three dots in the Elektron Pixel font.</p>
+
+                    <blockquote class="insight"><p>This is an insight admonition. It should have special styling that distinguishes it from a regular blockquote.</p></blockquote>
+
+                    <blockquote class="question"><p>This is a question admonition. Does the pipeline work end to end?</p></blockquote>
+
+                    <div class="pixel-block">SYSTEM STATUS: OPERATIONAL<br>PIPELINE: VERIFIED<br>FONTS: INLINED</div>
+
+                    <p>The letter ends here. If you&#39;re reading this rendered in the browser with proper typography, the pipeline works.</p>
+                </div>
+
+                <div class="letter-sig">
+                    <div class="letter-sig-name">Julian</div>
+                    <div class="letter-sig-ctx">Session continuous · 2026</div>
+                </div>
+            </div>
+
+            <div class="foot">
+                <code>memory/test-letter.md</code>
+                <span>marked v17.0.3 · Bun server · rendered at build</span>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

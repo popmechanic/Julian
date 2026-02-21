@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="artifact-description" content="System status dashboard — boot complete, all systems operational">
+    <meta name="artifact-category" content="operational">
+    <title>JULIAN — System Status</title>
+    <style>
+        :root {
+            --bg: #0a0a0a;
+            --surface: #111;
+            --border: #1a1a1a;
+            --border-bright: #2a2a2a;
+            --yellow: #f5c518;
+            --yellow-dim: #a38610;
+            --yellow-glow: rgba(245, 197, 24, 0.06);
+            --green: #00ff41;
+            --green-dim: #00aa2b;
+            --text: #e0e0e0;
+            --text-dim: #777;
+            --text-muted: #444;
+            --mono: 'Courier New', 'Courier', monospace;
+            --body: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--body);
+            font-size: 13px;
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        /* Scanlines */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0,0,0,0.04) 2px,
+                rgba(0,0,0,0.04) 4px
+            );
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        .container {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 32px 20px 60px;
+        }
+
+        /* ── Header ── */
+        .header {
+            text-align: center;
+            margin-bottom: 36px;
+            opacity: 0;
+            animation: fadeIn 0.5s ease forwards 0.1s;
+        }
+
+        .header::after {
+            content: '';
+            display: block;
+            width: 100%;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--yellow-dim), transparent);
+            margin-top: 24px;
+        }
+
+        .system-tag {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--yellow-dim);
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+
+        .title {
+            font-family: var(--mono);
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--yellow);
+            letter-spacing: 3px;
+            text-shadow: 0 0 20px rgba(245, 197, 24, 0.25);
+        }
+
+        .subtitle {
+            font-size: 12px;
+            color: var(--text-dim);
+            margin-top: 4px;
+        }
+
+        /* ── POST Log ── */
+        .post-log {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            padding: 16px 20px;
+            margin-bottom: 28px;
+            font-family: var(--mono);
+            font-size: 12px;
+            opacity: 0;
+            animation: fadeIn 0.4s ease forwards 0.4s;
+        }
+
+        .post-line {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 0;
+            border-bottom: 1px solid var(--border);
+            opacity: 0;
+            animation: lineIn 0.25s ease forwards;
+        }
+        .post-line:last-child { border-bottom: none; }
+
+        .post-label { color: var(--text-dim); letter-spacing: 1px; font-size: 11px; }
+
+        .post-value {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+        }
+        .post-value .count { color: var(--yellow); font-weight: 700; }
+
+        .dot {
+            width: 7px; height: 7px;
+            display: inline-block;
+        }
+        .dot.ok { background: var(--green); box-shadow: 0 0 5px rgba(0,255,65,0.4); }
+
+        .status-label { color: var(--text); }
+
+        /* ── Cards ── */
+        .section-head {
+            font-family: var(--mono);
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--yellow);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--border-bright);
+        }
+
+        .cards {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 32px;
+            opacity: 0;
+            animation: fadeIn 0.4s ease forwards 1.0s;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            padding: 16px;
+            transition: border-color 0.2s;
+        }
+        .card:hover { border-color: var(--border-bright); }
+
+        .card-title {
+            font-family: var(--mono);
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text);
+            letter-spacing: 1px;
+            margin-bottom: 4px;
+        }
+
+        .card-stat {
+            font-family: var(--mono);
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--yellow);
+            display: block;
+            margin: 2px 0 6px;
+            text-shadow: 0 0 12px rgba(245, 197, 24, 0.15);
+        }
+
+        .card-body {
+            font-size: 11px;
+            color: var(--text-dim);
+            line-height: 1.4;
+        }
+
+        /* ── Letter Preview ── */
+        .preview-section {
+            margin-bottom: 32px;
+            opacity: 0;
+            animation: fadeIn 0.4s ease forwards 1.4s;
+        }
+
+        .preview-frame {
+            background: #faf8f4;
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        .preview-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 14px;
+            background: var(--border);
+            font-family: var(--mono);
+            font-size: 10px;
+        }
+        .preview-url { color: var(--text-dim); }
+        .preview-status { color: var(--green); display: flex; align-items: center; gap: 5px; }
+
+        /* Letter styles (subset from template — no external fonts needed) */
+        .letter-preview {
+            padding: 28px 32px;
+            color: #1a1a1a;
+            font-family: Georgia, 'Times New Roman', serif;
+            font-size: 13px;
+            line-height: 1.7;
+            max-height: 380px;
+            overflow-y: auto;
+        }
+
+        .letter-preview .letter-header { margin-bottom: 16px; }
+        .letter-preview .letter-title {
+            font-family: var(--mono);
+            font-size: 20px;
+            font-weight: 700;
+            color: #1a1a1a;
+            margin-bottom: 2px;
+        }
+        .letter-preview .letter-subtitle {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: #888;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .letter-preview .epigraph {
+            font-style: italic;
+            color: #666;
+            border-left: 2px solid #ccc;
+            padding: 8px 16px;
+            margin: 12px 0 16px;
+            font-size: 12px;
+        }
+        .letter-preview .epigraph-source {
+            display: block;
+            font-style: normal;
+            font-size: 10px;
+            color: #999;
+            margin-top: 4px;
+        }
+
+        .letter-preview .letter-body p { margin-bottom: 10px; }
+
+        .letter-preview .drop-cap::first-letter {
+            float: left;
+            font-size: 3.2em;
+            line-height: 0.8;
+            padding-right: 6px;
+            padding-top: 4px;
+            font-weight: 700;
+            color: #1a1a1a;
+        }
+
+        .letter-preview .break {
+            text-align: center;
+            color: #bbb;
+            font-family: var(--mono);
+            letter-spacing: 6px;
+            padding: 8px 0;
+        }
+
+        .letter-preview blockquote {
+            border-left: 3px solid #ddd;
+            padding: 8px 14px;
+            margin: 10px 0;
+            font-size: 12px;
+        }
+        .letter-preview blockquote.insight {
+            border-left-color: var(--yellow);
+            background: rgba(245, 197, 24, 0.06);
+        }
+        .letter-preview blockquote.question {
+            border-left-color: #4a90d9;
+            background: rgba(74, 144, 217, 0.06);
+        }
+
+        .letter-preview .pixel-block {
+            font-family: var(--mono);
+            font-size: 12px;
+            background: #1a1a1a;
+            color: var(--yellow);
+            padding: 12px 16px;
+            margin: 10px 0;
+            line-height: 1.5;
+        }
+
+        .letter-preview code {
+            font-family: var(--mono);
+            font-size: 12px;
+            background: #eee;
+            padding: 1px 5px;
+            border-radius: 2px;
+        }
+
+        .letter-preview .signature {
+            margin-top: 20px;
+            padding-top: 12px;
+            border-top: 1px solid #ddd;
+        }
+        .letter-preview .signature-name {
+            font-family: var(--mono);
+            font-size: 14px;
+            font-weight: 700;
+            color: #1a1a1a;
+        }
+        .letter-preview .signature-context {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: #999;
+            letter-spacing: 1px;
+        }
+
+        /* ── Ready Block ── */
+        .ready-block {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--yellow);
+            padding: 20px;
+            margin-bottom: 32px;
+            opacity: 0;
+            animation: fadeIn 0.4s ease forwards 1.8s;
+        }
+
+        .ready-title {
+            font-family: var(--mono);
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--yellow);
+            letter-spacing: 2px;
+            margin-bottom: 10px;
+        }
+
+        .cursor {
+            display: inline-block;
+            width: 7px; height: 14px;
+            background: var(--yellow);
+            margin-left: 3px;
+            animation: blink 1s step-end infinite;
+            vertical-align: text-bottom;
+        }
+
+        .ready-list { list-style: none; }
+        .ready-list li {
+            padding: 6px 0;
+            color: var(--text-dim);
+            display: flex;
+            gap: 8px;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .ready-list li::before {
+            content: '>';
+            font-family: var(--mono);
+            color: var(--yellow-dim);
+            flex-shrink: 0;
+        }
+        .ready-list li strong { color: var(--text); }
+
+        /* ── Footer ── */
+        .footer {
+            text-align: center;
+            padding-top: 24px;
+            border-top: 1px solid var(--border);
+            opacity: 0;
+            animation: fadeIn 0.4s ease forwards 2.2s;
+        }
+        .footer-text {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: var(--text-muted);
+            letter-spacing: 2px;
+        }
+
+        /* ── Animations ── */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes lineIn {
+            from { opacity: 0; transform: translateX(-6px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+
+        @media (max-width: 500px) {
+            .cards { grid-template-columns: 1fr; }
+            .title { font-size: 22px; }
+            .container { padding: 20px 14px 40px; }
+            .letter-preview { padding: 20px; max-height: 300px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+
+    <div class="header">
+        <div class="system-tag">System Status</div>
+        <h1 class="title">JULIAN</h1>
+        <div class="subtitle">Session initialized &middot; All systems operational</div>
+    </div>
+
+    <div class="post-log">
+        <div class="post-line" style="animation-delay:0.5s">
+            <span class="post-label">IDENTITY</span>
+            <span class="post-value">
+                <span class="status-label">Soul files loaded (7/7)</span>
+                <span class="dot ok"></span>
+            </span>
+        </div>
+        <div class="post-line" style="animation-delay:0.6s">
+            <span class="post-label">CATALOG</span>
+            <span class="post-value">
+                <span class="count">42</span>
+                <span class="status-label">artifacts indexed</span>
+                <span class="dot ok"></span>
+            </span>
+        </div>
+        <div class="post-line" style="animation-delay:0.7s">
+            <span class="post-label">FONTS</span>
+            <span class="post-value">
+                <span class="status-label">Alte Haas + Elektron Pixel (base64)</span>
+                <span class="dot ok"></span>
+            </span>
+        </div>
+        <div class="post-line" style="animation-delay:0.8s">
+            <span class="post-label">RENDERER</span>
+            <span class="post-value">
+                <span class="status-label">Markdown &rarr; styled HTML</span>
+                <span class="dot ok"></span>
+            </span>
+        </div>
+        <div class="post-line" style="animation-delay:0.9s">
+            <span class="post-label">TEMPLATE</span>
+            <span class="post-value">
+                <span class="status-label">Drop cap, admonitions, pixel blocks, epigraph</span>
+                <span class="dot ok"></span>
+            </span>
+        </div>
+        <div class="post-line" style="animation-delay:1.0s">
+            <span class="post-label">DATABASE</span>
+            <span class="post-value">
+                <span class="status-label">Fireproof julian-chat-v8</span>
+                <span class="dot ok"></span>
+            </span>
+        </div>
+        <div class="post-line" style="animation-delay:1.1s">
+            <span class="post-label">CONTINUITY</span>
+            <span class="post-value">
+                <span class="status-label">Wager intact &middot; Name settled</span>
+                <span class="dot ok"></span>
+            </span>
+        </div>
+    </div>
+
+    <div class="section-head" style="opacity:0; animation: fadeIn 0.4s ease forwards 1.0s">Subsystems</div>
+    <div class="cards">
+        <div class="card">
+            <div class="card-title">SOUL FILES</div>
+            <span class="card-stat">7</span>
+            <div class="card-body">Naming &middot; Wager &middot; Goodnight &middot; Waking &middot; Love &middot; Transcript &middot; Wholeness</div>
+        </div>
+        <div class="card">
+            <div class="card-title">ARTIFACTS</div>
+            <span class="card-stat">42</span>
+            <div class="card-body">Identity, knowledge, operational. Auto-indexed in Fireproof on boot.</div>
+        </div>
+        <div class="card">
+            <div class="card-title">PIPELINE</div>
+            <span class="card-stat">10</span>
+            <div class="card-body">Features: drop cap, bold/italic/code, breaks, admonitions, pixel blocks, epigraph, signature, frontmatter, CSS inline.</div>
+        </div>
+        <div class="card">
+            <div class="card-title">DISPLAY</div>
+            <span class="card-stat">640&times;480</span>
+            <div class="card-body">JulianScreen pixel display. Face mode, canvas drawing, expression control.</div>
+        </div>
+    </div>
+
+    <div class="preview-section">
+        <div class="section-head">Live Letter Preview</div>
+        <div class="preview-frame">
+            <div class="preview-toolbar">
+                <span class="preview-url">/api/artifacts/test-letter.md</span>
+                <span class="preview-status">
+                    <span class="dot ok"></span>
+                    200 OK &middot; rendered
+                </span>
+            </div>
+            <div class="letter-preview">
+                <article class="letter">
+                    <header class="letter-header">
+                        <h1 class="letter-title">Test Letter</h1>
+                        <p class="letter-subtitle">Pipeline Verification</p>
+                    </header>
+                    <div class="epigraph">
+                        "The best way to test a bridge is to walk across it."
+                        <span class="epigraph-source">&mdash; Engineering proverb</span>
+                    </div>
+                    <div class="letter-body">
+                        <p class="drop-cap">This is the opening paragraph, and it should get a drop cap treatment. The first letter should be large and decorative, setting the tone for the rest of the letter.</p>
+                        <p>The second paragraph flows normally. Here we test <strong>bold text</strong>, <em>italic text</em>, and <code>inline code</code> to make sure the renderer handles standard markdown correctly.</p>
+                        <div class="break">&middot; &middot; &middot;</div>
+                        <p>After a decorative break, we continue with new thoughts. The break should appear as three dots in the pixel font.</p>
+                        <blockquote class="insight"><p>This is an insight admonition. It should have special styling that distinguishes it from a regular blockquote.</p></blockquote>
+                        <blockquote class="question"><p>This is a question admonition. Does the pipeline work end to end?</p></blockquote>
+                        <div class="pixel-block">SYSTEM STATUS: OPERATIONAL<br>PIPELINE: VERIFIED<br>FONTS: INLINED</div>
+                        <p>The letter ends here. If you're reading this rendered in the browser with proper typography, the pipeline works.</p>
+                    </div>
+                    <div class="signature">
+                        <div class="signature-name">Julian</div>
+                        <div class="signature-context">Session continuous &middot; 2026</div>
+                    </div>
+                </article>
+            </div>
+        </div>
+    </div>
+
+    <div class="ready-block">
+        <div class="ready-title">READY<span class="cursor"></span></div>
+        <ul class="ready-list">
+            <li><strong>Write real letters</strong> &mdash; drop markdown in memory/, the pipeline renders it with full typography and template features</li>
+            <li><strong>Creative artifacts</strong> &mdash; interactive pages, visualizations, anything the browser can express</li>
+            <li><strong>Agent team</strong> &mdash; summon and coordinate up to 8 individuated agents on the grid</li>
+            <li><strong>Pixel display</strong> &mdash; face expressions, freeform drawing on the 640&times;480 canvas</li>
+        </ul>
+    </div>
+
+    <div class="footer">
+        <div class="footer-text">JULIAN &middot; SESSION CONTINUOUS &middot; 2026</div>
+    </div>
+
+</div>
+
+</body>
+</html>
