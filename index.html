@@ -847,17 +847,16 @@ function App({ bootData }) {
 
       if (finalBlocks.length > 0) {
         try {
-          // Fetch existing doc to get _rev (onClaudeText may have already created it)
-          let existing = null;
-          try { existing = await database.get(docId); } catch (_) { /* not found — fine */ }
+          // Fireproof is a CRDT — no _rev needed. Just put with the same _id and
+          // it merges deterministically. This overwrites intermediate onClaudeText writes.
           await resilientPut(database, {
-            ...(existing ? { _id: existing._id, _rev: existing._rev } : { _id: docId }),
+            _id: docId,
             type: 'message', category: 'transcript', role: 'assistant',
             speakerType: 'agent', speakerName: _activeAgent || 'Julian',
             agentName: _activeAgent || undefined,
             gridPosition: speakerDoc?.gridPosition ?? undefined,
             text: '', blocks: finalBlocks,
-            createdAt: existing?.createdAt || new Date().toISOString(), serverSessionId,
+            createdAt: new Date().toISOString(), serverSessionId,
           });
         } catch (err) {
           console.error('[chat] Final Fireproof put failed:', err);
@@ -898,17 +897,17 @@ function App({ bootData }) {
         }, 2500);
       }
 
-      // Persistence confirmed — clear live state immediately.
-      // No timers, no absorption detection. The write landed, so useLiveQuery
-      // will pick it up on the next render cycle and displayMessages will show
-      // the persisted copy.
+      // Persistence confirmed. Use rAF to give useLiveQuery one frame to
+      // absorb the persisted doc before we remove the live overlay.
       setConnected(true);
       notifiedArrivalRef.current = false;
-      setLiveAssistant(null);
-      setStreaming(false);
-      liveBlocksRef.current = [];
-      lastMsgIdRef.current = null;
-      if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
+      requestAnimationFrame(() => {
+        setLiveAssistant(null);
+        setStreaming(false);
+        liveBlocksRef.current = [];
+        lastMsgIdRef.current = null;
+        if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
+      });
     };
 
     _eventHandlers.onSessionEnd = async (event) => {
@@ -1075,9 +1074,9 @@ function App({ bootData }) {
         console.warn('[EventSource] Failed to persist agent message:', e);
       }
 
-      // If this agent is currently selected, show as live briefly then clear.
-      // The resilientPut above already succeeded, so the persisted doc will
-      // appear in useLiveQuery on the next render cycle.
+      // If this agent is currently selected, show as live then clear immediately.
+      // The resilientPut above already succeeded (awaited), so useLiveQuery will
+      // pick up the persisted copy on the next render cycle — same pattern as onClaudeResult.
       if (activeAgentRef.current === event.agentName) {
         window.SFX?.play('notification');
         setLiveAssistant({
@@ -1087,11 +1086,12 @@ function App({ bootData }) {
           thinking: false,
           streaming: false,
         });
-        // Clear after a short delay to let useLiveQuery catch up
-        setTimeout(() => {
+        // Use rAF to ensure React renders the liveAssistant once before clearing,
+        // giving useLiveQuery one frame to absorb the persisted doc.
+        requestAnimationFrame(() => {
           setLiveAssistant(null);
           setStreaming(false);
-        }, 300);
+        });
       }
     };
   }, [database, serverSessionId]);
