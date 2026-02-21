@@ -1056,9 +1056,8 @@ function App({ bootData }) {
     _eventHandlers.onArtifactWritten = (event) => {
       // Refresh menu data when artifacts are written
       if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
-      // Auto-open HTML artifacts in the browser tab
-      // (.md files are only opened when clicked manually — not all .md files in memory/ are letters)
-      if (event.filename && event.filename.endsWith('.html')) {
+      // Auto-open artifacts in the browser tab (.html and .md letters)
+      if (event.filename && (event.filename.endsWith('.html') || event.filename.endsWith('.md'))) {
         handleFileSelect(event.filename);
       }
     };
@@ -1203,8 +1202,8 @@ function App({ bootData }) {
       return [...prev, { name: filename, modified: Date.now() }];
     });
     setActiveArtifact(filename);
-    // HTML files can be rendered — switch to browser tab automatically
-    if (filename.endsWith('.html')) {
+    // Renderable files — switch to browser tab automatically
+    if (filename.endsWith('.html') || filename.endsWith('.md')) {
       setMenuTab('browser');
     }
   }, []);
