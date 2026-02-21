@@ -685,6 +685,8 @@ const getButtonsContainerStyle = () => ({
   gap: "1rem",
   width: "100%",
   maxWidth: "400px",
+  padding: "0 2rem",
+  boxSizing: "border-box",
   position: "relative",
   zIndex: 1
 });
@@ -738,11 +740,16 @@ const getAnimationStyles = () => `
       background-color: black;
     }
   }
+
+  @media (prefers-reduced-motion: reduce) {
+    @keyframes shredCard { from, to { clip-path: none; transform: none; } }
+    @keyframes collapseToLine { from, to { transform: none; } }
+  }
 `;
 
 
 // === AuthScreen ===
-const CARD_URLS = [];
+const CARD_URLS = ['/assets/vibes-card.png'];
 const AuthScreen = ({
   children,
   title,
@@ -808,7 +815,7 @@ function getFormButtonStyle(variant, formColor) {
     fontWeight: "bold",
     letterSpacing: "2px",
     cursor: "pointer",
-    transition: "0.2s",
+    transition: "background-color 0.2s ease, transform 0.15s var(--ease-out)",
     borderRadius: "20px",
     textTransform: "none"
   };
@@ -838,7 +845,7 @@ function getButtonStyle(variant, isHovered, isActive, isMobile = false, hasIcon,
     fontWeight: 700,
     letterSpacing: "0.05em",
     cursor: "pointer",
-    transition: "all 0.15s ease",
+    transition: "transform 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out)",
     position: "relative",
     transform,
     boxShadow
@@ -997,6 +1004,111 @@ function VibesButton({
 }
 
 
+// === Boot Screen ===
+// Visual boot sequence: pixel face with generative animation + step indicators.
+// Uses window.PixelFace from chat.jsx (available at render time, not parse time).
+function BootUI({ steps }) {
+  const [faceProps, setFaceProps] = useState({ eyes: 'narrow', mouth: 'gentle' });
+  const [showReset, setShowReset] = useState(false);
+
+  // Show manual reset button after 10s of no progress
+  useEffect(() => {
+    const t = setTimeout(() => setShowReset(true), 10000);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    function tick() {
+      if (!mounted) return;
+      const phase = !steps.localStores ? 0
+        : steps.cloud === null ? 1
+        : (!steps.catalog || !steps.agents) ? 2 : 3;
+
+      // 30% chance to hold current expression (feels less mechanical)
+      if (Math.random() < 0.3) {
+        setTimeout(tick, 800 + Math.random() * 1700);
+        return;
+      }
+
+      const pools = [
+        { eyes: ['narrow','narrow','narrow','standard','standard'], mouth: ['gentle'] },
+        { eyes: ['standard','standard','round','round','wide'], mouth: ['gentle','straight'] },
+        { eyes: ['standard','standard','wide','wide'], mouth: ['gentle','cheerful'] },
+        { eyes: ['wide'], mouth: ['cheerful'] },
+      ];
+      const pool = pools[phase];
+      setFaceProps({
+        eyes: pool.eyes[Math.floor(Math.random() * pool.eyes.length)],
+        mouth: pool.mouth[Math.floor(Math.random() * pool.mouth.length)],
+      });
+      if (phase < 3) setTimeout(tick, 800 + Math.random() * 1700);
+    }
+    setTimeout(tick, 600);
+    return () => { mounted = false; };
+  }, [steps.localStores, steps.cloud, steps.catalog, steps.agents]);
+
+  const PixelFace = window.PixelFace;
+
+  const stepList = [
+    { key: 'localStores', label: 'Local stores', done: steps.localStores },
+    { key: 'cloud', label: 'Cloud sync',
+      done: steps.cloud === true, timedOut: steps.cloud === false,
+      pending: steps.cloud === null && steps.localStores },
+    { key: 'ledgerMeta', label: 'Memories', done: steps.ledgerMeta },
+    { key: 'agents', label: 'Waking up', done: steps.agents && steps.catalog },
+  ];
+
+  return (
+    React.createElement('div', {
+      style: {
+        background: '#0F0F0F', width: '100vw', height: '100vh',
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', gap: 32,
+      }
+    },
+      PixelFace && React.createElement(PixelFace, { size: 200, eyes: faceProps.eyes, mouth: faceProps.mouth }),
+      React.createElement('div', {
+        style: { fontFamily: "'VT323', monospace", fontSize: 18, color: '#888' }
+      },
+        stepList.map(s =>
+          React.createElement('div', {
+            key: s.key,
+            style: { display: 'flex', gap: 12, padding: '4px 0', alignItems: 'center' }
+          },
+            React.createElement('span', {
+              style: { color: s.done ? '#4ade80' : s.timedOut ? '#666' : '#FFD600' }
+            }, s.done ? '\u25CF' : s.timedOut ? '\u25CB' : s.pending ? '\u25D0' : '\u25CB'),
+            React.createElement('span', {
+              style: { color: s.done ? '#ccc' : '#666' }
+            }, s.label)
+          )
+        )
+      ),
+      showReset && React.createElement('button', {
+        onClick: () => {
+          Object.keys(localStorage).filter(k => k.startsWith('fp_migration')).forEach(k => localStorage.removeItem(k));
+          indexedDB.databases().then(dbs => {
+            let done = 0;
+            if (dbs.length === 0) { location.reload(); return; }
+            dbs.forEach(db => {
+              const req = indexedDB.deleteDatabase(db.name);
+              req.onsuccess = req.onerror = req.onblocked = () => { done++; if (done === dbs.length) location.reload(); };
+            });
+            setTimeout(() => location.reload(), 2000);
+          }).catch(() => location.reload());
+        },
+        style: {
+          marginTop: 24, padding: '8px 24px', fontFamily: "'VT323', monospace",
+          fontSize: 16, color: '#f87171', background: 'transparent',
+          border: '1px solid #f87171', borderRadius: 4, cursor: 'pointer',
+        }
+      }, 'Reset local data')
+    )
+  );
+}
+
+
 // === Window Exports (for standalone apps) ===
 // Expose key components to window for use in inline scripts
 if (typeof window !== 'undefined') {
@@ -1026,4 +1138,7 @@ if (typeof window !== 'undefined') {
   window.GitHubIcon = GitHubIcon;
   window.MoonIcon = MoonIcon;
   window.SunIcon = SunIcon;
+
+  // Boot screen
+  window.BootUI = BootUI;
 }

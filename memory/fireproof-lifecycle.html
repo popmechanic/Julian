@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fireproof Transaction Lifecycle — Julian Architecture</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0a0a0a; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; }
+  code, .mono { font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace; }
+
+  .layout { display: grid; grid-template-columns: 280px 1fr; grid-template-rows: auto 1fr auto; height: 100vh; }
+  .header { grid-column: 1 / -1; padding: 16px 24px; border-bottom: 1px solid #222; display: flex; align-items: center; gap: 16px; }
+  .header h1 { font-size: 16px; font-weight: 600; color: #FFD600; letter-spacing: 0.5px; }
+  .header .subtitle { font-size: 13px; color: #888; }
+
+  .sidebar { padding: 16px; border-right: 1px solid #222; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+  .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #666; margin-bottom: 8px; }
+
+  .preset-btn { display: block; width: 100%; padding: 8px 12px; background: #1a1a1a; border: 1px solid #333; border-radius: 6px; color: #ccc; font-size: 13px; cursor: pointer; text-align: left; transition: all 0.15s; }
+  .preset-btn:hover { border-color: #555; color: #fff; }
+  .preset-btn.active { border-color: #FFD600; color: #FFD600; background: #1a1a00; }
+  .preset-btn .desc { display: block; font-size: 11px; color: #666; margin-top: 2px; }
+  .preset-btn.active .desc { color: #998200; }
+
+  .speed-control { display: flex; align-items: center; gap: 8px; }
+  .speed-control label { font-size: 12px; color: #888; }
+  .speed-control input[type="range"] { flex: 1; accent-color: #FFD600; }
+
+  .toggle-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+  .toggle-row input[type="checkbox"] { accent-color: #FFD600; }
+  .toggle-row label { font-size: 13px; color: #ccc; cursor: pointer; }
+
+  .canvas-area { padding: 20px; overflow: auto; position: relative; }
+  canvas { display: block; border-radius: 8px; }
+
+  .prompt-area { grid-column: 1 / -1; border-top: 1px solid #222; padding: 12px 24px; display: flex; align-items: flex-start; gap: 12px; max-height: 160px; }
+  .prompt-text { flex: 1; font-size: 13px; line-height: 1.5; color: #aaa; overflow-y: auto; max-height: 130px; }
+  .prompt-text strong { color: #FFD600; }
+  .copy-btn { padding: 6px 16px; background: #FFD600; color: #000; border: none; border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .copy-btn:hover { background: #e6c200; }
+
+  .legend { position: absolute; bottom: 24px; left: 24px; background: rgba(10,10,10,0.92); border: 1px solid #333; border-radius: 8px; padding: 12px 16px; }
+  .legend-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #666; margin-bottom: 8px; }
+  .legend-item { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 12px; }
+  .legend-swatch { width: 24px; height: 4px; border-radius: 2px; }
+
+  .info-panel { position: absolute; top: 24px; right: 24px; width: 320px; background: rgba(10,10,10,0.95); border: 1px solid #333; border-radius: 8px; padding: 16px; display: none; z-index: 10; }
+  .info-panel.visible { display: block; }
+  .info-panel h3 { font-size: 14px; color: #FFD600; margin-bottom: 8px; }
+  .info-panel p { font-size: 13px; line-height: 1.6; color: #bbb; margin-bottom: 8px; }
+  .info-panel code { background: #1a1a00; padding: 1px 5px; border-radius: 3px; color: #FFD600; font-size: 12px; }
+  .info-panel .close-btn { position: absolute; top: 8px; right: 12px; background: none; border: none; color: #666; cursor: pointer; font-size: 16px; }
+  .info-panel .close-btn:hover { color: #fff; }
+  .info-panel .file-ref { font-size: 11px; color: #555; font-style: italic; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <div class="header">
+    <h1>FIREPROOF TRANSACTION LIFECYCLE</h1>
+    <span class="subtitle">Julian Architecture — Race Condition Explainer</span>
+  </div>
+
+  <div class="sidebar">
+    <div>
+      <div class="section-title">Scenario</div>
+      <button class="preset-btn active" data-preset="happy">
+        Happy Path
+        <span class="desc">Stores attach before first write</span>
+      </button>
+      <button class="preset-btn" data-preset="race" style="margin-top:6px">
+        Race Condition (Bug)
+        <span class="desc">Put fires before stores exist</span>
+      </button>
+      <button class="preset-btn" data-preset="fix" style="margin-top:6px">
+        With resilientPut Fix
+        <span class="desc">Retry catches transient failure</span>
+      </button>
+    </div>
+
+    <div>
+      <div class="section-title">Playback</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <button class="preset-btn" id="playBtn" style="flex:1;text-align:center">▶ Play</button>
+        <button class="preset-btn" id="resetBtn" style="flex:1;text-align:center">↺ Reset</button>
+      </div>
+      <div class="speed-control">
+        <label>Speed</label>
+        <input type="range" id="speedSlider" min="0.25" max="3" step="0.25" value="1">
+        <span id="speedLabel" class="mono" style="font-size:12px;color:#888;width:30px">1×</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">Layers</div>
+      <div class="toggle-row"><input type="checkbox" id="showBrowser" checked><label for="showBrowser">Browser / React</label></div>
+      <div class="toggle-row"><input type="checkbox" id="showFireproof" checked><label for="showFireproof">Fireproof Core</label></div>
+      <div class="toggle-row"><input type="checkbox" id="showClerk" checked><label for="showClerk">Clerk Auth</label></div>
+      <div class="toggle-row"><input type="checkbox" id="showCloud" checked><label for="showCloud">Cloud Sync</label></div>
+    </div>
+
+    <div>
+      <div class="section-title">Annotations</div>
+      <div class="toggle-row"><input type="checkbox" id="showCode" checked><label for="showCode">Code references</label></div>
+      <div class="toggle-row"><input type="checkbox" id="showTiming" checked><label for="showTiming">Timing labels</label></div>
+    </div>
+
+    <div style="margin-top:auto;padding-top:12px;border-top:1px solid #222">
+      <div style="font-size:11px;color:#555;line-height:1.6">
+        Click any node or event for details.<br>
+        Hover timeline events for code refs.
+      </div>
+    </div>
+  </div>
+
+  <div class="canvas-area">
+    <canvas id="mainCanvas"></canvas>
+    <div class="legend">
+      <div class="legend-title">Event Types</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#4ade80"></div> Success</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#FFD600"></div> In Progress</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#f87171"></div> Error / Failed</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#60a5fa"></div> Waiting / Queued</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#a78bfa"></div> Retry (Fix)</div>
+    </div>
+    <div class="info-panel" id="infoPanel">
+      <button class="close-btn" onclick="document.getElementById('infoPanel').classList.remove('visible')">×</button>
+      <h3 id="infoPanelTitle"></h3>
+      <p id="infoPanelBody"></p>
+      <div class="file-ref" id="infoPanelRef"></div>
+    </div>
+  </div>
+
+  <div class="prompt-area">
+    <div class="prompt-text" id="promptOutput"></div>
+    <button class="copy-btn" id="copyBtn">Copy</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('mainCanvas');
+const ctx = canvas.getContext('2d');
+const DPR = window.devicePixelRatio || 1;
+
+// ── State ──────────────────────────────────────────────────────────────
+
+const state = {
+  preset: 'happy',
+  playing: false,
+  time: 0,        // 0-1 normalized progress
+  speed: 1,
+  layers: { browser: true, fireproof: true, clerk: true, cloud: true },
+  showCode: true,
+  showTiming: true,
+  hoveredNode: null,
+  selectedNode: null,
+};
+
+// ── Architecture layers (y-bands) ──────────────────────────────────────
+
+const LAYERS = {
+  browser:   { y: 60,  h: 90, label: 'Browser / React', color: '#1e3a5f', textColor: '#60a5fa' },
+  fireproof: { y: 170, h: 90, label: 'Fireproof Core',  color: '#3b2a00', textColor: '#FFD600' },
+  clerk:     { y: 280, h: 70, label: 'Clerk Auth',       color: '#2d1a3e', textColor: '#a78bfa' },
+  cloud:     { y: 370, h: 70, label: 'Cloud Sync',       color: '#1a3a2a', textColor: '#4ade80' },
+};
+
+// ── Components (nodes) ─────────────────────────────────────────────────
+
+const COMPONENTS = [
+  { id: 'app-mount',       label: 'App Mount',           layer: 'browser',   x: 80,  info: 'React app mounts, useFireproof() hook initializes the database connection.', ref: 'index.html — AppWrapper component' },
+  { id: 'use-fireproof',   label: 'useFireproof()',      layer: 'browser',   x: 220, info: 'React hook from fireproof-vibes-bridge.js. Creates the database instance and returns {database, useLiveQuery}.', ref: 'bundles/fireproof-vibes-bridge.js' },
+  { id: 'chat-put',        label: 'database.put()',      layer: 'browser',   x: 400, info: 'Chat message save — fires when user sends a message or assistant response completes. The .catch() handler logs "[chat] Fireproof put failed" on error.', ref: 'index.html:697, 1404, 1457' },
+  { id: 'amnesia-check',   label: 'Amnesia Detection',   layer: 'browser',   x: 580, info: 'Writes a "ledger-meta" doc to detect if IndexedDB was wiped between sessions. Awaits database.ready() first, but can still fail if cloud stores aren\'t attached.', ref: 'index.html:1036-1070' },
+  { id: 'catalog-seed',    label: 'Catalog Seed',        layer: 'browser',   x: 730, info: 'Seeds artifact catalog entries from ARTIFACT_SEED_CATALOG. Also awaits database.ready() + 1s delay. Usually succeeds because it runs later.', ref: 'index.html:1010-1020' },
+
+  { id: 'ledger',          label: 'Ledger (CRDT)',       layer: 'fireproof', x: 120, info: 'The core CRDT data structure. Manages document versions, merges, and conflict resolution. Local operations go through the WriteQueue before committing.', ref: 'fireproof-clerk-bundle.js — LedgerImpl' },
+  { id: 'write-queue',     label: 'WriteQueueImpl',      layer: 'fireproof', x: 300, info: 'Batches and serializes write operations. Calls this.worker(update) which accesses loader.attachedStores. If stores aren\'t attached yet, "Cannot read properties of undefined (reading \'stores\')" is thrown.', ref: 'fireproof-clerk-bundle.js:37332-37390' },
+  { id: 'loader-ready',    label: 'Loader.ready()',      layer: 'fireproof', x: 490, info: 'Creates LOCAL attachedStores (IndexedDB gateways for car, file, meta, wal). Uses ResolveOnce — runs only once, resolves when local stores are created and first meta is read. Does NOT wait for remote/cloud stores.', ref: 'fireproof-clerk-bundle.js:41531-41547' },
+  { id: 'attached-stores',  label: 'attachedStores',      layer: 'fireproof', x: 680, info: 'Contains .local() (IndexedDB) and .remotes() (cloud). The WriteQueue worker accesses .local().active.car, .meta, .wal. Remote stores are attached LATER by the cloud connect flow.', ref: 'fireproof-clerk-bundle.js:40990-41170' },
+
+  { id: 'clerk-load',      label: 'Clerk.load()',        layer: 'clerk',     x: 150, info: 'Clerk SDK initializes, loads user session, makes JWT available. Runs in parallel with Fireproof initialization.', ref: 'clerk.browser.js' },
+  { id: 'jwt-ready',       label: 'JWT Available',       layer: 'clerk',     x: 400, info: 'The Clerk JWT (with "with-email" template) is now available for cloud sync authentication. The vibes bridge needs this to call ensureCloudToken().', ref: 'Clerk Dashboard → JWT Templates → with-email' },
+
+  { id: 'vibes-bridge',    label: 'Vibes Bridge',        layer: 'cloud',     x: 180, info: 'Patches Fireproof\'s ensureCloudToken to route to the correct cloud ledger by appId (not hostname). Also kicks onTock after sync to fire React re-renders.', ref: 'bundles/fireproof-vibes-bridge.js' },
+  { id: 'cloud-attach',    label: 'Cloud Store Attach',  layer: 'cloud',     x: 450, info: 'Remote gateway stores (car, meta on connect-share.exe.xyz) are created and added to attachedStores.remotes(). This is when cloud sync becomes possible.', ref: 'fireproof-clerk-bundle.js — createAttachedStores for remotes' },
+  { id: 'initial-sync',    label: 'Initial Sync',        layer: 'cloud',     x: 650, info: 'Downloads remote CRDT heads, merges with local. Console shows "[fireproof-clerk] Initial sync settled, polling stopped" when complete.', ref: 'bundles/fireproof-clerk-bundle.js:49784' },
+];
+
+// ── Timeline events per scenario ───────────────────────────────────────
+
+const SCENARIOS = {
+  happy: {
+    title: 'Happy Path — Stores attach before first write',
+    description: 'When Clerk auth is fast and the first database.put() happens after cloud stores are attached, everything works. This is the common case on fast connections with warm Clerk sessions.',
+    events: [
+      { t: 0.00, from: 'app-mount',      to: 'use-fireproof',   label: 'init',          status: 'progress' },
+      { t: 0.05, from: 'use-fireproof',   to: 'ledger',          label: 'create DB',     status: 'progress' },
+      { t: 0.05, from: 'app-mount',       to: 'clerk-load',      label: 'parallel init', status: 'progress' },
+      { t: 0.10, from: 'ledger',          to: 'loader-ready',    label: 'ready()',       status: 'progress' },
+      { t: 0.15, from: 'loader-ready',    to: 'attached-stores',  label: 'local stores ✓', status: 'success', timing: '~50ms' },
+      { t: 0.20, from: 'clerk-load',      to: 'jwt-ready',       label: 'session loaded', status: 'success', timing: '~200ms' },
+      { t: 0.25, from: 'jwt-ready',       to: 'vibes-bridge',    label: 'JWT token',     status: 'progress' },
+      { t: 0.30, from: 'vibes-bridge',    to: 'cloud-attach',    label: 'attach remote', status: 'progress' },
+      { t: 0.35, from: 'cloud-attach',    to: 'attached-stores',  label: 'remote stores ✓', status: 'success', timing: '~350ms' },
+      { t: 0.40, from: 'cloud-attach',    to: 'initial-sync',    label: 'pull heads',    status: 'progress' },
+      { t: 0.50, from: 'initial-sync',    to: 'ledger',          label: 'merge CRDT',    status: 'success', timing: '~500ms' },
+      { t: 0.55, from: 'amnesia-check',   to: 'write-queue',     label: 'put(ledger-meta)', status: 'progress' },
+      { t: 0.60, from: 'write-queue',     to: 'attached-stores',  label: 'flush → stores ✓', status: 'success' },
+      { t: 0.65, from: 'catalog-seed',    to: 'write-queue',     label: 'put(catalog)',  status: 'progress' },
+      { t: 0.70, from: 'write-queue',     to: 'attached-stores',  label: 'flush → stores ✓', status: 'success' },
+      { t: 0.80, from: 'chat-put',        to: 'write-queue',     label: 'put(message)',  status: 'progress' },
+      { t: 0.85, from: 'write-queue',     to: 'attached-stores',  label: 'flush → stores ✓', status: 'success' },
+    ],
+  },
+  race: {
+    title: 'Race Condition — Put fires before stores exist',
+    description: 'When Clerk auth is slow (cold session, network latency) or the SSE session starts quickly, database.put() can fire before cloud stores are attached. The WriteQueue worker tries to access .stores on an undefined remote, crashing with "Cannot read properties of undefined (reading \'stores\')".',
+    events: [
+      { t: 0.00, from: 'app-mount',      to: 'use-fireproof',   label: 'init',          status: 'progress' },
+      { t: 0.05, from: 'use-fireproof',   to: 'ledger',          label: 'create DB',     status: 'progress' },
+      { t: 0.05, from: 'app-mount',       to: 'clerk-load',      label: 'parallel init', status: 'progress' },
+      { t: 0.10, from: 'ledger',          to: 'loader-ready',    label: 'ready()',       status: 'progress' },
+      { t: 0.15, from: 'loader-ready',    to: 'attached-stores',  label: 'local stores ✓', status: 'success', timing: '~50ms' },
+      // Session starts fast — put fires BEFORE Clerk finishes
+      { t: 0.20, from: 'chat-put',        to: 'write-queue',     label: 'put(user_msg)', status: 'progress', timing: '~200ms — session started!' },
+      { t: 0.25, from: 'write-queue',     to: 'attached-stores',  label: '💥 .stores undefined!', status: 'error', timing: 'CRASH' },
+      { t: 0.30, from: 'amnesia-check',   to: 'loader-ready',    label: 'await ready()', status: 'progress' },
+      { t: 0.32, from: 'amnesia-check',   to: 'write-queue',     label: 'put(ledger-meta)', status: 'progress' },
+      { t: 0.35, from: 'write-queue',     to: 'attached-stores',  label: '💥 .stores undefined!', status: 'error', timing: 'CRASH' },
+      // Clerk finishes late
+      { t: 0.50, from: 'clerk-load',      to: 'jwt-ready',       label: 'session loaded', status: 'success', timing: '~500ms (slow!)' },
+      { t: 0.55, from: 'jwt-ready',       to: 'vibes-bridge',    label: 'JWT token',     status: 'progress' },
+      { t: 0.60, from: 'vibes-bridge',    to: 'cloud-attach',    label: 'attach remote', status: 'progress' },
+      { t: 0.65, from: 'cloud-attach',    to: 'attached-stores',  label: 'remote stores ✓', status: 'success', timing: '~650ms' },
+      { t: 0.70, from: 'cloud-attach',    to: 'initial-sync',    label: 'pull heads',    status: 'progress' },
+      { t: 0.80, from: 'initial-sync',    to: 'ledger',          label: 'merge CRDT',    status: 'success' },
+      // Later puts succeed
+      { t: 0.85, from: 'catalog-seed',    to: 'write-queue',     label: 'put(catalog) — succeeds now', status: 'success' },
+      { t: 0.90, from: 'chat-put',        to: 'write-queue',     label: 'put(msg) — succeeds now', status: 'success' },
+    ],
+  },
+  fix: {
+    title: 'With resilientPut — Retry catches transient failure',
+    description: 'The resilientPut wrapper catches WriteQueueImpl errors and retries with exponential backoff (1s, 2s, 3s). By the time the retry fires, Clerk has usually finished and cloud stores are attached. The write succeeds on retry — no data loss.',
+    events: [
+      { t: 0.00, from: 'app-mount',      to: 'use-fireproof',   label: 'init',          status: 'progress' },
+      { t: 0.05, from: 'use-fireproof',   to: 'ledger',          label: 'create DB',     status: 'progress' },
+      { t: 0.05, from: 'app-mount',       to: 'clerk-load',      label: 'parallel init', status: 'progress' },
+      { t: 0.10, from: 'ledger',          to: 'loader-ready',    label: 'ready()',       status: 'progress' },
+      { t: 0.15, from: 'loader-ready',    to: 'attached-stores',  label: 'local stores ✓', status: 'success', timing: '~50ms' },
+      // Same race — put fires early
+      { t: 0.20, from: 'chat-put',        to: 'write-queue',     label: 'put attempt 1', status: 'progress', timing: '~200ms' },
+      { t: 0.25, from: 'write-queue',     to: 'attached-stores',  label: 'stores undefined', status: 'error' },
+      // But now resilientPut catches it
+      { t: 0.28, from: 'chat-put',        to: 'chat-put',        label: '⏳ retry in 1s', status: 'retry', timing: 'resilientPut catches WriteQueueImpl' },
+      { t: 0.30, from: 'amnesia-check',   to: 'write-queue',     label: 'put attempt 1', status: 'progress' },
+      { t: 0.33, from: 'write-queue',     to: 'attached-stores',  label: 'stores undefined', status: 'error' },
+      { t: 0.35, from: 'amnesia-check',   to: 'amnesia-check',   label: '⏳ retry in 1s', status: 'retry' },
+      // Clerk finishes during retry wait
+      { t: 0.45, from: 'clerk-load',      to: 'jwt-ready',       label: 'session loaded', status: 'success', timing: '~450ms' },
+      { t: 0.50, from: 'jwt-ready',       to: 'vibes-bridge',    label: 'JWT token',     status: 'progress' },
+      { t: 0.55, from: 'vibes-bridge',    to: 'cloud-attach',    label: 'attach remote', status: 'progress' },
+      { t: 0.58, from: 'cloud-attach',    to: 'attached-stores',  label: 'remote stores ✓', status: 'success' },
+      // Retries now succeed
+      { t: 0.62, from: 'chat-put',        to: 'write-queue',     label: 'retry 2 → ✓',  status: 'success', timing: 'stores attached!' },
+      { t: 0.66, from: 'amnesia-check',   to: 'write-queue',     label: 'retry 2 → ✓',  status: 'success' },
+      { t: 0.70, from: 'cloud-attach',    to: 'initial-sync',    label: 'pull heads',    status: 'progress' },
+      { t: 0.80, from: 'initial-sync',    to: 'ledger',          label: 'merge CRDT',    status: 'success' },
+      { t: 0.85, from: 'catalog-seed',    to: 'write-queue',     label: 'put(catalog) ✓', status: 'success' },
+    ],
+  },
+};
+
+// ── Drawing helpers ────────────────────────────────────────────────────
+
+function resize() {
+  const area = canvas.parentElement;
+  const w = area.clientWidth - 40;
+  const h = area.clientHeight - 40;
+  canvas.width = w * DPR;
+  canvas.height = h * DPR;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+
+function getNodePos(id) {
+  const node = COMPONENTS.find(c => c.id === id);
+  if (!node) return { x: 0, y: 0 };
+  const layer = LAYERS[node.layer];
+  return { x: node.x, y: layer.y + layer.h / 2 };
+}
+
+function drawRoundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+const STATUS_COLORS = {
+  success: '#4ade80', progress: '#FFD600', error: '#f87171', retry: '#a78bfa', waiting: '#60a5fa',
+};
+
+function draw() {
+  const W = canvas.width / DPR;
+  const H = canvas.height / DPR;
+  ctx.clearRect(0, 0, W, H);
+
+  // Draw layer bands
+  for (const [key, layer] of Object.entries(LAYERS)) {
+    if (!state.layers[key]) continue;
+    ctx.fillStyle = layer.color;
+    drawRoundRect(10, layer.y, W - 20, layer.h, 8);
+    ctx.fill();
+
+    ctx.fillStyle = layer.textColor;
+    ctx.globalAlpha = 0.4;
+    ctx.font = '700 11px -apple-system, system-ui, sans-serif';
+    ctx.fillText(layer.label.toUpperCase(), 20, layer.y + 16);
+    ctx.globalAlpha = 1;
+  }
+
+  // Draw active events (arrows)
+  const scenario = SCENARIOS[state.preset];
+  for (const evt of scenario.events) {
+    if (evt.t > state.time) continue;
+    const age = state.time - evt.t;
+    const alpha = Math.max(0.15, 1 - age * 2);
+
+    const from = getNodePos(evt.from);
+    const to = getNodePos(evt.to);
+
+    // Skip if layer hidden
+    const fromNode = COMPONENTS.find(c => c.id === evt.from);
+    const toNode = COMPONENTS.find(c => c.id === evt.to);
+    if (fromNode && !state.layers[fromNode.layer]) continue;
+    if (toNode && !state.layers[toNode.layer]) continue;
+
+    // Self-loop (retry)
+    if (evt.from === evt.to) {
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = STATUS_COLORS[evt.status] || '#888';
+      ctx.lineWidth = 2;
+      ctx.setLineDash(evt.status === 'retry' ? [4, 4] : []);
+      ctx.beginPath();
+      ctx.arc(from.x, from.y - 30, 15, 0.5 * Math.PI, 2.5 * Math.PI);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      if (state.showTiming && evt.label) {
+        ctx.fillStyle = STATUS_COLORS[evt.status];
+        ctx.font = '600 10px -apple-system, system-ui, sans-serif';
+        ctx.fillText(evt.label, from.x + 20, from.y - 36);
+      }
+      ctx.globalAlpha = 1;
+      continue;
+    }
+
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = STATUS_COLORS[evt.status] || '#888';
+    ctx.lineWidth = evt.status === 'error' ? 3 : 2;
+    ctx.setLineDash(evt.status === 'retry' ? [4, 4] : evt.status === 'progress' ? [6, 3] : []);
+
+    // Draw curved arrow
+    const midX = (from.x + to.x) / 2;
+    const midY = (from.y + to.y) / 2 - Math.abs(from.y - to.y) * 0.15 - 15;
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.quadraticCurveTo(midX, midY, to.x, to.y);
+    ctx.stroke();
+
+    // Arrowhead
+    const angle = Math.atan2(to.y - midY, to.x - midX);
+    ctx.fillStyle = STATUS_COLORS[evt.status] || '#888';
+    ctx.beginPath();
+    ctx.moveTo(to.x, to.y);
+    ctx.lineTo(to.x - 8 * Math.cos(angle - 0.4), to.y - 8 * Math.sin(angle - 0.4));
+    ctx.lineTo(to.x - 8 * Math.cos(angle + 0.4), to.y - 8 * Math.sin(angle + 0.4));
+    ctx.closePath();
+    ctx.fill();
+
+    // Event label on arrow
+    if (state.showTiming && evt.label) {
+      ctx.fillStyle = STATUS_COLORS[evt.status];
+      ctx.font = '600 10px -apple-system, system-ui, sans-serif';
+      const labelX = midX;
+      const labelY = midY - 4;
+      ctx.textAlign = 'center';
+      ctx.fillText(evt.label, labelX, labelY);
+      ctx.textAlign = 'left';
+    }
+
+    // Timing annotation
+    if (state.showTiming && evt.timing && age < 0.3) {
+      ctx.fillStyle = '#666';
+      ctx.font = '11px "SF Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(evt.timing, midX, midY + 12);
+      ctx.textAlign = 'left';
+    }
+
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+  }
+
+  // Draw component nodes
+  for (const comp of COMPONENTS) {
+    const layer = LAYERS[comp.layer];
+    if (!state.layers[comp.layer]) continue;
+
+    const y = layer.y + layer.h / 2;
+    const nodeW = 120;
+    const nodeH = 32;
+    const nx = comp.x - nodeW / 2;
+    const ny = y - nodeH / 2;
+
+    // Determine node state based on events
+    let nodeStatus = 'waiting';
+    for (const evt of scenario.events) {
+      if (evt.t > state.time) continue;
+      if (evt.to === comp.id || evt.from === comp.id) {
+        if (evt.status === 'error' && (evt.to === comp.id)) nodeStatus = 'error';
+        else if (evt.status === 'success' && (evt.to === comp.id)) nodeStatus = 'success';
+        else if (evt.status === 'retry' && (evt.from === comp.id)) nodeStatus = 'retry';
+        else if (nodeStatus !== 'success' && nodeStatus !== 'error') nodeStatus = 'progress';
+      }
+    }
+
+    const isHovered = state.hoveredNode === comp.id;
+    const isSelected = state.selectedNode === comp.id;
+
+    // Node background
+    ctx.fillStyle = isHovered || isSelected ? '#1a1a1a' : '#111';
+    drawRoundRect(nx, ny, nodeW, nodeH, 6);
+    ctx.fill();
+
+    // Node border
+    ctx.strokeStyle = isSelected ? '#FFD600' : isHovered ? '#555' : (STATUS_COLORS[nodeStatus] || '#333');
+    ctx.lineWidth = isSelected ? 2 : 1;
+    ctx.stroke();
+
+    // Status dot
+    const dotColor = STATUS_COLORS[nodeStatus] || '#444';
+    ctx.fillStyle = dotColor;
+    ctx.beginPath();
+    ctx.arc(nx + 10, y, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Label
+    ctx.fillStyle = isHovered || isSelected ? '#fff' : '#ccc';
+    ctx.font = '600 11px -apple-system, system-ui, sans-serif';
+    ctx.fillText(comp.label, nx + 20, y + 4);
+
+    // Code reference below node
+    if (state.showCode && comp.ref) {
+      ctx.fillStyle = '#444';
+      ctx.font = '10px "SF Mono", monospace';
+      ctx.fillText(comp.ref.length > 22 ? comp.ref.slice(0, 22) + '…' : comp.ref, nx + 2, ny + nodeH + 12);
+    }
+  }
+
+  // Timeline bar at bottom
+  const barY = H - 16;
+  ctx.fillStyle = '#1a1a1a';
+  drawRoundRect(20, barY - 4, W - 40, 8, 4);
+  ctx.fill();
+
+  ctx.fillStyle = '#FFD600';
+  drawRoundRect(20, barY - 4, (W - 40) * state.time, 8, 4);
+  ctx.fill();
+
+  // Time label
+  ctx.fillStyle = '#888';
+  ctx.font = '11px "SF Mono", monospace';
+  ctx.fillText(`${Math.round(state.time * 1000)}ms`, W - 60, barY + 1);
+}
+
+// ── Animation ──────────────────────────────────────────────────────────
+
+let animFrame = null;
+let lastTime = null;
+
+function animate(timestamp) {
+  if (!state.playing) { animFrame = null; return; }
+  if (lastTime === null) lastTime = timestamp;
+  const dt = (timestamp - lastTime) / 1000;
+  lastTime = timestamp;
+
+  state.time = Math.min(1, state.time + dt * 0.15 * state.speed);
+  draw();
+  updatePrompt();
+
+  if (state.time >= 1) {
+    state.playing = false;
+    document.getElementById('playBtn').textContent = '▶ Play';
+    lastTime = null;
+  }
+
+  animFrame = requestAnimationFrame(animate);
+}
+
+function startPlaying() {
+  if (state.time >= 1) state.time = 0;
+  state.playing = true;
+  lastTime = null;
+  document.getElementById('playBtn').textContent = '⏸ Pause';
+  animFrame = requestAnimationFrame(animate);
+}
+
+function stopPlaying() {
+  state.playing = false;
+  document.getElementById('playBtn').textContent = '▶ Play';
+  lastTime = null;
+}
+
+// ── Prompt output ──────────────────────────────────────────────────────
+
+function updatePrompt() {
+  const scenario = SCENARIOS[state.preset];
+  const el = document.getElementById('promptOutput');
+
+  const errorEvents = scenario.events.filter(e => e.status === 'error' && e.t <= state.time);
+  const retryEvents = scenario.events.filter(e => e.status === 'retry' && e.t <= state.time);
+  const successAfterRetry = scenario.events.filter(e => e.status === 'success' && e.t <= state.time && retryEvents.length > 0);
+
+  let html = `<strong>${scenario.title}</strong><br><br>${scenario.description}`;
+
+  if (state.time > 0.1) {
+    html += '<br><br>';
+    if (state.preset === 'happy') {
+      html += '<strong>Key insight:</strong> <code>database.ready()</code> resolves after LOCAL IndexedDB stores are created (Loader creates car, file, meta, wal gateways via <code>createAttachedStores</code>). Cloud stores are attached separately by the vibes bridge after Clerk provides a JWT. In the happy path, Clerk finishes fast enough that cloud stores exist before the first <code>put()</code>.';
+    } else if (state.preset === 'race') {
+      html += '<strong>What goes wrong:</strong> <code>database.ready()</code> resolves (~50ms) but only guarantees LOCAL stores. ';
+      if (errorEvents.length > 0) {
+        html += 'The session starts and triggers <code>database.put()</code> at ~200ms. <code>WriteQueueImpl.process()</code> calls <code>this.worker(update)</code> which accesses <code>loader.attachedStores</code> — but the remote store entry is a pending <code>KeyedResolvOnce</code> that hasn\'t resolved yet, so <code>.stores</code> is undefined. ';
+        html += '<br><br><strong>Result:</strong> Writes silently fail. The <code>[chat] Fireproof put failed</code> and <code>[Ledger] Amnesia detection failed</code> errors appear in console. The CRDT is NOT corrupted — these are rejected writes, not partial writes. But the data is lost.';
+      }
+    } else if (state.preset === 'fix') {
+      html += '<strong>The fix:</strong> <code>resilientPut(database, doc)</code> wraps <code>database.put()</code> in a retry loop. When <code>WriteQueueImpl</code> throws, it catches the error, waits 1s (then 2s, then 3s), and retries. ';
+      if (retryEvents.length > 0) {
+        html += 'By the time the retry fires (~1.2s total), Clerk has finished and cloud stores are attached. The write succeeds on retry — no data loss, no corruption.';
+      }
+    }
+  }
+
+  el.innerHTML = html;
+}
+
+// ── Hit testing ────────────────────────────────────────────────────────
+
+function hitTest(mx, my) {
+  for (const comp of COMPONENTS) {
+    if (!state.layers[comp.layer]) continue;
+    const layer = LAYERS[comp.layer];
+    const y = layer.y + layer.h / 2;
+    const nodeW = 120, nodeH = 32;
+    const nx = comp.x - nodeW / 2;
+    const ny = y - nodeH / 2;
+    if (mx >= nx && mx <= nx + nodeW && my >= ny && my <= ny + nodeH) {
+      return comp;
+    }
+  }
+  return null;
+}
+
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const hit = hitTest(mx, my);
+  state.hoveredNode = hit ? hit.id : null;
+  canvas.style.cursor = hit ? 'pointer' : 'default';
+  draw();
+});
+
+canvas.addEventListener('click', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const hit = hitTest(mx, my);
+
+  if (hit) {
+    state.selectedNode = hit.id;
+    const panel = document.getElementById('infoPanel');
+    document.getElementById('infoPanelTitle').textContent = hit.label;
+    document.getElementById('infoPanelBody').innerHTML = hit.info;
+    document.getElementById('infoPanelRef').textContent = hit.ref || '';
+    panel.classList.add('visible');
+  } else {
+    state.selectedNode = null;
+    document.getElementById('infoPanel').classList.remove('visible');
+  }
+  draw();
+});
+
+// ── Controls ───────────────────────────────────────────────────────────
+
+document.querySelectorAll('.preset-btn[data-preset]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.preset-btn[data-preset]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.preset = btn.dataset.preset;
+    state.time = 0;
+    state.selectedNode = null;
+    document.getElementById('infoPanel').classList.remove('visible');
+    stopPlaying();
+    draw();
+    updatePrompt();
+  });
+});
+
+document.getElementById('playBtn').addEventListener('click', () => {
+  if (state.playing) stopPlaying(); else startPlaying();
+  draw();
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  state.time = 0;
+  stopPlaying();
+  draw();
+  updatePrompt();
+});
+
+document.getElementById('speedSlider').addEventListener('input', (e) => {
+  state.speed = parseFloat(e.target.value);
+  document.getElementById('speedLabel').textContent = state.speed + '×';
+});
+
+['showBrowser', 'showFireproof', 'showClerk', 'showCloud'].forEach(id => {
+  const key = id.replace('show', '').toLowerCase();
+  document.getElementById(id).addEventListener('change', (e) => {
+    state.layers[key] = e.target.checked;
+    draw();
+  });
+});
+
+['showCode', 'showTiming'].forEach(id => {
+  const key = id.replace('show', '');
+  document.getElementById(id).addEventListener('change', (e) => {
+    state[id] = e.target.checked;
+    draw();
+  });
+});
+
+document.getElementById('copyBtn').addEventListener('click', () => {
+  const text = document.getElementById('promptOutput').innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('copyBtn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy', 1500);
+  });
+});
+
+// ── Timeline scrubbing ─────────────────────────────────────────────────
+
+let scrubbing = false;
+canvas.addEventListener('mousedown', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const my = e.clientY - rect.top;
+  const H = rect.height;
+  if (my > H - 24) {
+    scrubbing = true;
+    const mx = e.clientX - rect.left;
+    state.time = Math.max(0, Math.min(1, (mx - 20) / (rect.width - 40)));
+    draw();
+    updatePrompt();
+  }
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!scrubbing) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  state.time = Math.max(0, Math.min(1, (mx - 20) / (rect.width - 40)));
+  draw();
+  updatePrompt();
+});
+
+window.addEventListener('mouseup', () => { scrubbing = false; });
+
+// ── Init ───────────────────────────────────────────────────────────────
+
+window.addEventListener('resize', () => { resize(); draw(); });
+resize();
+draw();
+updatePrompt();
+</script>
+</body>
+</html>

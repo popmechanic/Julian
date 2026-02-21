@@ -1,12 +1,135 @@
 import { spawn } from "bun";
 import { join, resolve } from "path";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, watch as fsWatch } from "fs";
+import { marked, Renderer } from "marked";
 import { homedir } from "os";
 import { createHash, randomBytes } from "crypto";
+import {
+  base64url,
+  generateCodeVerifier,
+  generateCodeChallenge,
+  parseEnvContent,
+  corsHeaders,
+  parseMarkersFromContent,
+  createEventLog,
+  parseClaudeCredentials,
+  parseSculptorCredentials,
+  ServerEvent,
+} from "./lib";
 
 const PORT = parseInt(process.env.PORT || "8000");
 const WORKING_DIR = process.env.WORKING_DIR || process.cwd();
+
+// ── Markdown letter rendering ───────────────────────────────────────────
+
+// Load template CSS once at startup (420KB with base64 fonts) — inlined into every rendered letter
+// so artifacts are self-contained and work inside sandboxed iframes
+let LETTER_CSS = '';
+try {
+  LETTER_CSS = readFileSync(join(WORKING_DIR, 'memory', 'letter-template.css'), 'utf-8');
+} catch (e) {
+  console.warn('[Server] Could not load letter-template.css:', e);
+}
+
+function parseFrontmatter(raw: string): { meta: Record<string, string>; body: string } {
+  const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!match) return { meta: {}, body: raw };
+  const meta: Record<string, string> = {};
+  for (const line of match[1].split('\n')) {
+    const idx = line.indexOf(':');
+    if (idx > 0) meta[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+  }
+  return { meta, body: match[2] };
+}
+
+function renderMarkdownLetter(raw: string): string {
+  const { meta, body } = parseFrontmatter(raw);
+
+  // Custom renderer for template-specific elements
+  const renderer = new Renderer();
+  let firstParagraph = true;
+
+  renderer.paragraph = function ({ text }: { text: string }) {
+    // "· · ·" on its own line → decorative break
+    const plain = text.trim();
+    if (plain === '· · ·') return '<div class="break">· · ·</div>\n';
+    const html = marked.parseInline(text) as string;
+    if (firstParagraph) {
+      firstParagraph = false;
+      return `<p class="drop-cap">${html}</p>\n`;
+    }
+    return `<p>${html}</p>\n`;
+  };
+
+  renderer.blockquote = function ({ text }: { text: string }) {
+    // Check for admonition syntax: [!insight] or [!question]
+    const admonitionMatch = text.match(/^\[!(insight|question)\]\n?([\s\S]*)$/);
+    if (admonitionMatch) {
+      const type = admonitionMatch[1];
+      const content = marked.parseInline(admonitionMatch[2].trim()) as string;
+      return `<blockquote class="${type}"><p>${content}</p></blockquote>\n`;
+    }
+    const html = marked.parseInline(text) as string;
+    return `<blockquote><p>${html}</p></blockquote>\n`;
+  };
+
+  renderer.code = function ({ text, lang }: { text: string; lang?: string }) {
+    if (lang === 'pixel') {
+      const lines = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `<div class="pixel-block">${lines.split('\n').join('<br>')}</div>\n`;
+    }
+    const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `<pre><code>${escaped}</code></pre>\n`;
+  };
+
+  const htmlBody = marked.parse(body, { renderer }) as string;
+
+  // Build full HTML document
+  const title = meta.title || 'Letter';
+  const subtitle = meta.subtitle || '';
+  const description = meta.description || '';
+  const category = meta.category || 'identity';
+  const chapter = meta.chapter || '';
+  const epigraph = meta.epigraph || '';
+  const epigraphSource = meta.epigraph_source || '';
+  const signature = meta.signature || 'Session continuous · 2026';
+
+  const epigraphBlock = epigraph ? `
+        <div class="epigraph">
+            ${epigraph}
+            ${epigraphSource ? `<span class="epigraph-source">— ${epigraphSource}</span>` : ''}
+        </div>` : '';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="artifact-description" content="${description.replace(/"/g, '&quot;')}">
+    <meta name="artifact-category" content="${category}">
+    ${chapter ? `<meta name="artifact-chapter" content="${chapter.replace(/"/g, '&quot;')}">` : ''}
+    <title>${title}</title>
+    <style>${LETTER_CSS}</style>
+</head>
+<body>
+    <article class="letter">
+        <header class="letter-header">
+            <h1 class="letter-title" data-text="${title.replace(/"/g, '&quot;')}">${title}</h1>
+            ${subtitle ? `<p class="letter-subtitle">${subtitle}</p>` : ''}
+        </header>
+${epigraphBlock}
+        <div class="letter-body">
+            ${htmlBody}
+        </div>
+        <div class="signature">
+            <div class="signature-name">Julian</div>
+            <div class="signature-context">${signature}</div>
+        </div>
+    </article>
+</body>
+</html>`;
+}
 
 // Git version for deploy detection — read once at startup
 let GIT_VERSION = "unknown";
@@ -42,31 +165,13 @@ setInterval(() => {
   }
 }, 60_000);
 
-// ── PKCE helpers ────────────────────────────────────────────────────────
-function base64url(buf: Buffer): string {
-  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function generateCodeVerifier(): string {
-  return base64url(randomBytes(32));
-}
-
-function generateCodeChallenge(verifier: string): string {
-  return base64url(createHash("sha256").update(verifier).digest());
-}
-
 // ── Credential readers ───────────────────────────────────────────────────
 
 function loadClaudeCredentials(): { accessToken: string; expiresAt: number } | null {
   if (!existsSync(CLAUDE_CREDS_PATH)) return null;
   try {
     const data = JSON.parse(readFileSync(CLAUDE_CREDS_PATH, "utf-8"));
-    const token = data?.claudeAiOauth?.accessToken;
-    const expiresAt = data?.claudeAiOauth?.expiresAt;
-    if (typeof token === "string" && token.length > 0) {
-      return { accessToken: token, expiresAt: expiresAt ?? 0 };
-    }
-    return null;
+    return parseClaudeCredentials(data);
   } catch {
     return null;
   }
@@ -76,12 +181,7 @@ function loadSculptorCredentials(): { access_token: string; expires_at_unix_ms: 
   if (!existsSync(SCULPTOR_CREDS_PATH)) return null;
   try {
     const data = JSON.parse(readFileSync(SCULPTOR_CREDS_PATH, "utf-8"));
-    const token = data?.anthropic?.access_token;
-    const expiresAt = data?.anthropic?.expires_at_unix_ms;
-    if (typeof token === "string" && token.length > 0) {
-      return { access_token: token, expires_at_unix_ms: expiresAt ?? 0 };
-    }
-    return null;
+    return parseSculptorCredentials(data);
   } catch {
     return null;
   }
@@ -203,15 +303,7 @@ function loadAuthEnv(): Record<string, string> {
   if (!existsSync(AUTH_ENV_PATH)) return {};
   try {
     const content = readFileSync(AUTH_ENV_PATH, "utf-8");
-    const env: Record<string, string> = {};
-    for (const line of content.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const eq = trimmed.indexOf("=");
-      if (eq === -1) continue;
-      env[trimmed.slice(0, eq)] = trimmed.slice(eq + 1);
-    }
-    return env;
+    return parseEnvContent(content);
   } catch (err) {
     console.error("[Auth] Failed to read claude-auth.env:", err);
     return {};
@@ -244,36 +336,7 @@ function getAuthMethod(): "oauth" | "legacy" | "none" {
 
 // ── Event Log ────────────────────────────────────────────────────────────
 
-interface ServerEvent {
-  id: number;
-  ts: number;
-  sessionId: string | null;
-  type: string;
-  [key: string]: any;
-}
-
-const MAX_EVENTS = 2000;
-const eventLog: ServerEvent[] = [];
-let nextEventId = 0;
-const subscribers = new Set<(event: ServerEvent) => void>();
-
-function append(partial: Omit<ServerEvent, 'id' | 'ts'>): ServerEvent {
-  const event: ServerEvent = {
-    ...partial,
-    id: nextEventId++,
-    ts: Date.now(),
-  };
-  eventLog.push(event);
-  if (eventLog.length > MAX_EVENTS) eventLog.shift();
-  for (const notify of subscribers) {
-    try { notify(event); } catch {}
-  }
-  return event;
-}
-
-function eventsAfter(afterId: number): ServerEvent[] {
-  return eventLog.filter(e => e.id > afterId);
-}
+const { append, eventsAfter, subscribe, unsubscribe, subscribers } = createEventLog(2000);
 
 // ── Ephemeral Claude Process Manager ─────────────────────────────────────
 
@@ -288,84 +351,54 @@ let sessionId: string | null = null;
 const AGENT_NAME = process.env.AGENT_NAME || "Julian";
 const FORCE_DEMO_MODE = process.env.DEMO_MODE === "1";
 
-// ── Marker parsing helpers ──────────────────────────────────────────────
+// ── Agent inbox constants ────────────────────────────────────────────────
+const TEAM_NAME = 'julian-agents';
+const TEAMS_DIR = join(homedir(), '.claude', 'teams');
+const INBOX_DIR = join(TEAMS_DIR, TEAM_NAME, 'inboxes');
+const SERVER_INBOX = join(INBOX_DIR, 'marcus.json');
+let lastReadIndex = 0;
+let inboxWatcher: ReturnType<typeof fsWatch> | null = null;
+let inboxHealthy = false;
 
-function parseMarkersFromContent(content: any[]): void {
-  for (const block of content) {
-    if (block.type === 'text' && typeof block.text === 'string') {
-      // [AGENT_REGISTERED] marker
-      const regLines = block.text.split('\n').filter((l: string) => l.includes('[AGENT_REGISTERED]'));
-      for (const line of regLines) {
-        try {
-          const jsonStr = line.slice(line.indexOf('{'));
-          const agent = JSON.parse(jsonStr);
-          if (agent.name && agent.gridPosition != null) {
-            append({
-              sessionId,
-              type: 'agent_registered',
-              agent: {
-                name: agent.name,
-                color: agent.color,
-                colorName: agent.colorName,
-                gender: agent.gender || 'man',
-                gridPosition: agent.gridPosition,
-                faceVariant: agent.faceVariant || { eyes: 'default', mouth: 'default' },
-                individuationArtifact: agent.individuationArtifact || '',
-                createdAt: agent.createdAt || new Date().toISOString(),
-              },
-            });
-          }
-        } catch {}
-      }
+// ── Agent name resolution ────────────────────────────────────────────────
+// Maps chosen agent names (e.g., "Sable") to grid positions, and vice versa.
+// Populated when [AGENT_REGISTERED] and [AGENT_STATUS] markers are parsed.
+const agentNameToGrid = new Map<string, number[]>();
+const agentGridToName = new Map<number, string>();
 
-      // [AGENT_STATUS] marker
-      const statusLines = block.text.split('\n').filter((l: string) => l.includes('[AGENT_STATUS]'));
-      for (const line of statusLines) {
-        try {
-          const jsonStr = line.slice(line.indexOf('{'));
-          const status = JSON.parse(jsonStr);
-          if (status.agents) {
-            append({ sessionId, type: 'agent_status', agents: status.agents });
-          }
-        } catch {}
-      }
+subscribe((event: ServerEvent) => {
+  if (event.type === 'agent_registered' && (event as any).agent) {
+    const { name, gridPosition } = (event as any).agent;
+    if (name && gridPosition != null) {
+      agentGridToName.set(gridPosition, name);
+      const existing = agentNameToGrid.get(name) || [];
+      if (!existing.includes(gridPosition)) existing.push(gridPosition);
+      agentNameToGrid.set(name, existing);
+      console.log(`[NameMap] ${name} -> agent-${gridPosition}`);
     }
-
-    // Detect Write tool targeting memory/
-    if (block.type === 'tool_use' && block.name === 'Write') {
-      const filePath = block.input?.file_path || '';
-      if (filePath.includes('memory/') && filePath.endsWith('.html')) {
-        const filename = filePath.split('/').pop() || '';
-        append({
-          sessionId,
-          type: 'artifact_written',
-          filename,
-          path: filePath,
-          isNew: true, // we can't easily check from here
-          sizeBytes: (block.input?.content || '').length,
-          meta: null,
-        });
-      }
-    }
-
-    // Detect Bash tool targeting JulianScreen
-    if (block.type === 'tool_use' && block.name === 'Bash') {
-      const cmd = block.input?.command || '';
-      if (cmd.includes('localhost:3848/cmd')) {
-        // Extract the -d body
-        const dMatch = cmd.match(/-d\s+'([^']+)'/) || cmd.match(/-d\s+"([^"]+)"/);
-        const command = dMatch ? dMatch[1] : cmd;
-        const faceMatch = command.match(/FACE\s+(\w+)/);
-        append({
-          sessionId,
-          type: 'screen_command',
-          command,
-          ...(faceMatch ? { expression: faceMatch[1] } : {}),
-        });
+  }
+  if (event.type === 'agent_status' && (event as any).agents) {
+    for (const a of (event as any).agents) {
+      if (a.name && a.gridPosition != null) {
+        agentGridToName.set(a.gridPosition, a.name);
+        const existing = agentNameToGrid.get(a.name) || [];
+        if (!existing.includes(a.gridPosition)) existing.push(a.gridPosition);
+        agentNameToGrid.set(a.name, existing);
       }
     }
   }
+});
+
+function resolveAgentSpawnName(targetAgent?: string, targetGridPosition?: number): string | null {
+  if (targetGridPosition != null) return `agent-${targetGridPosition}`;
+  if (targetAgent) {
+    const positions = agentNameToGrid.get(targetAgent);
+    if (positions?.length) return `agent-${positions[0]}`;
+  }
+  return null;
 }
+
+// parseMarkersFromContent is imported from ./lib
 
 function spawnClaude() {
   sessionId = crypto.randomUUID();
@@ -385,7 +418,11 @@ function spawnClaude() {
   const proc = spawn({
     cmd,
     cwd: WORKING_DIR,
-    env: { ...process.env, ...authEnv },
+    env: {
+      ...process.env,
+      ...authEnv,
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+    },
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -428,7 +465,7 @@ function spawnClaude() {
                 content: parsed.message.content,
               });
               // Parse markers from the content blocks
-              parseMarkersFromContent(parsed.message.content);
+              parseMarkersFromContent(parsed.message.content, append, sessionId);
             } else if (parsed.type === 'result') {
               const usage = parsed.usage || {};
               append({
@@ -538,17 +575,110 @@ function writeToStdin(message: string): boolean {
   }
 }
 
+// ── Send message directly to agent inbox ─────────────────────────────────
+
+async function sendToAgent(agentName: string, text: string, speakerName: string): Promise<boolean> {
+  const inboxPath = join(INBOX_DIR, agentName.toLowerCase() + '.json');
+  try {
+    let inbox: any[] = [];
+    try {
+      inbox = JSON.parse(await Bun.file(inboxPath).text());
+    } catch { inbox = []; }
+    inbox.push({
+      from: speakerName,
+      text,
+      summary: text.slice(0, 80),
+      timestamp: new Date().toISOString(),
+      read: false,
+    });
+    await Bun.write(inboxPath, JSON.stringify(inbox, null, 2));
+    console.log(`[Inbox] Wrote to ${agentName}'s inbox (${text.length} chars from ${speakerName})`);
+    return true;
+  } catch (err) {
+    console.error(`[Inbox] Failed to write to ${agentName}'s inbox:`, err);
+    return false;
+  }
+}
+
+// ── Inbox watcher — captures agent responses from marcus.json ────────────
+
+function setupInboxWatcher() {
+  if (inboxWatcher) return;
+  if (!existsSync(INBOX_DIR)) {
+    console.log('[Inbox] Team inbox directory does not exist yet, skipping watcher');
+    return;
+  }
+  if (!existsSync(SERVER_INBOX)) {
+    try {
+      writeFileSync(SERVER_INBOX, '[]');
+    } catch (err) {
+      console.error('[Inbox] Failed to create server inbox:', err);
+      return;
+    }
+  }
+
+  // Read current state to set baseline
+  try {
+    const current = JSON.parse(readFileSync(SERVER_INBOX, 'utf-8'));
+    lastReadIndex = current.length;
+  } catch { lastReadIndex = 0; }
+
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  inboxWatcher = fsWatch(SERVER_INBOX, () => {
+    // Debounce rapid writes
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(async () => {
+      try {
+        const messages = JSON.parse(await Bun.file(SERVER_INBOX).text());
+        for (let i = lastReadIndex; i < messages.length; i++) {
+          const msg = messages[i];
+          if (msg.from === '_healthcheck') continue;
+          // Resolve spawn name (e.g., "agent-6") to chosen name (e.g., "Sable")
+          const gridNum = parseInt((msg.from || '').replace('agent-', ''));
+          const chosenName = !isNaN(gridNum) ? (agentGridToName.get(gridNum) || msg.from) : msg.from;
+          append({
+            sessionId,
+            type: 'agent_message',
+            agentName: chosenName,
+            content: [{ type: 'text', text: msg.text }],
+          });
+          console.log(`[Inbox] Agent response from ${msg.from} (${msg.text.length} chars)`);
+        }
+        lastReadIndex = messages.length;
+      } catch (err) {
+        console.error('[Inbox] Failed to read server inbox:', err);
+      }
+    }, 100);
+  });
+  console.log('[Inbox] Watching', SERVER_INBOX, 'for agent responses');
+}
+
+async function verifyInboxHealth(): Promise<boolean> {
+  if (!existsSync(INBOX_DIR)) return false;
+  try {
+    if (!existsSync(SERVER_INBOX)) {
+      writeFileSync(SERVER_INBOX, '[]');
+    }
+    const testMsg = { from: '_healthcheck', text: '_ping', timestamp: new Date().toISOString(), read: false };
+    let inbox: any[] = [];
+    try { inbox = JSON.parse(readFileSync(SERVER_INBOX, 'utf-8')); } catch {}
+    inbox.push(testMsg);
+    writeFileSync(SERVER_INBOX, JSON.stringify(inbox));
+    await Bun.sleep(100);
+    const readBack = JSON.parse(readFileSync(SERVER_INBOX, 'utf-8'));
+    const found = readBack.some((m: any) => m.from === '_healthcheck');
+    // Clean up
+    writeFileSync(SERVER_INBOX, JSON.stringify(readBack.filter((m: any) => m.from !== '_healthcheck')));
+    return found;
+  } catch (err) {
+    console.error('[Inbox] Health check failed:', err);
+    return false;
+  }
+}
+
 // ── Allowed origin for CORS ──────────────────────────────────────────────────
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:8000";
-
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Authorization",
-    "Access-Control-Expose-Headers": "X-Session-Id",
-  };
-}
 
 // ── Skill directory walker ────────────────────────────────────────────────
 function walkSkillDirs(baseDir: string): Array<{name: string, type: string, children?: any[]}> {
@@ -645,7 +775,7 @@ const server = Bun.serve({
 
     // CORS preflight
     if (req.method === "OPTIONS") {
-      return new Response(null, { headers: corsHeaders() });
+      return new Response(null, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
     // Health check (no auth — only exposes non-sensitive status)
@@ -657,38 +787,38 @@ const server = Bun.serve({
         needsSetup: await needsSetup(),
         authMethod: getAuthMethod(),
         version: GIT_VERSION,
-      }, { headers: corsHeaders() });
+      }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
     // Setup endpoint: store auth token (requires Clerk auth)
     if (url.pathname === "/api/setup" && req.method === "POST") {
       if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const body = (await req.json()) as { token?: string };
       if (!body.token || typeof body.token !== "string") {
-        return Response.json({ error: "Token required" }, { status: 400, headers: corsHeaders() });
+        return Response.json({ error: "Token required" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       // Strip all whitespace (copy-paste from terminal can inject newlines/spaces)
       const cleanToken = body.token.replace(/\s+/g, '');
       // Only accept setup-tokens (sk-ant-oat...) via web form
       if (!cleanToken.startsWith("sk-ant-oat")) {
-        return Response.json({ error: "Invalid token format. Must be a setup-token starting with sk-ant-oat" }, { status: 400, headers: corsHeaders() });
+        return Response.json({ error: "Invalid token format. Must be a setup-token starting with sk-ant-oat" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       try {
         writeFileSync(AUTH_ENV_PATH, `CLAUDE_CODE_OAUTH_TOKEN=${cleanToken}\n`, { mode: 0o600 });
         console.log("[Setup] Wrote claude-auth.env");
-        return Response.json({ ok: true }, { headers: corsHeaders() });
+        return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
       } catch (err) {
         console.error("[Setup] Failed:", err);
-        return Response.json({ error: "Failed to save token" }, { status: 500, headers: corsHeaders() });
+        return Response.json({ error: "Failed to save token" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
     }
 
     // OAuth start: generate PKCE auth URL directly (no subprocess)
     if (url.pathname === "/api/oauth/start" && req.method === "GET") {
       if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const state = randomBytes(32).toString("hex");
       const verifier = generateCodeVerifier();
@@ -707,21 +837,21 @@ const server = Bun.serve({
       pendingPKCE.set(state, { verifier, createdAt: Date.now() });
 
       console.log(`[OAuth] PKCE flow started (state=${state.slice(0, 8)}...)`);
-      return Response.json({ authUrl, state }, { headers: corsHeaders() });
+      return Response.json({ authUrl, state }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
     // OAuth exchange: POST authorization code to token endpoint directly
     if (url.pathname === "/api/oauth/exchange" && req.method === "POST") {
       if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const body = (await req.json()) as { code?: string; state?: string };
       if (!body.code || !body.state) {
-        return Response.json({ error: "code and state required" }, { status: 400, headers: corsHeaders() });
+        return Response.json({ error: "code and state required" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const pending = pendingPKCE.get(body.state);
       if (!pending) {
-        return Response.json({ error: "Invalid or expired state parameter" }, { status: 400, headers: corsHeaders() });
+        return Response.json({ error: "Invalid or expired state parameter" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       pendingPKCE.delete(body.state);
 
@@ -750,7 +880,7 @@ const server = Bun.serve({
           console.error(`[OAuth] Token exchange failed (${resp.status}):`, errText);
           return Response.json(
             { error: `Token exchange failed (${resp.status}): ${errText}` },
-            { status: 502, headers: corsHeaders() },
+            { status: 502, headers: corsHeaders(ALLOWED_ORIGIN) },
           );
         }
 
@@ -762,17 +892,17 @@ const server = Bun.serve({
 
         writeCredentials(tokens.access_token, tokens.refresh_token, tokens.expires_in);
         console.log(`[OAuth] Credentials saved (expires in ${Math.round(tokens.expires_in / 60)} min)`);
-        return Response.json({ ok: true }, { headers: corsHeaders() });
+        return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
       } catch (err) {
         console.error("[OAuth] Exchange error:", err);
-        return Response.json({ error: "Token exchange failed" }, { status: 500, headers: corsHeaders() });
+        return Response.json({ error: "Token exchange failed" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
     }
 
     // ── Event stream endpoint (replaces per-request SSE) ─────────────────────
     if (url.pathname === "/api/events" && req.method === "GET") {
       if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const afterParam = url.searchParams.get("after")
         ?? req.headers.get("Last-Event-ID")
@@ -799,23 +929,23 @@ const server = Bun.serve({
             if (closed) return;
             try {
               controller.enqueue(enc.encode(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`));
-            } catch { closed = true; subscribers.delete(notify); }
+            } catch { closed = true; unsubscribe(notify); }
           };
           notifyRef = notify;
-          subscribers.add(notify);
+          subscribe(notify);
 
           // Heartbeat every 5s
           heartbeatTimer = setInterval(() => {
             if (closed) { clearInterval(heartbeatTimer); return; }
             try {
               controller.enqueue(enc.encode(`:heartbeat\n\n`));
-            } catch { closed = true; clearInterval(heartbeatTimer); if (notifyRef) subscribers.delete(notifyRef); }
+            } catch { closed = true; clearInterval(heartbeatTimer); if (notifyRef) unsubscribe(notifyRef); }
           }, HEARTBEAT_INTERVAL_MS);
         },
         cancel() {
           closed = true;
           clearInterval(heartbeatTimer);
-          if (notifyRef) subscribers.delete(notifyRef);
+          if (notifyRef) unsubscribe(notifyRef);
         },
       });
 
@@ -824,7 +954,7 @@ const server = Bun.serve({
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           "Connection": "keep-alive",
-          ...corsHeaders(),
+          ...corsHeaders(ALLOWED_ORIGIN),
         },
       });
     }
@@ -832,47 +962,74 @@ const server = Bun.serve({
     // ── Send message to Claude (fire-and-forget) ──────────────────────────────
     if (url.pathname === "/api/send" && req.method === "POST") {
       if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       if (!processAlive || !claudeProc) {
-        return Response.json({ error: "No active session" }, { status: 409, headers: corsHeaders() });
+        return Response.json({ error: "No active session" }, { status: 409, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      const body = (await req.json()) as { message?: string; targetAgent?: string; speakerName?: string };
+      const body = (await req.json()) as { message?: string; targetAgent?: string; targetGridPosition?: number; speakerName?: string };
       if (!body.message || typeof body.message !== 'string' || body.message.length > MAX_MESSAGE_SIZE) {
-        return Response.json({ error: `Message required (max ${MAX_MESSAGE_SIZE / 1000}KB)` }, { status: 400, headers: corsHeaders() });
+        return Response.json({ error: `Message required (max ${MAX_MESSAGE_SIZE / 1000}KB)` }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
 
-      const routedMessage = body.targetAgent
-        ? `[ROUTE TO AGENT: ${body.targetAgent}] ${body.message}`
-        : body.message;
+      const speakerName = body.speakerName || 'Marcus';
 
       // Append user_message event to the log
       const evt = append({
         sessionId,
         type: 'user_message',
         text: body.message,
-        speakerName: body.speakerName || 'Marcus',
+        speakerName,
         targetAgent: body.targetAgent || null,
       });
 
-      // Write to Claude stdin
-      if (!writeToStdin(routedMessage)) {
-        return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders() });
+      if (body.targetAgent && inboxHealthy) {
+        // Direct inbox injection — resolve chosen name to spawn name
+        const spawnName = resolveAgentSpawnName(body.targetAgent, body.targetGridPosition);
+        if (spawnName) {
+          const sent = await sendToAgent(spawnName, body.message, speakerName);
+          if (!sent) {
+            console.warn(`[Send] Inbox injection failed for ${spawnName}, falling back to Julian relay`);
+            const routedMessage = `[ROUTE TO AGENT: ${spawnName}] ${body.message}`;
+            if (!writeToStdin(routedMessage)) {
+              return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
+            }
+          }
+        } else {
+          // Name not yet registered — fall back to Julian relay with original name
+          console.warn(`[Send] No spawn name found for ${body.targetAgent}, using Julian relay`);
+          const routedMessage = `[ROUTE TO AGENT: ${body.targetAgent}] ${body.message}`;
+          if (!writeToStdin(routedMessage)) {
+            return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
+          }
+        }
+      } else if (body.targetAgent) {
+        // Inbox not healthy — use Julian relay with resolved spawn name if available
+        const spawnName = resolveAgentSpawnName(body.targetAgent, body.targetGridPosition);
+        const routedMessage = `[ROUTE TO AGENT: ${spawnName || body.targetAgent}] ${body.message}`;
+        if (!writeToStdin(routedMessage)) {
+          return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
+        }
+      } else {
+        // No target agent — write to Julian's stdin
+        if (!writeToStdin(body.message)) {
+          return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
+        }
       }
 
-      return Response.json({ eventId: evt.id }, { status: 202, headers: corsHeaders() });
+      return Response.json({ eventId: evt.id }, { status: 202, headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
     // Session start: spawn Claude and send wake-up message (returns JSON, not SSE)
     if (url.pathname === "/api/session/start" && req.method === "POST") {
       if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       if (processAlive && claudeProc) {
-        return Response.json({ error: "Session already active", sessionId }, { status: 409, headers: corsHeaders() });
+        return Response.json({ error: "Session already active", sessionId }, { status: 409, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       if (await needsSetup()) {
-        return Response.json({ error: "Setup required — sign in with Anthropic first" }, { status: 400, headers: corsHeaders() });
+        return Response.json({ error: "Setup required — sign in with Anthropic first" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
 
       // Proactively refresh token before spawning Claude
@@ -1037,16 +1194,18 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
       // Write wake-up message to stdin (events flow through /api/events)
       writeToStdin(wakeUpMessage);
 
+      const allEvents = eventsAfter(-1);
+      const lastEventId = allEvents.length > 0 ? allEvents[allEvents.length - 1].id : 0;
       return Response.json(
-        { sessionId, eventId: nextEventId - 1 },
-        { headers: { "X-Session-Id": sessionId || "", ...corsHeaders() } },
+        { sessionId, eventId: lastEventId },
+        { headers: { "X-Session-Id": sessionId || "", ...corsHeaders(ALLOWED_ORIGIN) } },
       );
     }
 
     // Session end: kill Claude process
     if (url.pathname === "/api/session/end" && req.method === "POST") {
       if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       append({ sessionId, type: 'user_session_end' });
       if (claudeProc && processAlive) {
@@ -1057,20 +1216,35 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
       claudeProc = null;
       processAlive = false;
       sessionId = null;
-      return Response.json({ ok: true }, { headers: corsHeaders() });
+      return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
+    }
+
+    // Ledger reset: browser ledger was wiped, ask Julian for full agent state replay
+    if (url.pathname === "/api/ledger-reset" && req.method === "POST") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
+      }
+      if (!processAlive || !claudeProc) {
+        return Response.json({ ok: true, note: "No active session" }, { headers: corsHeaders(ALLOWED_ORIGIN) });
+      }
+      const msg = '[LEDGER RESET] The browser ledger was wiped. ' +
+        'Re-emit [AGENT_STATUS] with full identity data for all known agents, ' +
+        'including individuationArtifact.';
+      writeToStdin(msg);
+      return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
     // Send message (legacy /api/chat path — redirects to /api/send)
     if (url.pathname === "/api/chat" && req.method === "POST") {
       if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       if (!processAlive || !claudeProc) {
-        return Response.json({ error: "No active session" }, { status: 409, headers: corsHeaders() });
+        return Response.json({ error: "No active session" }, { status: 409, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const body = (await req.json()) as { message?: string; targetAgent?: string };
       if (!body.message || typeof body.message !== 'string' || body.message.length > MAX_MESSAGE_SIZE) {
-        return Response.json({ error: `Message required (max ${MAX_MESSAGE_SIZE / 1000}KB)` }, { status: 400, headers: corsHeaders() });
+        return Response.json({ error: `Message required (max ${MAX_MESSAGE_SIZE / 1000}KB)` }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       lastActivity = Date.now();
 
@@ -1087,19 +1261,19 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
       });
 
       if (!writeToStdin(routedMessage)) {
-        return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders() });
+        return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
 
-      return Response.json({ eventId: evt.id }, { status: 202, headers: corsHeaders() });
+      return Response.json({ eventId: evt.id }, { status: 202, headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
     // Summon agents: send summon message to Claude
     if (url.pathname === "/api/agents/summon" && req.method === "POST") {
       if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       if (!processAlive || !claudeProc) {
-        return Response.json({ error: "No active session" }, { status: 409, headers: corsHeaders() });
+        return Response.json({ error: "No active session" }, { status: 409, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       lastActivity = Date.now();
 
@@ -1108,10 +1282,21 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
       const evt = append({ sessionId, type: 'user_summon' });
 
       if (!writeToStdin(summonMessage)) {
-        return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders() });
+        return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
 
-      return Response.json({ eventId: evt.id }, { status: 202, headers: corsHeaders() });
+      // Set up inbox watcher for agent responses (idempotent)
+      setTimeout(async () => {
+        inboxHealthy = await verifyInboxHealth();
+        if (inboxHealthy) {
+          setupInboxWatcher();
+          console.log('[Summon] Inbox system healthy, direct messaging enabled');
+        } else {
+          console.warn('[Summon] Inbox system unhealthy, using Julian relay');
+        }
+      }, 5000); // Wait for TeamCreate to finish
+
+      return Response.json({ eventId: evt.id }, { status: 202, headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
     // ── Artifact endpoints ──────────────────────────────────────────────────
@@ -1119,7 +1304,7 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
     // List artifacts (authenticated) — recursive tree of memory/
     if (url.pathname === "/api/artifacts" && req.method === "GET") {
       if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
 
       type TreeEntry = { name: string; type: "file"; modified: number } | { name: string; type: "folder"; children: TreeEntry[] };
@@ -1143,7 +1328,7 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
 
       const memoryDir = join(WORKING_DIR, "memory");
       const entries = walkMemoryDir(memoryDir);
-      return Response.json({ entries }, { headers: corsHeaders() });
+      return Response.json({ entries }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
     // Serve individual artifact (unauthenticated — iframes can't send headers)
@@ -1152,13 +1337,13 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
       const relativePath = decodeURIComponent(url.pathname.slice("/api/artifacts/".length));
       // Block path traversal
       if (!relativePath || relativePath.includes("..") || relativePath.includes("\\")) {
-        return new Response("Bad Request", { status: 400, headers: corsHeaders() });
+        return new Response("Bad Request", { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const memoryDir = join(WORKING_DIR, "memory");
       const filePath = resolve(memoryDir, relativePath);
       // Containment check: must stay within memory/
       if (!filePath.startsWith(memoryDir + "/")) {
-        return new Response("Bad Request", { status: 400, headers: corsHeaders() });
+        return new Response("Bad Request", { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       try {
         const content = readFileSync(filePath);
@@ -1166,6 +1351,7 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
         const ext = relativePath.split(".").pop()?.toLowerCase() || "";
         const contentTypes: Record<string, string> = {
           html: "text/html; charset=utf-8",
+          css: "text/css; charset=utf-8",
           md: "text/markdown; charset=utf-8",
           txt: "text/plain; charset=utf-8",
           json: "application/json; charset=utf-8",
@@ -1175,13 +1361,24 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
           gif: "image/gif",
           svg: "image/svg+xml",
           pdf: "application/pdf",
+          ttf: "font/ttf",
+          woff: "font/woff",
+          woff2: "font/woff2",
+          otf: "font/otf",
         };
+        // Render markdown files as styled HTML using the letter template
+        if (ext === "md") {
+          const rendered = renderMarkdownLetter(content.toString("utf-8"));
+          return new Response(rendered, {
+            headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders(ALLOWED_ORIGIN) },
+          });
+        }
         const contentType = contentTypes[ext] || "application/octet-stream";
         return new Response(content, {
-          headers: { "Content-Type": contentType, ...corsHeaders() },
+          headers: { "Content-Type": contentType, ...corsHeaders(ALLOWED_ORIGIN) },
         });
       } catch {
-        return new Response("Not Found", { status: 404, headers: corsHeaders() });
+        return new Response("Not Found", { status: 404, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
     }
 
@@ -1189,7 +1386,7 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
 
     if (url.pathname === "/api/skills" && req.method === "GET") {
       if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       try {
         const allEntries: Array<{name: string, type: string, children?: any[]}> = [];
@@ -1249,10 +1446,10 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
           }
         }
 
-        return Response.json({ entries: allEntries }, { headers: corsHeaders() });
+        return Response.json({ entries: allEntries }, { headers: corsHeaders(ALLOWED_ORIGIN) });
       } catch (err) {
         console.debug("[Skills] Error listing skills:", err);
-        return Response.json({ entries: [] }, { headers: corsHeaders() });
+        return Response.json({ entries: [] }, { headers: corsHeaders(ALLOWED_ORIGIN) });
       }
     }
 
@@ -1260,12 +1457,12 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
 
     if (url.pathname === "/api/agents" && req.method === "GET") {
       if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders() });
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const teamsDir = join(homedir(), ".claude", "teams");
       try {
         if (!existsSync(teamsDir)) {
-          return Response.json({ teams: [] }, { headers: corsHeaders() });
+          return Response.json({ teams: [] }, { headers: corsHeaders(ALLOWED_ORIGIN) });
         }
         const teamDirs = readdirSync(teamsDir).filter(d => {
           return statSync(join(teamsDir, d)).isDirectory();
@@ -1287,10 +1484,10 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
             console.debug("[Agents] Error parsing team config:", dir, err);
           }
         }
-        return Response.json({ teams }, { headers: corsHeaders() });
+        return Response.json({ teams }, { headers: corsHeaders(ALLOWED_ORIGIN) });
       } catch (err) {
         console.debug("[Agents] Error listing teams:", err);
-        return Response.json({ teams: [] }, { headers: corsHeaders() });
+        return Response.json({ teams: [] }, { headers: corsHeaders(ALLOWED_ORIGIN) });
       }
     }
 

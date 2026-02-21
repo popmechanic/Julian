@@ -24,7 +24,7 @@
       // not with a "fireproof" prefix. Wipe all IDB databases on version bump.
       // Bump DB_VERSION to re-trigger if corruption recurs.
       (function() {
-        var DB_VERSION = 6;
+        var DB_VERSION = 13;
         var KEY = 'fp_migration_v' + DB_VERSION;
         if (localStorage.getItem(KEY)) return;
         var dbs = indexedDB.databases ? indexedDB.databases() : Promise.resolve([]);
@@ -155,6 +155,13 @@
         --vibes-yellow-accent: #eab308;
         --vibes-shadow-color: rgba(0, 0, 0, 0.2);
 
+        /* Timing & easing */
+        --ease-out: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+        --ease-out-quart: cubic-bezier(0.165, 0.84, 0.44, 1);
+        --duration-fast: 100ms;
+        --duration-standard: 150ms;
+        --duration-slow: 250ms;
+
         /* Text colors */
         --vibes-text-primary: var(--vibes-near-black);
 
@@ -199,13 +206,6 @@
       .screen-icon-glow {
         animation: screen-icon-glow 3s ease-in-out infinite;
       }
-      .screen-grid-item:hover .screen-icon-glow {
-        opacity: 1 !important;
-        transform: scale(1.05);
-      }
-      .screen-grid-item:hover .screen-grid-label {
-        color: white !important;
-      }
       .screen-panel-scroll::-webkit-scrollbar {
         width: 6px;
         background: #0c0c0c;
@@ -224,9 +224,14 @@
       /* ── Button press feedback ─────────────────────────────────────────── */
       button {
         touch-action: manipulation;
+        transition: transform var(--duration-fast) var(--ease-out);
       }
       button:active {
         transform: scale(0.97);
+      }
+      button:focus-visible {
+        outline: 2px solid #FFD600;
+        outline-offset: 2px;
       }
 
       /* ── Message entrance animation ────────────────────────────────────── */
@@ -238,26 +243,31 @@
         animation: message-enter 200ms cubic-bezier(0.165, 0.84, 0.44, 1);
       }
 
+      /* ── Smooth state transitions ──────────────────────────────────────── */
+      .app-state-enter {
+        animation: fadeIn var(--duration-slow) var(--ease-out);
+      }
+      @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+
       /* ── Reduced motion ────────────────────────────────────────────────── */
       @media (prefers-reduced-motion: reduce) {
-        .screen-icon-glow { animation: none; }
-        .screen-grid-item:hover .screen-icon-glow { transform: none; }
-        .message-enter { animation: none; }
-        button:active { transform: none; }
+        *, *::before, *::after {
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
       }
 
       /* ── Hover effects only on hover-capable devices ───────────────────── */
-      .screen-grid-item:hover .screen-icon-glow,
-      .screen-grid-item:hover .screen-grid-label {
-        /* Default: already defined above */
-      }
-      @media (hover: none) {
+      @media (hover: hover) and (pointer: fine) {
         .screen-grid-item:hover .screen-icon-glow {
-          opacity: 0.8 !important;
-          transform: none;
+          opacity: 1 !important;
+          transform: scale(1.05);
         }
         .screen-grid-item:hover .screen-grid-label {
-          color: rgba(255,255,255,0.4) !important;
+          color: white !important;
         }
       }
     </style>
@@ -364,7 +374,7 @@ async function ensureCatalog(database) {
     const res = await fetch("/catalog.xml");
     if (!res.ok) throw new Error("HTTP " + res.status);
     const xml = await res.text();
-    await database.put({ type: "artifact-catalog", content: xml, createdAt: new Date().toISOString() });
+    await resilientPut(database, { type: "artifact-catalog", content: xml, createdAt: new Date().toISOString() });
     console.log("[catalog] Fetched and stored catalog record");
     return parseCatalogXML(xml);
   } catch (err) {
@@ -373,6 +383,25 @@ async function ensureCatalog(database) {
   }
 }
 
+/* ── Resilient database writes ──────────────────────────────────────── */
+// Safety net for runtime puts. Retries on transient WriteQueueImpl errors
+// (cloud store attachment race). In normal operation after boot, never triggers.
+async function resilientPut(database, doc, maxRetries = 3) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await database.put(doc);
+    } catch (err) {
+      const isStoreError = err?.message?.includes('WriteQueueImpl')
+        || err?.message?.includes('stores');
+      if (!isStoreError || attempt === maxRetries) throw err;
+      const delay = Math.pow(2, attempt) * 1000;
+      console.warn(`[resilientPut] Retry ${attempt + 1}/${maxRetries} in ${delay}ms`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+}
+window.resilientPut = resilientPut;
+
 /* ── SSE stream reader ────────────────────────────────────────────────── */
 
 /* ── Event Log Subscription ────────────────────────────────────────────── */
@@ -380,7 +409,17 @@ async function ensureCatalog(database) {
 // Events flow: Claude stdout → server event log → EventSource → React state.
 
 let _eventSource = null;
-let _lastEventId = -1;
+// Skip historical replay on first page load to avoid reprocessing a large event backlog.
+// We persist the last seen id per-tab and resume from there on reconnect.
+let _lastEventId = (() => {
+  try {
+    const raw = sessionStorage.getItem('julian:last-event-id');
+    const parsed = raw == null ? NaN : parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+  } catch {
+    return Number.MAX_SAFE_INTEGER;
+  }
+})();
 let _eventHandlers = {
   onClaudeText: null,
   onClaudeResult: null,
@@ -390,9 +429,33 @@ let _eventHandlers = {
   onAgentRegistered: null,
   onAgentStatus: null,
   onArtifactWritten: null,
+  onAgentMessage: null,
   onServerError: null,
   onUserMessage: null,
 };
+
+// Lazy default: reads status field, falls back to legacy hatching boolean
+function getAgentStatus(doc) {
+  if (doc.status) return doc.status;
+  return doc.hatching ? 'hatching' : 'sleeping';
+}
+window.getAgentStatus = getAgentStatus;
+
+// Standalone auth header helper (usable outside React components)
+async function getClerkAuthHeaders() {
+  for (let i = 0; i < 10; i++) {
+    if (window.Clerk?.session) break;
+    await new Promise(r => setTimeout(r, 500));
+  }
+  try {
+    const token = await window.Clerk?.session?.getToken();
+    if (!token) return null;
+    return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, 'X-Authorization': `Bearer ${token}` };
+  } catch (err) {
+    console.error('[Auth] Clerk getToken() error:', err);
+    return null;
+  }
+}
 
 function connectEventSource(getAuthHeaders) {
   if (_eventSource) {
@@ -402,17 +465,40 @@ function connectEventSource(getAuthHeaders) {
 
   // EventSource doesn't support custom headers, so we use fetch-based SSE
   let cancelled = false;
+  let wasConnected = false;
+
+  // Phase 5a: Sleep all alive agents locally on disconnect
+  async function sleepAgentsOnDisconnect() {
+    const db = window._julianDB;
+    if (!db) return;
+    try {
+      const { rows } = await db.query('type', { key: 'agent-identity' });
+      for (const row of rows) {
+        const doc = row.doc || row.value;
+        if (getAgentStatus(doc) === 'alive') {
+          await resilientPut(db, { ...doc, status: 'sleeping' });
+        }
+      }
+      console.log('[EventSource] Disconnected — transitioned alive agents to sleeping');
+    } catch (e) {
+      console.warn('[EventSource] Failed to sleep agents on disconnect:', e);
+    }
+  }
 
   async function connect() {
     if (cancelled) return;
     const headers = await getAuthHeaders();
     if (!headers || cancelled) return;
 
+    const idBeforeConnect = _lastEventId;
+    let firstIdSeen = false;
+
     try {
       const url = '/api/events?after=' + _lastEventId;
       const response = await fetch(url, { headers });
       if (!response.ok || cancelled) return;
 
+      wasConnected = true;
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let sseBuffer = '';
@@ -427,7 +513,18 @@ function connectEventSource(getAuthHeaders) {
 
         for (const line of lines) {
           if (line.startsWith('id: ')) {
-            _lastEventId = parseInt(line.slice(4), 10);
+            const newId = parseInt(line.slice(4), 10);
+
+            // Phase 5c: Detect large gap on reconnect — request full state
+            if (!firstIdSeen && idBeforeConnect > 0 && newId > idBeforeConnect + 100) {
+              console.warn('[EventSource] Large event gap detected (' + idBeforeConnect + ' → ' + newId + '), requesting full state');
+              fetch('/api/ledger-reset', { method: 'POST', headers })
+                .catch(e => console.warn('[EventSource] Failed to signal ledger-reset:', e));
+            }
+            firstIdSeen = true;
+
+            _lastEventId = newId;
+            try { sessionStorage.setItem('julian:last-event-id', String(newId)); } catch {}
             continue;
           }
           if (!line.startsWith('data: ')) continue;
@@ -443,6 +540,11 @@ function connectEventSource(getAuthHeaders) {
       console.warn('[EventSource] Connection error:', err);
     }
 
+    // Phase 5a: On disconnect, sleep agents locally
+    if (wasConnected && !cancelled) {
+      sleepAgentsOnDisconnect();
+    }
+
     // Auto-reconnect after 2s
     if (!cancelled) {
       setTimeout(() => connect(), 2000);
@@ -456,6 +558,8 @@ function connectEventSource(getAuthHeaders) {
 }
 
 function dispatchEvent(event) {
+  // Broadcast on window so any component (e.g. JobForm) can listen
+  window.dispatchEvent(new CustomEvent('julian:' + event.type, { detail: event }));
   const h = _eventHandlers;
   switch (event.type) {
     case 'claude_text':
@@ -479,8 +583,16 @@ function dispatchEvent(event) {
     case 'agent_status':
       if (h.onAgentStatus) h.onAgentStatus(event);
       break;
+    case 'agent_message':
+      if (h.onAgentMessage) h.onAgentMessage(event);
+      break;
     case 'artifact_written':
       if (h.onArtifactWritten) h.onArtifactWritten(event);
+      break;
+    case 'ui_action':
+      window.dispatchEvent(new CustomEvent('julian:ui-action', {
+        detail: { target: event.target, action: event.action, data: event.data }
+      }));
       break;
     case 'server_error':
       if (h.onServerError) h.onServerError(event);
@@ -491,14 +603,60 @@ function dispatchEvent(event) {
   }
 }
 
+/* ── Perf Debug (activate with ?perfDebug=1) ─────────────────────────────── */
+
+const PERF_DEBUG = new URLSearchParams(location.search).has('perfDebug');
+window.PERF_DEBUG = PERF_DEBUG;
+function perfLog(...args) { if (PERF_DEBUG) console.log('[PERF]', ...args); }
+
+/* ── Identity Stabilization (canonical impl in shared/utils.js) ──────────── */
+
+const AGENT_SIGNIFICANT_FIELDS = ['name', 'status', 'gridPosition', 'jobId', 'dormant', 'color', 'colorName', 'gender', 'faceVariant'];
+
+function stabilizeDocsByKey(prev, next, keyFn, significantFields) {
+  if (!prev || !next) return next || [];
+  if (prev === next) return prev;
+  const prevMap = new Map();
+  for (const doc of prev) {
+    const key = keyFn(doc);
+    if (key != null) prevMap.set(key, doc);
+  }
+  let allSame = prev.length === next.length;
+  const result = next.map((doc, i) => {
+    const key = keyFn(doc);
+    const prevDoc = key != null ? prevMap.get(key) : undefined;
+    if (!prevDoc) { allSame = false; return doc; }
+    const changed = significantFields.some(f => prevDoc[f] !== doc[f]);
+    if (changed) { allSame = false; return doc; }
+    if (prevDoc !== prev[i]) allSame = false;
+    return prevDoc;
+  });
+  return allSame ? prev : result;
+}
+
+function deriveStableAgents(prevAgents, docs) {
+  if (!docs || docs.length === 0) return prevAgents && prevAgents.length === 0 ? prevAgents : [];
+  const next = docs.map(doc => ({ ...doc, _status: getAgentStatus(doc) }));
+  if (!prevAgents || prevAgents.length === 0) return next;
+  const prevMap = new Map();
+  for (const a of prevAgents) { if (a.name) prevMap.set(a.name, a); }
+  let allSame = prevAgents.length === next.length;
+  const result = next.map((agent, i) => {
+    const prev = agent.name ? prevMap.get(agent.name) : undefined;
+    if (!prev) { allSame = false; return agent; }
+    const changed = AGENT_SIGNIFICANT_FIELDS.some(f => prev[f] !== agent[f])
+      || prev._status !== agent._status;
+    if (changed) { allSame = false; return agent; }
+    if (prev !== prevAgents[i]) allSame = false;
+    return prev;
+  });
+  return allSame ? prevAgents : result;
+}
+
 /* ── Main App ────────────────────────────────────────────────────────────── */
 
-function App() {
-  const { database, useLiveQuery } = useFireproofClerk("julian-chat-v6");
-
-  useEffect(() => {
-    window._julianDB = database;
-  }, [database]);
+function App({ bootData }) {
+  const { database, useLiveQuery, localOnly } = bootData;
 
   const { docs: persistedMessages } = useLiveQuery("type", { key: "message" });
 
@@ -520,6 +678,12 @@ function App() {
   const [activeAgent, setActiveAgent] = useState(null);
   const [summoning, setSummoning] = useState(false);
   const [menuTab, setMenuTab] = useState('files');
+
+  // Jobs panel state — lifted to App so state survives tab switches (JobsPanel unmounts)
+  // AgentGrid React.memo prevents keystroke cascades that motivated the original move to local state
+  const [jobView, setJobView] = useState('list');
+  const [selectedJob, setSelectedJob] = useState(null);
+  const [jobDraft, setJobDraft] = useState(null);
   const [sfxMuted, setSfxMuted] = useState(window.SFX?.isMuted ?? false);
   useEffect(() => {
     const handler = (e) => setSfxMuted(e.detail.muted);
@@ -528,7 +692,18 @@ function App() {
   }, []);
 
   // Query agent identities from Fireproof
-  const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
+  const { docs: rawAgentDocs } = useLiveQuery("type", { key: "agent-identity" });
+
+  // Stabilize agent docs — preserve references when only non-significant fields change
+  const stableAgentDocsRef = useRef([]);
+  const agentDocs = useMemo(() => {
+    const stable = stabilizeDocsByKey(
+      stableAgentDocsRef.current, rawAgentDocs || [],
+      doc => doc._id, AGENT_SIGNIFICANT_FIELDS
+    );
+    stableAgentDocsRef.current = stable;
+    return stable;
+  }, [rawAgentDocs]);
 
   // Query jobs from Fireproof
   const { docs: jobDocs } = useLiveQuery("type", { key: "job" });
@@ -537,25 +712,49 @@ function App() {
     [jobDocs]
   );
 
+  // Derive stable agents — preserves references for unchanged agents
+  const stableAgentsRef = useRef([]);
   const agents = useMemo(() => {
-    return (agentDocs || []).map(doc => ({
-      name: doc.name,
-      color: doc.color,
-      colorName: doc.colorName,
-      gender: doc.gender,
-      faceVariant: doc.faceVariant,
-      gridPosition: doc.gridPosition,
-      // Agents are sleeping when no session is active (pessimistic model)
-      sleeping: !sessionActive,
-      hatching: doc.hatching || false,
-      _id: doc._id,
-    }));
-  }, [agentDocs, sessionActive]);
+    const stable = deriveStableAgents(stableAgentsRef.current, agentDocs);
+    stableAgentsRef.current = stable;
+    return stable;
+  }, [agentDocs]);
 
   const activeAgentObj = useMemo(() => {
     if (!activeAgent) return null;
     return agents.find(a => a.name === activeAgent) || null;
   }, [activeAgent, agents]);
+
+  // ── Perf counters (debug only) ──────────────────────────────────────────
+  const perfRef = useRef({ renders: 0, rawChanged: 0, stableChanged: 0, lastAgents: null, lastRawDocs: null, lastSample: Date.now() });
+  if (PERF_DEBUG) {
+    perfRef.current.renders++;
+    const p = perfRef.current;
+    const rawDocsChanged = p.lastRawDocs !== rawAgentDocs;
+    const agentsChanged = p.lastAgents !== agents;
+    if (rawDocsChanged) p.rawChanged++;
+    if (agentsChanged) p.stableChanged++;
+    p.lastRawDocs = rawAgentDocs;
+    p.lastAgents = agents;
+    if (rawDocsChanged) {
+      perfLog('App render #' + p.renders, {
+        rawDocsChanged, stableAgentsChanged: agentsChanged,
+        suppressed: rawDocsChanged && !agentsChanged,
+        agentDocsLen: agentDocs?.length
+      });
+    }
+  }
+  useEffect(() => {
+    if (!PERF_DEBUG) return;
+    const iv = setInterval(() => {
+      const p = perfRef.current;
+      const elapsed = (Date.now() - p.lastSample) / 1000;
+      perfLog('App rate:', (p.renders / elapsed).toFixed(2) + '/sec', 'total:', p.renders);
+      p.renders = 0;
+      p.lastSample = Date.now();
+    }, 2000);
+    return () => clearInterval(iv);
+  }, []);
 
   const handleSelectAgent = useCallback((agentName) => {
     setActiveAgent(agentName);
@@ -574,46 +773,119 @@ function App() {
   // ── EventSource: persistent connection to server event log ──────────────
   const eventSourceCloseRef = useRef(null);
   const liveBlocksRef = useRef([]);
+  const lastMsgIdRef = useRef(null);
   const notifiedArrivalRef = useRef(false);
+  const lastPersistTimeRef = useRef(0);
+  const msgCreatedAtRef = useRef(null);
+
+  // Refs for values read inside event handlers and callbacks — avoids
+  // re-registering handlers when these change, which would break memoization.
+  // Keep raw docs here for event handlers that need freshest non-render fields
+  // (e.g. timestamps/metadata that are intentionally excluded from stabilization).
+  const agentDocsRef = useRef(rawAgentDocs || []);
+  agentDocsRef.current = rawAgentDocs || [];
+  const activeAgentRef = useRef(activeAgent);
+  activeAgentRef.current = activeAgent;
+  const refreshMenuDataRef = useRef(null);
+  const summoningRef = useRef(summoning);
+  summoningRef.current = summoning;
+  const sessionActiveRef = useRef(sessionActive);
+  sessionActiveRef.current = sessionActive;
 
   useEffect(() => {
     // Wire up event handlers that update React state
     _eventHandlers.onClaudeText = (event) => {
       const blocks = (event.content || []).map(block => {
-        if (block.type === 'text') return { type: 'text', text: block.text };
+        if (block.type === 'text') {
+          const cleaned = block.text.split('\n').filter(l => !l.startsWith('[UI_ACTION]')).join('\n');
+          return { type: 'text', text: cleaned };
+        }
         if (block.type === 'tool_use') return { type: 'tool_use', name: block.name, input: block.input };
         return block;
       });
       liveBlocksRef.current = blocks;
       if (!notifiedArrivalRef.current) { window.SFX?.play('notification'); notifiedArrivalRef.current = true; }
-      setLiveAssistant(prev => prev ? { ...prev, blocks, thinking: false, streaming: true } : {
-        id: 'live-' + Date.now(), role: 'assistant', blocks, thinking: false, streaming: true
+      // Server may send empty string '' for messageId — treat as missing.
+      // Generate a synthetic ID so the message always gets persisted.
+      const rawMsgId = event.messageId || null;
+      const msgId = rawMsgId || lastMsgIdRef.current || ('synthetic-' + Date.now());
+      lastMsgIdRef.current = msgId;
+      setLiveAssistant(prev => prev ? { ...prev, blocks, messageId: msgId, thinking: false, streaming: true } : {
+        id: 'live-' + Date.now(), role: 'assistant', blocks, messageId: msgId, thinking: false, streaming: true
       });
+
+      // Capture arrival timestamp on first chunk — preserves original createdAt
+      // across intermediate and final writes for correct chronological sorting.
+      if (!msgCreatedAtRef.current) msgCreatedAtRef.current = new Date().toISOString();
+
+      // Persist intermediate writes at most once every 2s to reduce Fireproof CRDT churn.
+      // The final write happens in onClaudeResult (awaited).
+      const now = Date.now();
+      if (blocks.length > 0 && (now - lastPersistTimeRef.current > 2000)) {
+        lastPersistTimeRef.current = now;
+        const _activeAgent = activeAgentRef.current;
+        const _agentDocs = agentDocsRef.current;
+        const speakerDoc = _activeAgent
+          ? (_agentDocs || []).find(a => a.name === _activeAgent)
+          : null;
+        resilientPut(database, {
+          _id: 'msg-' + msgId,
+          type: 'message', category: 'transcript', role: 'assistant',
+          speakerType: 'agent', speakerName: _activeAgent || 'Julian',
+          agentName: _activeAgent || undefined,
+          gridPosition: speakerDoc?.gridPosition ?? undefined,
+          text: '', blocks,
+          createdAt: msgCreatedAtRef.current, serverSessionId,
+        }).catch(err => console.error('[chat] Fireproof put failed:', err));
+      }
     };
 
-    _eventHandlers.onClaudeResult = (event) => {
+    _eventHandlers.onClaudeResult = async (event) => {
+      // Intermediate turn results (tool use) — ignore, don't finalize
+      if (event.subtype && event.subtype !== 'success') {
+        return;
+      }
       const finalBlocks = liveBlocksRef.current.length > 0
         ? liveBlocksRef.current
-        : (event.resultText ? [{ type: 'text', text: event.resultText }] : []);
+        : (event.resultText ? [{ type: 'text', text: event.resultText.split('\n').filter(l => !l.startsWith('[UI_ACTION]')).join('\n') }] : []);
       window.SFX?.play('success');
       setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
 
-      // Persist assistant response to Fireproof
+      // Determine the definitive doc ID for this message
+      const msgId = lastMsgIdRef.current || ('synthetic-' + Date.now());
+      const docId = 'msg-' + msgId;
+
+      // Final persistence write — awaited, so we KNOW it landed before clearing live state.
+      // This overwrites any intermediate writes from onClaudeText with the complete final blocks.
+      const _activeAgent = activeAgentRef.current;
+      const _agentDocs = agentDocsRef.current;
+      const speakerDoc = _activeAgent
+        ? (_agentDocs || []).find(a => a.name === _activeAgent)
+        : null;
+
       if (finalBlocks.length > 0) {
-        database.put({
-          type: 'message', category: 'transcript', role: 'assistant',
-          speakerType: 'agent', speakerName: activeAgent || 'Julian',
-          agentName: activeAgent || undefined,
-          text: '', blocks: finalBlocks,
-          createdAt: new Date().toISOString(), serverSessionId,
-        }).catch(err => console.error('[chat] Fireproof put failed:', err));
+        try {
+          // Fireproof is a CRDT — no _rev needed. Just put with the same _id and
+          // it merges deterministically. This overwrites intermediate onClaudeText writes.
+          await resilientPut(database, {
+            _id: docId,
+            type: 'message', category: 'transcript', role: 'assistant',
+            speakerType: 'agent', speakerName: _activeAgent || 'Julian',
+            agentName: _activeAgent || undefined,
+            gridPosition: speakerDoc?.gridPosition ?? undefined,
+            text: '', blocks: finalBlocks,
+            createdAt: msgCreatedAtRef.current || new Date().toISOString(), serverSessionId,
+          });
+        } catch (err) {
+          console.error('[chat] Final Fireproof put failed:', err);
+        }
       }
 
-      // Auto-catalog: detect Write tool for memory/*.html
+      // Auto-catalog: detect Write tool for memory/*.html or memory/*.md
       const writeBlocks = finalBlocks.filter(b =>
         b.type === 'tool_use' && b.name === 'Write' &&
         b.input?.file_path?.includes('memory/') &&
-        b.input?.file_path?.endsWith('.html')
+        (b.input?.file_path?.endsWith('.html') || b.input?.file_path?.endsWith('.md'))
       );
       for (const wb of writeBlocks) {
         const filename = wb.input.file_path.split('/').pop();
@@ -632,9 +904,9 @@ function App() {
               const entry = (existing.rows || []).find(r => (r.doc || r.value).filename === filename);
               if (entry) {
                 const existingDoc = entry.doc || entry.value;
-                await database.put({ ...existingDoc, description, category: artCategory, chapter });
+                await resilientPut(database, { ...existingDoc, description, category: artCategory, chapter });
               } else {
-                await database.put({ type: 'artifact', category: artCategory, filename, description, chapter, createdAt: new Date().toISOString() });
+                await resilientPut(database, { type: 'artifact', category: artCategory, filename, description, chapter, createdAt: new Date().toISOString() });
               }
             }
           } catch (e) {
@@ -643,19 +915,32 @@ function App() {
         }, 2500);
       }
 
-      // Clear live state and refresh menu
-      setTimeout(() => {
-        setLiveAssistant(null);
-        setStreaming(false);
-        setConnected(true);
-        notifiedArrivalRef.current = false;
-        liveBlocksRef.current = [];
-        refreshMenuData();
-      }, 100);
+      // Don't clear liveAssistant — it stays visible until the next response.
+      // sendMessage() will replace it with a new liveAssistant, at which point
+      // the persisted copy has had the full user-typing interval to land in useLiveQuery.
+      setConnected(true);
+      notifiedArrivalRef.current = false;
+      setStreaming(false);
+      liveBlocksRef.current = [];
+      lastMsgIdRef.current = null;
+      msgCreatedAtRef.current = null;
+      if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
     };
 
-    _eventHandlers.onSessionEnd = (event) => {
+    _eventHandlers.onSessionEnd = async (event) => {
       console.log('[EventSource] Session ended:', event.reason);
+      // Transition all alive agents to sleeping
+      try {
+        const { rows } = await database.query('type', { key: 'agent-identity' });
+        for (const row of rows) {
+          const doc = row.doc || row.value;
+          if (getAgentStatus(doc) === 'alive') {
+            await resilientPut(database, { ...doc, status: 'sleeping' });
+          }
+        }
+      } catch (e) {
+        console.warn('[EventSource] Failed to sleep agents on session end:', e);
+      }
       setSessionActive(false);
       setConnected(false);
       setStreaming(false);
@@ -671,25 +956,93 @@ function App() {
     };
 
     _eventHandlers.onAgentRegistered = async (event) => {
-      const agent = event.agent;
-      if (!agent?.name || agent.gridPosition == null) return;
+      const a = event.agent;
+      if (!a?.name || a.gridPosition == null) return;
       try {
-        // Check if there's a hatching placeholder at this position
-        const existing = await database.query('type', { key: 'agent-identity' });
-        const hatchDoc = (existing.rows || []).find(r => {
-          const d = r.doc || r.value;
-          return d.hatching && d.gridPosition === agent.gridPosition;
+        const _id = `agent-identity:${a.gridPosition}`;
+        const existing = await database.get(_id).catch(() => null);
+        await resilientPut(database, {
+          ...(existing || {}),
+          _id,
+          type: 'agent-identity',
+          category: 'identity',
+          status: 'alive',
+          name: a.name,
+          color: a.color,
+          colorName: a.colorName,
+          gender: a.gender,
+          gridPosition: a.gridPosition,
+          faceVariant: a.faceVariant,
+          individuationArtifact: a.individuationArtifact,
+          lastAliveAt: new Date(event.ts).toISOString(),
+          lastSessionId: event.sessionId,
+          createdAt: existing?.createdAt || a.createdAt,
         });
-        if (hatchDoc) {
-          const doc = hatchDoc.doc || hatchDoc.value;
-          await database.put({ ...doc, ...agent, type: 'agent-identity', hatching: false });
-        } else {
-          await database.put({ ...agent, type: 'agent-identity' });
-        }
         window.SFX?.play('select');
-        console.log('[EventSource] Agent registered:', agent.name, 'at position', agent.gridPosition);
+        console.log('[EventSource] Agent registered:', a.name, 'at seat', a.gridPosition);
       } catch (e) {
         console.warn('[EventSource] Failed to save agent:', e);
+      }
+    };
+
+    _eventHandlers.onAgentStatus = async (event) => {
+      try {
+        const agentMap = {};
+        for (const a of (event.agents || [])) {
+          if (a.gridPosition != null) agentMap[a.gridPosition] = a;
+        }
+
+        // Update or create agent docs (upsert — self-healing)
+        for (const [pos, agent] of Object.entries(agentMap)) {
+          const _id = `agent-identity:${pos}`;
+          const existing = await database.get(_id).catch(() => null);
+
+          if (existing) {
+            // Phase 1a: refuse alive transition for nameless docs
+            if (!existing.name && agent.status === 'alive') {
+              console.warn('[EventSource] Skipping alive transition for nameless doc at seat', pos);
+              continue;
+            }
+            // Update status if changed
+            if (getAgentStatus(existing) !== agent.status) {
+              await resilientPut(database, {
+                ...existing,
+                status: agent.status,
+                lastAliveAt: new Date(event.ts).toISOString(),
+                lastSessionId: event.sessionId,
+              });
+            }
+          } else if (agent.name) {
+            // Create from status event data (self-healing)
+            await resilientPut(database, {
+              _id,
+              type: 'agent-identity',
+              category: 'identity',
+              status: agent.status,
+              name: agent.name,
+              color: agent.color,
+              colorName: agent.colorName,
+              gender: agent.gender,
+              faceVariant: agent.faceVariant,
+              gridPosition: parseInt(pos),
+              lastAliveAt: new Date(event.ts).toISOString(),
+              lastSessionId: event.sessionId,
+              createdAt: new Date().toISOString(),
+            });
+            console.log('[EventSource] Self-healed agent doc at seat', pos, agent.name);
+          }
+        }
+
+        // Transition agents not in status to sleeping
+        const { rows } = await database.query('type', { key: 'agent-identity' });
+        for (const row of rows) {
+          const doc = row.doc || row.value;
+          if (!agentMap[doc.gridPosition] && getAgentStatus(doc) === 'alive') {
+            await resilientPut(database, { ...doc, status: 'sleeping' });
+          }
+        }
+      } catch (e) {
+        console.warn('[EventSource] Failed to handle agent_status:', e);
       }
     };
 
@@ -700,11 +1053,61 @@ function App() {
       setStreaming(false);
     };
 
-    _eventHandlers.onArtifactWritten = () => {
+    _eventHandlers.onArtifactWritten = (event) => {
       // Refresh menu data when artifacts are written
-      refreshMenuData();
+      if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
+      // Auto-open artifacts in the browser tab (.html and .md letters)
+      if (event.filename && (event.filename.endsWith('.html') || event.filename.endsWith('.md'))) {
+        handleFileSelect(event.filename);
+      }
     };
-  }, [database, serverSessionId, activeAgent, refreshMenuData]);
+
+    _eventHandlers.onAgentMessage = async (event) => {
+      const text = (event.content || [])
+        .filter(b => b.type === 'text')
+        .map(b => b.text)
+        .join('\n');
+      if (!text) return;
+
+      // Find the agent's grid position for transcript scoping
+      const _agentDocs = agentDocsRef.current;
+      const agentDoc = (_agentDocs || []).find(a => a.name === event.agentName);
+      const gridPos = agentDoc?.gridPosition;
+
+      // Persist to Fireproof with a deterministic _id so we can track absorption
+      const agentMsgId = 'agent-msg-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+      try {
+        await resilientPut(database, {
+          _id: agentMsgId,
+          type: 'message',
+          category: 'transcript',
+          role: 'assistant',
+          speakerType: 'agent',
+          speakerName: event.agentName,
+          agentName: event.agentName,
+          gridPosition: gridPos ?? undefined,
+          text,
+          blocks: [{ type: 'text', text }],
+          createdAt: new Date().toISOString(),
+          serverSessionId,
+        });
+      } catch (e) {
+        console.warn('[EventSource] Failed to persist agent message:', e);
+      }
+
+      // If this agent is currently selected, show as live — stays until next response
+      if (activeAgentRef.current === event.agentName) {
+        window.SFX?.play('notification');
+        setLiveAssistant({
+          id: agentMsgId,
+          role: 'assistant',
+          blocks: [{ type: 'text', text }],
+          thinking: false,
+          streaming: false,
+        });
+      }
+    };
+  }, [database, serverSessionId]);
 
   // Connect/disconnect EventSource based on auth readiness
   useEffect(() => {
@@ -713,24 +1116,24 @@ function App() {
     return () => { if (close) close(); };
   }, [getAuthHeaders]);
 
-  const getAuthHeaders = useCallback(async () => {
-    // Wait for Clerk session to be ready (up to 5s)
-    for (let i = 0; i < 10; i++) {
-      if (window.Clerk?.session) break;
-      await new Promise(r => setTimeout(r, 500));
-    }
-    try {
-      const token = await window.Clerk?.session?.getToken();
-      if (!token) {
-        console.warn('[Auth] Clerk token unavailable. Clerk loaded:', !!window.Clerk, 'session:', !!window.Clerk?.session);
-        return null;
+  // Listen for programmatic chat sends (e.g. from job form UI actions)
+  // Use refs to avoid re-registering the listener on every sendMessage/streaming change
+  const sendMessageRef = useRef(null);
+  const streamingRef = useRef(streaming);
+  streamingRef.current = streaming;
+  useEffect(() => {
+    const handler = (e) => {
+      const msg = e.detail?.message;
+      if (msg && sessionActive && !streamingRef.current && typeof sendMessageRef.current === 'function') {
+        sendMessageRef.current(msg);
       }
-      return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, 'X-Authorization': `Bearer ${token}` };
-    } catch (err) {
-      console.error('[Auth] Clerk getToken() error:', err);
-      return null;
-    }
-  }, []);
+    };
+    window.addEventListener('julian:send-chat', handler);
+    return () => window.removeEventListener('julian:send-chat', handler);
+  }, [sessionActive]);
+
+  // Auth headers — delegates to standalone function (shared with BootScreen)
+  const getAuthHeaders = useCallback(() => getClerkAuthHeaders(), []);
 
   const refreshMenuData = useCallback(async () => {
     try {
@@ -777,33 +1180,14 @@ function App() {
       console.warn('[Menu] refresh failed:', err);
     }
   }, [getAuthHeaders]);
+  refreshMenuDataRef.current = refreshMenuData;
 
   // Fetch menu data on mount
   useEffect(() => {
     refreshMenuData();
   }, [refreshMenuData]);
 
-  // Auto-seed artifact catalog from catalog.xml on fresh Fireproof instances
-  const catalogSeedRef = useRef(false);
-  const catalogSeedAttempts = useRef(0);
-  useEffect(() => {
-    if (!database || catalogSeedRef.current) return;
-    if (catalogSeedAttempts.current >= 5) return;
-    catalogSeedRef.current = true;
-    catalogSeedAttempts.current++;
-    const attempt = catalogSeedAttempts.current;
-    (async () => {
-      try {
-        await database.ready();
-        await new Promise(r => setTimeout(r, 1000 * attempt));
-        await ensureCatalog(database);
-      } catch (err) {
-        if (attempt < 5) console.debug('[CatalogSeed] Retry', attempt, '- stores not ready yet');
-        else console.warn('[CatalogSeed] Failed after 5 attempts:', err);
-        catalogSeedRef.current = false;
-      }
-    })();
-  }, [database]);
+  // Boot-time effects (catalog seed, hatching expiry, ledger-meta) now run in BootScreen.
 
   // When session becomes active, switch to screen tab to show Julian's avatar
   useEffect(() => {
@@ -818,8 +1202,8 @@ function App() {
       return [...prev, { name: filename, modified: Date.now() }];
     });
     setActiveArtifact(filename);
-    // HTML files can be rendered — switch to browser tab automatically
-    if (filename.endsWith('.html')) {
+    // Renderable files — switch to browser tab automatically
+    if (filename.endsWith('.html') || filename.endsWith('.md')) {
       setMenuTab('browser');
     }
   }, []);
@@ -908,23 +1292,48 @@ function App() {
 
   const displayMessages = React.useMemo(() => {
     const sorted = [...(persistedMessages || [])].sort((a, b) => {
+      if (a.createdAt < b.createdAt) return -1;
+      if (a.createdAt > b.createdAt) return 1;
+      // Tiebreaker: _id for deterministic order within the same millisecond
       if (a._id < b._id) return -1;
       if (a._id > b._id) return 1;
       return 0;
     });
     // Filter by active agent — each agent has their own conversation thread
+    const activeDoc = activeAgent
+      ? (agentDocsRef.current || []).find(a => a.name === activeAgent)
+      : null;
+    const activePos = activeDoc?.gridPosition;
     const filtered = sorted.filter(doc => {
-      if (activeAgent) return doc.agentName === activeAgent;
-      return !doc.agentName; // Julian's messages have no agentName
+      if (activeAgent) {
+        // Prefer gridPosition scoping (handles name collisions)
+        if (activePos != null && doc.gridPosition != null) {
+          return doc.gridPosition === activePos || doc.targetGridPosition === activePos;
+        }
+        // Fallback for legacy messages without gridPosition
+        return doc.agentName === activeAgent;
+      }
+      return !doc.agentName && doc.gridPosition == null;
     });
-    const msgs = filtered.map(doc => ({
-      id: doc._id,
-      role: doc.role,
-      text: doc.text || '',
-      blocks: doc.blocks || [],
-      thinking: false,
-      streaming: false,
-    }));
+    // When liveAssistant is active, its persisted twin may already be in the list.
+    // Suppress the persisted copy so the streaming/live version takes its place.
+    // Two cases: Julian messages use msg-{messageId}, agent messages use the _id directly.
+    const livePersistedId = liveAssistant?.messageId ? ('msg-' + liveAssistant.messageId) : null;
+    const liveDirectId = liveAssistant?.id || null;
+    const msgs = filtered
+      .filter(doc => {
+        if (livePersistedId && doc._id === livePersistedId) return false;
+        if (liveDirectId && doc._id === liveDirectId) return false;
+        return true;
+      })
+      .map(doc => ({
+        id: doc._id,
+        role: doc.role,
+        text: doc.text || '',
+        blocks: doc.blocks || [],
+        thinking: false,
+        streaming: false,
+      }));
     if (liveAssistant) {
       msgs.push(liveAssistant);
     }
@@ -934,15 +1343,26 @@ function App() {
   const isMobile = useMobile();
 
   const handleSummon = useCallback(async () => {
-    if (summoning) return;
+    if (summoningRef.current) return;
     setSummoning(true);
     window.SFX?.play('open');
     try {
       const headers = await getAuthHeaders();
       if (!headers) return;
 
+      // Guard: SUMMON is once-per-ledger — abort if named agents already exist
+      const existingAgents = await database.query('type', { key: 'agent-identity' });
+      const hasNamedAgents = (existingAgents.rows || []).some(r => {
+        const d = r.doc || r.value;
+        return !!d.name;
+      });
+      if (hasNamedAgents) {
+        console.warn('[Summon] Aborting: named agents already exist. Use WAKE.');
+        return;
+      }
+
       // Start a session if none is active
-      if (!sessionActive) {
+      if (!sessionActiveRef.current) {
         const startRes = await fetch('/api/session/start', {
           method: 'POST',
           headers,
@@ -961,24 +1381,27 @@ function App() {
 
       // Create hatching placeholders so eggs appear immediately
       const palette = [
-        { pos: 0, color: '#c9b1e8', colorName: 'Violet Heaven', gender: 'woman' },
-        { pos: 1, color: '#755d00', colorName: 'Ayahuasca Vine', gender: 'man' },
-        { pos: 2, color: '#00afd1', colorName: 'Aquarius', gender: 'woman' },
-        { pos: 3, color: '#007e98', colorName: 'Pacific Pleasure', gender: 'man' },
-        { pos: 5, color: '#c85cb4', colorName: 'Barbiecore', gender: 'woman' },
-        { pos: 6, color: '#da89c9', colorName: 'Pink Punk', gender: 'man' },
-        { pos: 7, color: '#B8DDE6', colorName: 'Salt Air', gender: 'woman' },
-        { pos: 8, color: '#F2C4B0', colorName: 'Cloud Coral', gender: 'man' },
+        { pos: 0, color: '#c9b1e8', gender: 'woman' },
+        { pos: 1, color: '#755d00', gender: 'man' },
+        { pos: 2, color: '#00afd1', gender: 'woman' },
+        { pos: 3, color: '#007e98', gender: 'man' },
+        { pos: 5, color: '#c85cb4', gender: 'woman' },
+        { pos: 6, color: '#da89c9', gender: 'man' },
+        { pos: 7, color: '#B8DDE6', gender: 'woman' },
+        { pos: 8, color: '#F2C4B0', gender: 'man' },
       ];
-      const hatchingDocs = {};
       for (const p of palette) {
-        const doc = await database.put({
-          type: 'agent-identity', hatching: true,
-          gridPosition: p.pos, color: p.color,
-          colorName: p.colorName, gender: p.gender,
+        await resilientPut(database, {
+          _id: `agent-identity:${p.pos}`,
+          type: 'agent-identity',
+          category: 'identity',
+          status: 'hatching',
+          gridPosition: p.pos,
+          color: p.color,
+          gender: p.gender,
+          createdAt: new Date().toISOString(),
         });
-        hatchingDocs[p.pos] = doc.id;
-        console.log('[Summon] Created hatching egg at position', p.pos);
+        console.log('[Summon] Created hatching egg at seat', p.pos);
       }
 
       // Send summon — agent_registered events arrive through EventSource
@@ -995,11 +1418,11 @@ function App() {
     } finally {
       setSummoning(false);
     }
-  }, [summoning, sessionActive, getAuthHeaders, database, agentDocs]);
+  }, [getAuthHeaders, database]);
 
   // Wake sleeping agents — query their transcripts from Fireproof, assemble payloads, send to Julian
   const handleWake = useCallback(async () => {
-    if (summoning) return;
+    if (summoningRef.current) return;
     setSummoning(true);
     window.SFX?.play('navigate');
     try {
@@ -1007,7 +1430,7 @@ function App() {
       if (!headers) return;
 
       // Start a session if none is active
-      if (!sessionActive) {
+      if (!sessionActiveRef.current) {
         // Trigger startSession first — reuse the same flow as clicking the chat
         // We need a session for Julian to receive the wake message
         const startRes = await fetch('/api/session/start', {
@@ -1031,28 +1454,21 @@ function App() {
       const allMessages = await database.query("type", { key: "message" });
       const allDocs = (allMessages.rows || []).map(r => r.doc || r.value || r);
 
-      // Build per-agent payloads
-      const agentPayloads = (agentDocs || []).map(agent => {
-        // Find this agent's most recent session transcript
-        const agentMsgs = allDocs.filter(d => d.agentName === agent.name);
-        // Group by session and pick the most recent
-        const bySession = {};
-        for (const m of agentMsgs) {
-          const sid = m.serverSessionId;
-          if (!sid) continue;
-          if (!bySession[sid]) bySession[sid] = [];
-          bySession[sid].push(m);
-        }
-        const sessionIds = Object.keys(bySession).sort((a, b) => {
-          const lastA = bySession[a].at(-1)?.createdAt || "";
-          const lastB = bySession[b].at(-1)?.createdAt || "";
-          return lastB.localeCompare(lastA);
-        });
-        const recentSession = sessionIds[0];
+      // Build per-agent payloads (only sleeping agents, scoped by gridPosition)
+      const agentPayloads = [];
+      for (const agent of (agentDocsRef.current || [])) {
+        const status = getAgentStatus(agent);
+        if (status !== 'sleeping') continue;
+
+        // Query transcript scoped by seat (gridPosition) and last session
         let transcript = '';
-        if (recentSession && bySession[recentSession]) {
-          transcript = bySession[recentSession]
-            .sort((a, b) => (a._id < b._id ? -1 : 1))
+        if (agent.lastSessionId) {
+          const agentMsgs = allDocs.filter(d =>
+            d.gridPosition === agent.gridPosition &&
+            d.serverSessionId === agent.lastSessionId
+          );
+          transcript = agentMsgs
+            .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))
             .map(m => {
               if (m.role === 'user') return `[${m.speakerName || 'Marcus'}]: ${m.text || ''}`;
               const text = (m.blocks || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
@@ -1062,25 +1478,46 @@ function App() {
             .join('\n');
         }
 
-        return {
+        agentPayloads.push({
           name: agent.name,
           color: agent.color,
           colorName: agent.colorName || '',
-          position: agent.gridPosition,
+          gridPosition: agent.gridPosition,
+          hasSoul: !!(agent.individuationArtifact),
+          hasTranscript: transcript.length > 0,
           soul: agent.individuationArtifact || '',
           transcript,
-        };
-      });
+        });
+      }
+
+      // Identify empty seats (positions with no named agent) for gap filling
+      const SEAT_DEFAULTS = [
+        { position: 0, color: '#c9b1e8', colorName: 'Violet Heaven', gender: 'woman' },
+        { position: 1, color: '#755d00', colorName: 'Ayahuasca Vine', gender: 'man' },
+        { position: 2, color: '#00afd1', colorName: 'Aquarius', gender: 'woman' },
+        { position: 3, color: '#007e98', colorName: 'Pacific Pleasure', gender: 'man' },
+        { position: 5, color: '#c85cb4', colorName: 'Barbiecore', gender: 'woman' },
+        { position: 6, color: '#da89c9', colorName: 'Pink Punk', gender: 'man' },
+        { position: 7, color: '#B8DDE6', colorName: 'Salt Air', gender: 'woman' },
+        { position: 8, color: '#F2C4B0', colorName: 'Cloud Coral', gender: 'man' },
+      ];
+      const namedPositions = new Set((agentDocsRef.current || []).filter(a => a.name).map(a => a.gridPosition));
+      const birthPayloads = SEAT_DEFAULTS
+        .filter(s => !namedPositions.has(s.position))
+        .map(s => `  <agent position="${s.position}" type="birth">\n    <color>${s.color}</color>\n    <colorName>${s.colorName}</colorName>\n    <gender>${s.gender}</gender>\n  </agent>`);
 
       // Assemble the wake message
-      const payloadXml = agentPayloads.map(a =>
-        `  <agent name="${a.name}" color="${a.color}" colorName="${a.colorName}" position="${a.position}">\n` +
+      const wakeXml = agentPayloads.map(a =>
+        `  <agent position="${a.gridPosition}" type="wake">\n` +
+        `    <name>${a.name}</name>\n` +
+        `    <color>${a.color}</color>\n` +
+        `    <colorName>${a.colorName}</colorName>\n` +
         `    <soul>${a.soul}</soul>\n` +
         `    <transcript>${a.transcript}</transcript>\n` +
         `  </agent>`
-      ).join('\n');
-
-      const wakeMessage = `[WAKE AGENTS]\n<agent-payloads>\n${payloadXml}\n</agent-payloads>`;
+      );
+      const allPayloads = [...wakeXml, ...birthPayloads].join('\n');
+      const wakeMessage = `[WAKE AGENTS]\n<agent-payloads>\n${allPayloads}\n</agent-payloads>`;
 
       // Send through the send endpoint
       await fetch('/api/send', {
@@ -1089,13 +1526,13 @@ function App() {
         body: JSON.stringify({ message: wakeMessage }),
       });
 
-      console.log('[Wake] Sent wake message for', agentPayloads.length, 'agents');
+      console.log('[Wake] Sent wake message for', agentPayloads.length, 'sleeping +', birthPayloads.length, 'empty seats');
     } catch (err) {
       console.error('[Wake] Error:', err);
     } finally {
       setSummoning(false);
     }
-  }, [summoning, sessionActive, getAuthHeaders, database, agentDocs]);
+  }, [getAuthHeaders, database]);
 
   const sendMessage = useCallback(async (text) => {
     if (streaming) return;
@@ -1103,19 +1540,27 @@ function App() {
 
     // Show thinking bubble immediately
     window.SFX?.play('click');
+    msgCreatedAtRef.current = null;
     const liveMsg = { id: 'live-' + Date.now(), role: 'assistant', blocks: [], thinking: true, streaming: true };
     setLiveAssistant(liveMsg);
     setStreaming(true);
 
     // Persist user message (fire-and-forget — useLiveQuery picks it up)
     const speakerName = window.Clerk?.user?.firstName || "Marcus";
-    database.put({
+    // Look up the active agent's grid position for transcript scoping
+    const _activeAgent = activeAgentRef.current;
+    const activeDoc = _activeAgent
+      ? (agentDocsRef.current || []).find(a => a.name === _activeAgent)
+      : null;
+    resilientPut(database, {
       type: "message",
       category: "transcript",
       role: "user",
       speakerType: "human",
       speakerName,
-      agentName: activeAgent || undefined,
+      agentName: _activeAgent || undefined,
+      gridPosition: activeDoc?.gridPosition ?? undefined,
+      targetGridPosition: activeDoc?.gridPosition ?? undefined,
       text,
       blocks: [],
       createdAt: new Date().toISOString(),
@@ -1127,7 +1572,7 @@ function App() {
       const response = await fetch('/api/send', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ message: text, targetAgent: activeAgent || undefined, speakerName }),
+        body: JSON.stringify({ message: text, targetAgent: _activeAgent || undefined, targetGridPosition: activeDoc?.gridPosition ?? undefined, speakerName }),
       });
 
       if (!response.ok) {
@@ -1145,14 +1590,16 @@ function App() {
       setLiveAssistant(prev => prev ? { ...prev, blocks: [{ type: 'text', text: 'Connection error: ' + err.message }], thinking: false, streaming: false } : null);
       setStreaming(false);
     }
-  }, [streaming, sessionActive, serverSessionId, database, getAuthHeaders, activeAgent]);
+  }, [streaming, sessionActive, serverSessionId, database, getAuthHeaders]);
+  sendMessageRef.current = sendMessage;
 
   const handleOfferWork = useCallback(async () => {
     if (streaming || !sessionActive) return;
+    const _activeAgent = activeAgentRef.current;
     const jobSummaries = openJobs
       .map(j => `- ${j.name}: ${j.description}`)
       .join('\n');
-    const routingMsg = `[OFFER WORK TO AGENT: ${activeAgent}] Available jobs:\n${jobSummaries}`;
+    const routingMsg = `[OFFER WORK TO AGENT: ${_activeAgent}] Available jobs:\n${jobSummaries}`;
     const displayMsg = `Would you like to hear about available work?`;
 
     // Show thinking bubble
@@ -1162,10 +1609,15 @@ function App() {
 
     // Persist clean display message
     const speakerName = window.Clerk?.user?.firstName || "Marcus";
-    database.put({
+    const offerDoc = _activeAgent
+      ? (agentDocsRef.current || []).find(a => a.name === _activeAgent)
+      : null;
+    resilientPut(database, {
       type: "message", category: "transcript", role: "user",
       speakerType: "human", speakerName,
-      agentName: activeAgent || undefined,
+      agentName: _activeAgent || undefined,
+      gridPosition: offerDoc?.gridPosition ?? undefined,
+      targetGridPosition: offerDoc?.gridPosition ?? undefined,
       text: displayMsg, blocks: [],
       createdAt: new Date().toISOString(), serverSessionId,
     }).catch(err => console.error('[chat] Fireproof put failed:', err));
@@ -1174,14 +1626,14 @@ function App() {
       const headers = await getAuthHeaders();
       await fetch('/api/send', {
         method: 'POST', headers,
-        body: JSON.stringify({ message: routingMsg, targetAgent: activeAgent || undefined, speakerName }),
+        body: JSON.stringify({ message: routingMsg, targetAgent: _activeAgent || undefined, targetGridPosition: offerDoc?.gridPosition ?? undefined, speakerName }),
       });
       // Response arrives through EventSource
     } catch (err) {
       setLiveAssistant(prev => prev ? { ...prev, blocks: [{ type: 'text', text: 'Connection error: ' + err.message }], thinking: false, streaming: false } : null);
       setStreaming(false);
     }
-  }, [activeAgent, openJobs, streaming, sessionActive, serverSessionId, database, getAuthHeaders]);
+  }, [openJobs, streaming, sessionActive, serverSessionId, database, getAuthHeaders]);
 
   const startSession = useCallback(async () => {
     if (wakingUp || sessionActive) return;
@@ -1322,12 +1774,27 @@ function App() {
           0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
           40% { opacity: 1; transform: scale(1.2); }
         }
+        @keyframes pulse-warn {
+          0%, 100% { opacity: 0.4; }
+          50% { opacity: 1; }
+        }
+        @keyframes thinking-pulse {
+          0%, 100% { opacity: 0.3; }
+          50% { opacity: 1; }
+        }
         #send-btn:active {
           transform: translateY(4px);
           box-shadow: 0 0 0 #999, inset 0 2px 5px rgba(0,0,0,0.1) !important;
         }
-        input::placeholder {
-          color: rgba(0,0,0,0.4);
+        input::placeholder, textarea::placeholder {
+          color: rgba(0,0,0,0.55);
+        }
+        ::selection {
+          background: rgba(255, 214, 0, 0.3);
+          color: #000;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          textarea { transition: none !important; }
         }
         body::before {
           content: '\u00D7';
@@ -1339,6 +1806,7 @@ function App() {
           font-weight: 900;
           z-index: 50;
           pointer-events: none;
+          user-select: none;
         }
         body::after {
           content: '\u00D7';
@@ -1350,6 +1818,7 @@ function App() {
           font-weight: 900;
           z-index: 50;
           pointer-events: none;
+          user-select: none;
         }
         #container {
           background-color: #FFD600 !important;
@@ -1358,7 +1827,7 @@ function App() {
 
       {setupNeeded === null ? (
         /* ── Loading ── */
-        <div style={{
+        <div className="app-state-enter" key="loading" style={{
           minHeight: '100vh',
           display: 'flex',
           alignItems: 'center',
@@ -1386,7 +1855,7 @@ function App() {
         />
       ) : isMobile ? (
         /* ── Mobile: Three-section vertical stack ── */
-        <div style={{
+        <div className="app-state-enter" key="mobile" style={{
           display: 'flex',
           flexDirection: 'column',
           height: '100vh',
@@ -1415,7 +1884,7 @@ function App() {
                 fontFamily: "'VT323', monospace",
                 fontSize: '0.75rem',
                 color: '#AA8800',
-                opacity: 0.6,
+                opacity: 0.8,
               }}>
                 {!sessionActive ? 'OFFLINE' : streaming ? 'PROCESSING...' : wakingUp ? 'WAKING UP...' : 'LISTENING'}
               </div>
@@ -1430,8 +1899,9 @@ function App() {
                 background: '#1a1a00',
                 border: '1px solid #333',
                 borderRadius: 4,
-                padding: '3px 8px',
+                padding: '6px 12px',
                 cursor: 'pointer',
+                minHeight: 44,
               }}
             >NEW</button>
             {sessionActive && (
@@ -1444,8 +1914,9 @@ function App() {
                   background: '#1a0000',
                   border: '1px solid #333',
                   borderRadius: 4,
-                  padding: '3px 8px',
+                  padding: '6px 12px',
                   cursor: 'pointer',
+                  minHeight: 44,
                 }}
               >END</button>
             )}
@@ -1506,6 +1977,7 @@ function App() {
               border: '4px solid #2a2a2a',
               borderRadius: '12px 12px 0 0',
               overflowY: 'auto',
+              scrollBehavior: 'smooth',
               padding: 12,
               position: 'relative',
             }}>
@@ -1558,7 +2030,7 @@ function App() {
                         background: streaming ? '#1a1a1a' : '#1a001a',
                         border: `1px solid ${streaming ? '#333' : '#FF88FF'}`,
                         borderRadius: 4,
-                        cursor: streaming ? 'default' : 'pointer',
+                        cursor: streaming ? 'not-allowed' : 'pointer',
                         letterSpacing: '0.1em',
                         textTransform: 'uppercase',
                       }}
@@ -1574,7 +2046,7 @@ function App() {
         </div>
       ) : (
         /* ── Desktop: Chat sidebar + JulianScreen ── */
-        <div style={{
+        <div className="app-state-enter" key="desktop" style={{
           display: 'flex',
           height: '100vh',
           padding: 16,
@@ -1635,7 +2107,7 @@ function App() {
                       fontFamily: "'VT323', monospace",
                       fontSize: '0.85rem',
                       color: '#AA8800',
-                      opacity: 0.6,
+                      opacity: 0.8,
                     }}>
                       {!sessionActive ? 'OFFLINE' : streaming ? 'PROCESSING...' : wakingUp ? 'WAKING UP...' : 'LISTENING'}
                     </div>
@@ -1682,6 +2154,7 @@ function App() {
               borderTop: 'none',
               borderBottom: 'none',
               overflowY: 'auto',
+              scrollBehavior: 'smooth',
               padding: 16,
               position: 'relative',
             }}>
@@ -1747,7 +2220,7 @@ function App() {
                         background: streaming ? '#1a1a1a' : '#1a001a',
                         border: `1px solid ${streaming ? '#333' : '#FF88FF'}`,
                         borderRadius: 4,
-                        cursor: streaming ? 'default' : 'pointer',
+                        cursor: streaming ? 'not-allowed' : 'pointer',
                         letterSpacing: '0.1em',
                         textTransform: 'uppercase',
                       }}
@@ -1785,7 +2258,7 @@ function App() {
               backdropFilter: 'blur(10px)',
               borderBottom: '1px solid rgba(255,255,255,0.05)',
             }}>
-              {['SCREEN', 'BROWSER', 'FILES', 'SKILLS', 'AGENTS', 'JOBS'].map(tab => {
+              {['SCREEN', 'BROWSER', 'FILES', 'SKILLS', 'AGENTS', /* 'JOBS', */ 'LEDGER'].map(tab => {
                 const tabKey = tab.toLowerCase();
                 const isActive = tabKey === menuTab;
                 return (
@@ -1937,8 +2410,15 @@ function App() {
                     {menuTab === 'jobs' && (
                       <JobsPanel
                         database={database}
-                        useLiveQuery={useLiveQuery}
                         getAuthHeaders={getAuthHeaders}
+                        jobView={jobView}
+                        setJobView={setJobView}
+                        selectedJob={selectedJob}
+                        setSelectedJob={setSelectedJob}
+                        jobDraft={jobDraft}
+                        setJobDraft={setJobDraft}
+                        jobDocs={jobDocs}
+                        agentDocs={agentDocs}
                       />
                     )}
                     {menuTab === 'browser' && (
@@ -1947,6 +2427,13 @@ function App() {
                         artifacts={artifacts}
                         onSelect={setActiveArtifact}
                         embedded
+                      />
+                    )}
+                    {menuTab === 'ledger' && (
+                      <LedgerPanel
+                        database={database}
+                        useLiveQuery={useLiveQuery}
+                        getAuthHeaders={getAuthHeaders}
                       />
                     )}
                   </motion.div>
@@ -1962,9 +2449,187 @@ function App() {
 
 export default App;
 
+      // ── Boot Sequence ─────────────────────────────────────────────────────
+      // Two-phase boot: BootScreen gates App behind full database initialization.
+      // No database.put() fires until local stores + cloud sync are resolved.
+      function BootScreen({ dbName, onReady }) {
+        const { database, useLiveQuery } = useFireproofClerk(dbName);
+        const [steps, setSteps] = useState({
+          database: false,
+          localStores: false,
+          cloud: null,      // null=pending, true=connected, false=timed out
+          ledgerMeta: false,
+          catalog: false,
+          agents: false,
+        });
+        const readyRef = useRef(false);
+
+        // Step 1-2: Database + local stores (with self-healing timeout)
+        useEffect(() => {
+          if (!database) return;
+          setSteps(s => ({ ...s, database: true }));
+          let resolved = false;
+          database.ready().then(() => {
+            resolved = true;
+            setSteps(s => ({ ...s, localStores: true }));
+          });
+          // Self-healing: if database.ready() hangs for 15s, IDB is likely corrupt.
+          // 15s gives 300x headroom over typical 50ms resolution — safe for slow devices and backgrounded tabs.
+          // Wipe all databases, clear migration keys, and reload.
+          const healTimeout = setTimeout(() => {
+            if (resolved) return;
+            console.error('[Boot] database.ready() hung for 15s — wiping IndexedDB and reloading');
+            // Clear migration keys so the migration re-runs
+            Object.keys(localStorage).filter(k => k.startsWith('fp_migration')).forEach(k => localStorage.removeItem(k));
+            indexedDB.databases().then(dbs => {
+              let done = 0;
+              if (dbs.length === 0) { location.reload(); return; }
+              dbs.forEach(db => {
+                const req = indexedDB.deleteDatabase(db.name);
+                req.onsuccess = req.onerror = req.onblocked = () => {
+                  done++;
+                  if (done === dbs.length) location.reload();
+                };
+              });
+              // Fallback: if deletes hang too, just reload after 2s
+              setTimeout(() => location.reload(), 2000);
+            }).catch(() => location.reload());
+          }, 15000);
+          return () => clearTimeout(healTimeout);
+        }, [database]);
+
+        // Step 3-5: Cloud sync (with 8s timeout)
+        useEffect(() => {
+          if (!steps.localStores) return;
+          const onSync = () => {
+            const status = window.__VIBES_SYNC_STATUS__;
+            if (status === 'synced') {
+              setSteps(s => ({ ...s, cloud: true }));
+            }
+          };
+          window.addEventListener('vibes-sync-status-change', onSync);
+          // Check if already synced
+          if (window.__VIBES_SYNC_STATUS__ === 'synced') {
+            setSteps(s => ({ ...s, cloud: true }));
+          }
+          const timeout = setTimeout(() => {
+            setSteps(s => s.cloud === null ? { ...s, cloud: false } : s);
+          }, 8000);
+          return () => {
+            window.removeEventListener('vibes-sync-status-change', onSync);
+            clearTimeout(timeout);
+          };
+        }, [steps.localStores]);
+
+        // Step 6a: Fork seed (pendingFork from ledger self-healing)
+        // Gates on cloud resolution — cloud stores must be fully attached or timed out
+        // before any database writes, to avoid WriteQueueImpl race.
+        useEffect(() => {
+          if (!steps.localStores || steps.cloud === null || !database) return;
+          const pendingFork = localStorage.getItem('pendingFork');
+          if (!pendingFork) return;
+          (async () => {
+            try {
+              const agents = JSON.parse(pendingFork);
+              for (const agent of agents) {
+                await resilientPut(database, agent);
+              }
+              localStorage.removeItem('pendingFork');
+              console.log('[Boot] Fork seeded', agents.length, 'agent identities');
+            } catch (err) {
+              console.warn('[Boot] Fork seed failed:', err);
+            }
+          })();
+        }, [steps.localStores, steps.cloud, database]);
+
+        // Step 6b: Ledger-meta (amnesia detection)
+        // Gates on cloud resolution to avoid WriteQueueImpl race.
+        useEffect(() => {
+          if (!steps.localStores || steps.cloud === null || !database) return;
+          (async () => {
+            try {
+              const meta = await database.get('ledger-meta').catch(() => null);
+              if (!meta) {
+                await resilientPut(database, {
+                  _id: 'ledger-meta',
+                  type: 'ledger-meta',
+                  category: 'operational',
+                  databaseName: database.name,
+                  connectLedgerId: null,
+                  createdAt: new Date().toISOString(),
+                  parentLedgerId: null,
+                });
+                console.log('[Boot] Amnesia detected — signaling server for full state replay');
+                const headers = await getClerkAuthHeaders();
+                if (headers) {
+                  fetch('/api/ledger-reset', { method: 'POST', headers })
+                    .catch(e => console.warn('[Boot] Failed to signal reset:', e));
+                }
+              } else {
+                // Capture Connect ledgerId if available and not yet stored
+                const ledgerId = window.__VIBES_SHARED_LEDGER__;
+                if (ledgerId && !meta.connectLedgerId) {
+                  await resilientPut(database, { ...meta, connectLedgerId: ledgerId });
+                  console.log('[Boot] Captured Connect ledgerId:', ledgerId);
+                }
+              }
+              setSteps(s => ({ ...s, ledgerMeta: true }));
+            } catch (err) {
+              console.warn('[Boot] Ledger-meta failed:', err);
+              // Still mark as done so boot can complete
+              setSteps(s => ({ ...s, ledgerMeta: true }));
+            }
+          })();
+        }, [steps.localStores, steps.cloud, database]);
+
+        // Step 7: Catalog seed
+        // Gates on cloud resolution to avoid WriteQueueImpl race.
+        useEffect(() => {
+          if (!steps.localStores || steps.cloud === null || !database) return;
+          ensureCatalog(database).then(() => {
+            setSteps(s => ({ ...s, catalog: true }));
+          }).catch(() => {
+            setSteps(s => ({ ...s, catalog: true }));
+          });
+        }, [steps.localStores, steps.cloud, database]);
+
+        // Step 8: Agent identities
+        const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
+        useEffect(() => {
+          if (!steps.localStores || steps.cloud === null || !database) return;
+          setSteps(s => ({ ...s, agents: true }));
+        }, [steps.localStores, steps.cloud, database]);
+
+        // Expose database globally for debugging
+        useEffect(() => {
+          if (database) window._julianDB = database;
+        }, [database]);
+
+        // Transition to App when ready
+        useEffect(() => {
+          const cloudResolved = steps.cloud !== null;
+          const coreReady = steps.database && steps.localStores && cloudResolved
+            && steps.ledgerMeta && steps.catalog && steps.agents;
+          if (coreReady && !readyRef.current) {
+            readyRef.current = true;
+            onReady({
+              database,
+              useLiveQuery,
+              localOnly: steps.cloud === false,
+              agentDocs,
+            });
+          }
+        }, [steps]);
+
+        const BootUI = window.BootUI;
+        return BootUI ? <BootUI steps={steps} /> : null;
+      }
+
       // App wrapper with Clerk auth gate (always required)
       function AppWrapper() {
+        const [bootData, setBootData] = useState(null);
         const config = window.__VIBES_CONFIG__;
+        const dbName = 'julian-chat-v13';
 
         // Hook must be called unconditionally at top of component (Rules of Hooks)
         window.useVibesPanelEvents('Vibes');
@@ -1986,19 +2651,54 @@ export default App;
         const VibesButton = window.VibesButton;
         const RED = window.RED;
 
-        const AuthGate = () => (
-          <AuthScreen
-            title="Sign in to continue"
-            message="This app uses cloud sync and requires authentication."
-            showCard={true}
-          >
-            <SignInButton mode="modal">
-              <VibesButton variant={RED} buttonType="form">
-                Sign In
-              </VibesButton>
-            </SignInButton>
-          </AuthScreen>
-        );
+        const AuthGate = () => {
+          const [confirmed, setConfirmed] = React.useState(false);
+          return (
+            <AuthScreen
+              title="Sign in to continue"
+              message="One server, one user."
+              showCard={true}
+            >
+              <div style={{ opacity: confirmed ? 1 : 0.4, pointerEvents: confirmed ? 'auto' : 'none', transition: 'opacity 0.2s', width: '100%' }}>
+                <SignInButton mode="modal">
+                  <VibesButton variant={RED} buttonType="form">
+                    Sign In
+                  </VibesButton>
+                </SignInButton>
+              </div>
+              <label style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 10,
+                cursor: 'pointer',
+                marginTop: 16,
+                padding: '0 12px',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={confirmed}
+                  onChange={e => setConfirmed(e.target.checked)}
+                  style={{
+                    width: 18,
+                    height: 18,
+                    marginTop: 2,
+                    accentColor: '#d32f2f',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
+                />
+                <span style={{
+                  fontSize: '0.9rem',
+                  color: '#666',
+                  lineHeight: 1.5,
+                  userSelect: 'none',
+                }}>
+                  I confirm that I am the single human user of this server.
+                </span>
+              </label>
+            </AuthScreen>
+          );
+        };
 
         return (
           <ClerkFireproofProvider
@@ -2012,7 +2712,10 @@ export default App;
               <AuthGate />
             </SignedOut>
             <SignedIn>
-                <App />
+              {bootData
+                ? <App bootData={bootData} />
+                : <BootScreen dbName={dbName} onReady={setBootData} />
+              }
             </SignedIn>
           </ClerkFireproofProvider>
         );

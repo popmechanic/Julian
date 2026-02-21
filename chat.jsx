@@ -331,6 +331,7 @@ const EYE_KEYS = Object.keys(EYE_VARIANTS);
 const MOUTH_KEYS = Object.keys(MOUTH_VARIANTS);
 
 function hashNameToFaceVariant(name) {
+  if (!name) return { eyes: EYE_KEYS[0], mouth: MOUTH_KEYS[0] };
   let hash = 0;
   for (let i = 0; i < name.length; i++) {
     hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
@@ -562,24 +563,40 @@ const JULIAN_POSITION = 4;
 const AGENT_POSITIONS = [0, 1, 2, 3, 5, 6, 7, 8];
 
 function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, onWake, summoning = false, fillContainer = false }) {
+  const getStatus = window.getAgentStatus || ((d) => d.status || 'sleeping');
   const cells = Array.from({ length: 9 }, (_, i) => {
     if (i === JULIAN_POSITION) {
       return { type: 'julian' };
     }
     const agent = agents.find(a => a.gridPosition === i);
-    if (agent) {
-      if (agent.hatching) return { type: 'hatching', agent };
-      if (agent.sleeping) return { type: 'sleeping', agent };
-      return { type: 'active', agent };
+    // No doc or nameless: check if fresh hatch (< 10 min)
+    if (!agent || !agent.name) {
+      if (agent && (Date.now() - new Date(agent.createdAt).getTime()) < 600000) {
+        return { type: 'hatching', agent };
+      }
+      return { type: 'empty' };
     }
-    return { type: 'empty' };
+    // Named agent: alive or sleeping
+    const status = agent._status || getStatus(agent);
+    if (status === 'sleeping') return { type: 'sleeping', agent };
+    return { type: 'active', agent };
   });
 
-  const hasSleepingAgents = cells.some(c => c.type === 'sleeping');
-  const hasEmptySlots = cells.some(c => c.type === 'empty');
-  const showSummon = hasEmptySlots && agents.length === 0;
-  const showWake = hasSleepingAgents;
-  const allAwake = agents.length > 0 && !hasSleepingAgents;
+  // Derive button state: name is the dividing line
+  const named = agents.filter(a => a.name);
+  const sleeping = named.filter(a => (a._status || getStatus(a)) === 'sleeping');
+  const allSeatsNamed = named.length >= 8;
+  const showWake = sleeping.length > 0;
+  const showSummon = !allSeatsNamed && !showWake;
+  const allAwake = allSeatsNamed && !showWake;
+
+  React.useEffect(() => {
+    if (agents.length > 0) {
+      console.log('[AgentGrid] agents:', agents.length,
+        'showSummon:', showSummon, 'showWake:', showWake, 'allAwake:', allAwake,
+        agents.map(a => ({ name: a.name, status: a._status || getStatus(a), pos: a.gridPosition })));
+    }
+  }, [agents, showSummon, showWake, allAwake]);
 
   return (
     <div style={{ padding: fillContainer ? 0 : '12px 8px', display: 'flex', flexDirection: 'column', flex: fillContainer ? 1 : undefined, height: fillContainer ? '100%' : undefined }}>
@@ -613,7 +630,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
             borderColor = cell.agent.color;
             content = <EggHatch color={cell.agent.color} size={56} />;
           } else if (cell.type === 'active') {
-            const variant = cell.agent.faceVariant || hashNameToFaceVariant(cell.agent.name);
+            const variant = cell.agent.faceVariant || hashNameToFaceVariant(cell.agent.name || '');
             borderColor = cell.agent.color;
             content = (
               <PixelFace
@@ -625,11 +642,11 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
                 gender={cell.agent.gender}
               />
             );
-            nameLabel = cell.agent.name.toUpperCase().slice(0, 7);
+            nameLabel = (cell.agent.name || '?').toUpperCase().slice(0, 7);
             clickHandler = () => onSelectAgent(cell.agent.name);
             statusDot = { color: '#4ade80', glow: true };
           } else if (cell.type === 'sleeping') {
-            const variant = cell.agent.faceVariant || hashNameToFaceVariant(cell.agent.name);
+            const variant = cell.agent.faceVariant || hashNameToFaceVariant(cell.agent.name || '');
             borderColor = cell.agent.color;
             opacity = 0.4;
             content = (
@@ -642,7 +659,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
                 gender={cell.agent.gender}
               />
             );
-            nameLabel = cell.agent.name.toUpperCase().slice(0, 7);
+            nameLabel = (cell.agent.name || '?').toUpperCase().slice(0, 7);
             clickHandler = () => onSelectAgent(cell.agent.name);
             statusDot = { color: '#f59e0b', glow: false };
           }
@@ -717,7 +734,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
               background: summoning ? '#1a1a1a' : '#f59e0b',
               border: `1px solid ${summoning ? '#333' : '#f59e0b'}`,
               borderRadius: 9999,
-              cursor: summoning ? 'default' : 'pointer',
+              cursor: summoning ? 'not-allowed' : 'pointer',
               letterSpacing: '0.15em',
               textTransform: 'uppercase',
               transition: 'background 300ms ease, color 300ms ease, border-color 300ms ease, box-shadow 300ms ease',
@@ -741,7 +758,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
               background: summoning ? '#1a1a1a' : '#00afd1',
               border: `1px solid ${summoning ? '#333' : '#00afd1'}`,
               borderRadius: 9999,
-              cursor: summoning ? 'default' : 'pointer',
+              cursor: summoning ? 'not-allowed' : 'pointer',
               letterSpacing: '0.15em',
               textTransform: 'uppercase',
               transition: 'background 300ms ease, color 300ms ease, border-color 300ms ease, box-shadow 300ms ease',
@@ -815,12 +832,12 @@ function StatusDots({ ok }) {
     <div className="flex gap-1 items-center">
       <div style={{
         width: 8, height: 8,
-        backgroundColor: ok ? '#FFD600' : '#333',
-        boxShadow: ok ? '0 0 5px #FFD600' : 'none',
-        animation: ok ? 'pulse-dot 2s ease-in-out infinite' : 'none',
+        backgroundColor: ok ? '#FFD600' : '#ff6b6b',
+        boxShadow: ok ? '0 0 5px #FFD600' : '0 0 4px #ff6b6b',
+        animation: ok ? 'pulse-dot 2s ease-in-out infinite' : 'pulse-warn 2s ease-in-out infinite',
       }} />
-      <div style={{ width: 8, height: 8, backgroundColor: '#333' }} />
-      <div style={{ width: 8, height: 8, backgroundColor: '#333' }} />
+      <div style={{ width: 8, height: 8, backgroundColor: ok ? '#333' : '#ff6b6b', opacity: ok ? 1 : 0.5, animation: ok ? 'none' : 'pulse-warn 2s ease-in-out infinite 0.2s' }} />
+      <div style={{ width: 8, height: 8, backgroundColor: ok ? '#333' : '#ff6b6b', opacity: ok ? 1 : 0.3, animation: ok ? 'none' : 'pulse-warn 2s ease-in-out infinite 0.4s' }} />
     </div>
   );
 }
@@ -1062,8 +1079,9 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab, no
         width: 8,
         height: 8,
         borderRadius: '50%',
-        backgroundColor: connected ? '#FFD600' : '#444',
-        boxShadow: connected ? '0 0 6px #FFD600' : 'none',
+        backgroundColor: connected ? '#FFD600' : '#ff6b6b',
+        boxShadow: connected ? '0 0 6px #FFD600' : '0 0 4px #ff6b6b',
+        animation: connected ? 'none' : 'pulse-warn 2s ease-in-out infinite',
         zIndex: 20,
       }} />
 
@@ -1090,22 +1108,21 @@ function ThinkingDots() {
       <span style={{ color: '#FFD600', fontSize: '1.1rem', fontFamily: "'VT323', monospace" }}>
         {'>'} PROCESSING
       </span>
-      <span style={{
-        color: '#FFD600',
-        animation: 'blink 1s step-end infinite',
-        fontFamily: "'VT323', monospace",
-        fontSize: '1.1rem',
-      }}>_</span>
+      <span className="flex gap-1 items-center" style={{ marginLeft: 4 }}>
+        <span style={{ display: 'inline-block', width: 6, height: 6, backgroundColor: '#FFD600', animation: 'thinking-pulse 1.2s ease-in-out infinite' }} />
+        <span style={{ display: 'inline-block', width: 6, height: 6, backgroundColor: '#FFD600', animation: 'thinking-pulse 1.2s ease-in-out infinite 0.2s' }} />
+        <span style={{ display: 'inline-block', width: 6, height: 6, backgroundColor: '#FFD600', animation: 'thinking-pulse 1.2s ease-in-out infinite 0.4s' }} />
+      </span>
     </div>
   );
 }
 
 function ToolCallBlock({ name, input }) {
   return (
-    <div style={{
+    <div className="message-enter" style={{
       margin: '4px 0',
       padding: '4px 0',
-      borderLeft: '2px solid #AA8800',
+      borderLeft: '3px solid #C8A800',
       paddingLeft: 8,
     }}>
       <div style={{
@@ -1153,7 +1170,7 @@ function MessageBubble({ message }) {
               fontSize: '1.1rem',
               fontFamily: "'VT323', monospace",
               color: '#FFD600',
-              textShadow: '0 0 2px #AA8800',
+              textShadow: '0 0 4px rgba(0,0,0,0.3)',
               lineHeight: 1.4,
             }}>
               <span style={{ color: '#FFD600' }}>{'> '}</span>
@@ -1166,14 +1183,13 @@ function MessageBubble({ message }) {
         }
         return null;
       })}
-      {message.streaming && !message.thinking && (
-        <span style={{
-          color: '#FFD600',
-          animation: 'blink 1s step-end infinite',
-          fontFamily: "'VT323', monospace",
-          fontSize: '1.1rem',
-        }}>_</span>
-      )}
+      <span style={{
+        visibility: message.streaming && !message.thinking ? 'visible' : 'hidden',
+        color: '#FFD600',
+        animation: 'blink 1s step-end infinite',
+        fontFamily: "'VT323', monospace",
+        fontSize: '1.1rem',
+      }}>_</span>
     </div>
   );
 }
@@ -1344,7 +1360,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
       backgroundColor: '#FFD600',
     }}>
       <div style={{ width: '100%', maxWidth: 480, display: 'flex', flexDirection: 'column', gap: 20 }}>
-        <div style={{ textAlign: 'center' }}>
+        <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <PixelFace talking={false} size={100} />
           <h1 style={{
             fontFamily: "'VT323', monospace",
@@ -1375,11 +1391,11 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
           flexDirection: 'column',
         }}>
           {/* Tabs */}
-          <div style={{ display: 'flex', borderBottom: '1px solid #2a2a2a' }}>
-            <button onClick={() => setTab('oauth')} style={tabStyle(tab === 'oauth')}>
+          <div role="tablist" style={{ display: 'flex', borderBottom: '1px solid #2a2a2a' }}>
+            <button role="tab" aria-selected={tab === 'oauth'} onClick={() => setTab('oauth')} style={tabStyle(tab === 'oauth')}>
               Sign in with Anthropic
             </button>
-            <button onClick={() => setTab('legacy')} style={tabStyle(tab === 'legacy')}>
+            <button role="tab" aria-selected={tab === 'legacy'} onClick={() => setTab('legacy')} style={tabStyle(tab === 'legacy')}>
               Paste Token
             </button>
           </div>
@@ -1421,9 +1437,9 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
                         fontWeight: 700,
                         textTransform: 'uppercase',
                         letterSpacing: '0.1em',
-                        cursor: oauthLoading ? 'default' : 'pointer',
+                        cursor: oauthLoading ? 'not-allowed' : 'pointer',
                         boxShadow: oauthLoading ? 'none' : '0 4px 0 #AA8800, 0 8px 10px rgba(0,0,0,0.15)',
-                        transition: 'all 0.1s',
+                        transition: 'background-color 100ms ease, box-shadow 100ms ease',
                       }}
                     >
                       {oauthStatus === 'starting' ? 'OPENING...' : 'SIGN IN WITH ANTHROPIC'}
@@ -1494,7 +1510,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
                           border: '1px solid #333',
                           fontFamily: "'VT323', monospace",
                           fontSize: '1rem',
-                          cursor: oauthLoading ? 'default' : 'pointer',
+                          cursor: oauthLoading ? 'not-allowed' : 'pointer',
                         }}
                       >
                         BACK
@@ -1512,7 +1528,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
                           fontSize: '1.1rem',
                           fontWeight: 700,
                           textTransform: 'uppercase',
-                          cursor: (oauthLoading || !oauthCode.trim()) ? 'default' : 'pointer',
+                          cursor: (oauthLoading || !oauthCode.trim()) ? 'not-allowed' : 'pointer',
                           boxShadow: (oauthLoading || !oauthCode.trim()) ? 'none' : '0 3px 0 #AA8800',
                         }}
                       >
@@ -1607,8 +1623,8 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
                     fontWeight: 700,
                     textTransform: 'uppercase',
                     letterSpacing: 1,
-                    cursor: (legacyLoading || !token.trim()) ? 'default' : 'pointer',
-                    transition: 'all 0.1s',
+                    cursor: (legacyLoading || !token.trim()) ? 'not-allowed' : 'pointer',
+                    transition: 'background-color 100ms ease, box-shadow 100ms ease',
                     alignSelf: 'center',
                   }}
                 >
@@ -1625,16 +1641,52 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
 
 /* ── Chat input (retro) ──────────────────────────────────────────────────── */
 
+const CHAT_INPUT_MIN_HEIGHT = 50;
+const CHAT_INPUT_MAX_HEIGHT = 200;
+
 function ChatInput({ onSend, disabled }) {
   const [input, setInput] = useState('');
   const inputRef = useRef(null);
+  const prevHeightRef = useRef(CHAT_INPUT_MIN_HEIGHT);
+
+  const adjustHeight = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+
+    // Disable transition, measure natural height
+    el.style.transition = 'none';
+    el.style.height = 'auto';
+    const target = Math.min(Math.max(el.scrollHeight, CHAT_INPUT_MIN_HEIGHT), CHAT_INPUT_MAX_HEIGHT);
+
+    // Set back to previous height, force reflow, then animate to target
+    el.style.height = prevHeightRef.current + 'px';
+    void el.offsetHeight;
+    el.style.transition = 'height 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+    el.style.height = target + 'px';
+    el.style.overflowY = target >= CHAT_INPUT_MAX_HEIGHT ? 'auto' : 'hidden';
+
+    prevHeightRef.current = target;
+  }, []);
 
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || disabled) return;
     onSend(text);
     setInput('');
+    // Reset height after clearing
+    const el = inputRef.current;
+    if (el) {
+      el.style.transition = 'height 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+      el.style.height = CHAT_INPUT_MIN_HEIGHT + 'px';
+      el.style.overflowY = 'hidden';
+      prevHeightRef.current = CHAT_INPUT_MIN_HEIGHT;
+    }
   }, [input, disabled, onSend]);
+
+  const handleChange = useCallback((e) => {
+    setInput(e.target.value);
+    adjustHeight();
+  }, [adjustHeight]);
 
   useEffect(() => {
     if (!disabled && inputRef.current) inputRef.current.focus();
@@ -1643,17 +1695,20 @@ function ChatInput({ onSend, disabled }) {
   return (
     <div style={{
       display: 'flex',
-      alignItems: 'center',
+      alignItems: 'flex-end',
       gap: 12,
       padding: '12px 0',
     }}>
-      <input
+      <textarea
         ref={inputRef}
         value={input}
-        onChange={e => setInput(e.target.value)}
+        onChange={handleChange}
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
         placeholder={disabled ? "PROCESSING..." : "INPUT BUFFER..."}
         disabled={disabled}
+        spellCheck={false}
+        autoComplete="off"
+        rows={1}
         style={{
           flex: 1,
           backgroundColor: '#C8A800',
@@ -1661,14 +1716,17 @@ function ChatInput({ onSend, disabled }) {
           borderRadius: 6,
           color: '#000',
           fontWeight: 'bold',
-          padding: '0 16px',
-          height: 50,
+          padding: '12px 16px',
+          height: CHAT_INPUT_MIN_HEIGHT,
           fontFamily: "'VT323', monospace",
           textTransform: 'uppercase',
           fontSize: '1.1rem',
+          lineHeight: '1.4',
           border: 'none',
           outline: 'none',
           opacity: disabled ? 0.5 : 1,
+          resize: 'none',
+          overflowY: 'hidden',
         }}
       />
       <button
@@ -1690,10 +1748,11 @@ function ChatInput({ onSend, disabled }) {
           fontWeight: 700,
           textTransform: 'uppercase',
           letterSpacing: 1,
-          cursor: disabled ? 'default' : 'pointer',
-          transition: 'all 0.1s',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          transition: 'background-color 100ms ease, box-shadow 100ms ease',
           flexShrink: 0,
         }}
+        aria-label="Send message"
       >
         A
       </button>
@@ -2210,59 +2269,72 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
       const headers = await getAuthHeaders();
       if (!headers) { setHelping(false); return; }
       const formState = { name, description, contextDocs, skills, files, aboutYou };
-      const res = await fetch('/api/chat', {
+
+      // Collect text from the shared EventSource via CustomEvents
+      let resultText = '';
+      const onText = (e) => {
+        const blocks = e.detail?.content || [];
+        for (const block of blocks) {
+          if (block.type === 'text') resultText = block.text;
+        }
+        console.log('[JobForm] claude_text received, length:', resultText.length);
+      };
+      const cleanup = () => {
+        window.removeEventListener('julian:claude_text', onText);
+        window.removeEventListener('julian:claude_result', onResult);
+        clearTimeout(timeout);
+      };
+      const applyResults = () => {
+        console.log('[JobForm] Applying results, resultText length:', resultText.length);
+        const jsonMatch = resultText.match(/```json\s*([\s\S]*?)```/);
+        if (jsonMatch) {
+          try {
+            const parsed = JSON.parse(jsonMatch[1]);
+            console.log('[JobForm] Parsed suggestions:', Object.keys(parsed));
+            setSuggestions(parsed);
+            // Always apply suggestions to empty fields
+            if (parsed.name && !name) setName(parsed.name);
+            if (parsed.description && !description) setDescription(parsed.description);
+            if (parsed.contextDocs && !contextDocs) setContextDocs(parsed.contextDocs);
+            if (parsed.skills && !skills) setSkills(parsed.skills);
+            if (parsed.files && !files) setFiles(parsed.files);
+            if (parsed.aboutYou && !aboutYou) setAboutYou(parsed.aboutYou);
+          } catch (jsonErr) {
+            console.warn('[JobForm] JSON parse error:', jsonErr);
+          }
+        } else {
+          console.warn('[JobForm] No ```json block found in response');
+        }
+        setHelping(false);
+      };
+      const onResult = (e) => {
+        console.log('[JobForm] claude_result received');
+        if (e.detail?.resultText) resultText = e.detail.resultText;
+        cleanup();
+        applyResults();
+      };
+      // Safety timeout in case claude_result never fires
+      const timeout = setTimeout(() => {
+        console.warn('[JobForm] Timeout — applying whatever we have');
+        cleanup();
+        if (resultText) applyResults();
+        else setHelping(false);
+      }, 60000);
+      window.addEventListener('julian:claude_text', onText);
+      window.addEventListener('julian:claude_result', onResult);
+
+      // Fire-and-forget — response arrives through the shared event stream
+      await fetch('/api/chat', {
         method: 'POST',
         headers,
         body: JSON.stringify({ message: '[JOB HELP] ' + JSON.stringify(formState) }),
       });
-      // Read SSE stream for the response
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let resultText = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.data?.type === 'assistant' && data.data?.message?.content) {
-              for (const block of data.data.message.content) {
-                if (block.type === 'text') resultText = block.text;
-              }
-            }
-            if (data.data?.type === 'result' && data.data?.result) {
-              resultText = data.data.result;
-            }
-          } catch (parseErr) {
-            console.warn('[JobForm] SSE parse error:', parseErr);
-          }
-        }
-      }
-      // Try to parse JSON from the response
-      const jsonMatch = resultText.match(/```json\s*([\s\S]*?)```/);
-      if (jsonMatch) {
-        try {
-          const parsed = JSON.parse(jsonMatch[1]);
-          setSuggestions(parsed);
-          if (parsed.name && !name) setName(parsed.name);
-          if (parsed.description && !description) setDescription(parsed.description);
-          if (parsed.contextDocs && !contextDocs) setContextDocs(parsed.contextDocs);
-          if (parsed.skills && !skills) setSkills(parsed.skills);
-          if (parsed.files && !files) setFiles(parsed.files);
-          if (parsed.aboutYou && !aboutYou) setAboutYou(parsed.aboutYou);
-        } catch (jsonErr) {
-          console.warn('[JobForm] JSON parse error:', jsonErr);
-        }
-      }
+      console.log('[JobForm] Help request sent, waiting for events...');
     } catch (err) {
       console.error('[JobForm] Help request failed:', err);
+      setHelping(false);
     }
-    setHelping(false);
+    // setHelping(false) is called inside the onResult listener when response arrives
   }, [name, description, contextDocs, skills, files, aboutYou, getAuthHeaders]);
 
   const handleSave = useCallback(async () => {
@@ -2283,7 +2355,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
     if (job?._id) jobDoc._id = job._id;
     if (job?._rev) jobDoc._rev = job._rev;
     try {
-      await database.put(jobDoc);
+      await window.resilientPut(database, jobDoc);
       if (onSave) onSave();
     } catch (err) {
       console.error('[JobForm] Save failed:', err);
@@ -2314,10 +2386,10 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
             border: `1px solid ${helping ? '#333' : 'rgba(0,175,209,0.3)'}`,
             borderRadius: 9999,
             padding: '6px 16px',
-            cursor: helping ? 'default' : 'pointer',
+            cursor: helping ? 'not-allowed' : 'pointer',
             letterSpacing: '0.15em',
             textTransform: 'uppercase',
-            transition: 'all 300ms',
+            transition: 'color 250ms ease, background-color 250ms ease, border-color 250ms ease',
           }}
         >
           {helping ? 'THINKING...' : 'HELP ME'}
@@ -2420,7 +2492,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
             cursor: 'pointer',
             letterSpacing: '0.15em',
             textTransform: 'uppercase',
-            transition: 'all 300ms',
+            transition: 'border-color 250ms ease, color 250ms ease',
           }}
         >
           CANCEL
@@ -2440,7 +2512,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
             letterSpacing: '0.15em',
             textTransform: 'uppercase',
             boxShadow: '0 0 12px rgba(0,175,209,0.3)',
-            transition: 'all 300ms',
+            transition: 'background-color 250ms ease, box-shadow 250ms ease',
           }}
         >
           SAVE
@@ -2504,7 +2576,7 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
     try {
       // Fetch latest revision to avoid conflicts
       const latestJob = await database.get(job._id);
-      await database.put({
+      await window.resilientPut(database, {
         ...latestJob,
         assignedAgent: agentName,
         status: 'filled',
@@ -2514,7 +2586,7 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
       const agent = (agentDocs || []).find(a => a.name === agentName);
       if (agent) {
         const latestAgent = await database.get(agent._id);
-        await database.put({
+        await window.resilientPut(database, {
           ...latestAgent,
           jobId: job._id,
         });
@@ -2568,7 +2640,7 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
               cursor: 'pointer',
               letterSpacing: '0.15em',
               textTransform: 'uppercase',
-              transition: 'all 300ms',
+              transition: 'border-color 250ms ease, color 250ms ease',
             }}
           >
             BACK
@@ -2739,7 +2811,7 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
                     padding: '6px 16px',
                     letterSpacing: '0.1em',
                     textTransform: 'uppercase',
-                    transition: 'all 300ms',
+                    transition: 'background-color 250ms ease, border-color 250ms ease',
                     cursor: 'pointer',
                   }}
                 >
@@ -2788,7 +2860,7 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
             cursor: 'pointer',
             letterSpacing: '0.15em',
             textTransform: 'uppercase',
-            transition: 'all 300ms',
+            transition: 'background-color 250ms ease, box-shadow 250ms ease',
             boxShadow: '0 0 12px rgba(0,175,209,0.3)',
           }}
         >
@@ -2835,6 +2907,199 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
   );
 }
 
+// === Ledger Management Panel ===
+
+function bumpDbName(name) {
+  const match = name.match(/^(.+?-v)(\d+)$/);
+  if (match) return match[1] + (parseInt(match[2]) + 1);
+  return name + '-v2';
+}
+
+function LedgerPanel({ database, useLiveQuery, getAuthHeaders }) {
+  const [confirmAction, setConfirmAction] = useState(null);
+  const [restoreTarget, setRestoreTarget] = useState(null);
+
+  const { docs: metaDocs } = useLiveQuery("type", { key: "ledger-meta" });
+  const { docs: messageDocs } = useLiveQuery("type", { key: "message" });
+  const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
+  const { docs: artifactDocs } = useLiveQuery("type", { key: "artifact" });
+  const { docs: jobDocs } = useLiveQuery("type", { key: "job" });
+
+  const meta = metaDocs?.[0] || null;
+  const knownLedgers = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem('knownLedgers') || '[]'); }
+    catch { return []; }
+  }, [confirmAction]); // re-read after operations
+
+  const counts = useMemo(() => ({
+    messages: (messageDocs || []).length,
+    agents: (agentDocs || []).length,
+    artifacts: (artifactDocs || []).length,
+    jobs: (jobDocs || []).length,
+  }), [messageDocs, agentDocs, artifactDocs, jobDocs]);
+
+  const handleNewLedger = async () => {
+    const currentName = database.name;
+    const newName = bumpDbName(currentName);
+    // Store current ledger in known list
+    const known = JSON.parse(localStorage.getItem('knownLedgers') || '[]');
+    if (!known.includes(currentName)) known.push(currentName);
+    localStorage.setItem('knownLedgers', JSON.stringify(known));
+    localStorage.setItem('julianDbName', newName);
+    window.location.reload();
+  };
+
+  const handleForkLedger = async () => {
+    const currentName = database.name;
+    const newName = bumpDbName(currentName);
+    // Copy agent identities for seeding after reload
+    const agents = (agentDocs || []).map(a => ({
+      _id: a._id,
+      type: 'agent-identity',
+      category: 'identity',
+      status: 'sleeping',
+      name: a.name,
+      color: a.color,
+      colorName: a.colorName,
+      gender: a.gender,
+      faceVariant: a.faceVariant,
+      gridPosition: a.gridPosition,
+      individuationArtifact: a.individuationArtifact,
+      createdAt: a.createdAt,
+    }));
+    localStorage.setItem('pendingFork', JSON.stringify(agents));
+    // Store current ledger in known list
+    const known = JSON.parse(localStorage.getItem('knownLedgers') || '[]');
+    if (!known.includes(currentName)) known.push(currentName);
+    localStorage.setItem('knownLedgers', JSON.stringify(known));
+    localStorage.setItem('julianDbName', newName);
+    window.location.reload();
+  };
+
+  const handleRestore = (name) => {
+    localStorage.setItem('julianDbName', name);
+    window.location.reload();
+  };
+
+  const sectionStyle = {
+    padding: '12px 16px',
+    background: 'rgba(255,255,255,0.03)',
+    borderRadius: 8,
+    border: '1px solid rgba(255,255,255,0.06)',
+    marginBottom: 10,
+  };
+  const labelStyle = { fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 };
+  const valueStyle = { fontSize: 13, color: '#e0e0e0', fontFamily: 'monospace' };
+  const btnStyle = {
+    padding: '8px 16px',
+    borderRadius: 6,
+    border: '1px solid rgba(255,255,255,0.15)',
+    background: 'rgba(255,255,255,0.05)',
+    color: '#e0e0e0',
+    fontSize: 12,
+    cursor: 'pointer',
+    flex: 1,
+  };
+
+  // Confirmation dialog overlay
+  if (confirmAction) {
+    const messages = {
+      newLedger: 'This creates a blank ledger. All conversation history and agent identities will be inaccessible until restored. The cloud copy of the current ledger is preserved.',
+      forkLedger: 'Agents will retain their identities but lose conversation history.',
+      restore: `This will switch to "${restoreTarget}". Current ledger is preserved.`,
+    };
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: 32, background: '#0c0c0c' }}>
+        <div style={{ maxWidth: 360, textAlign: 'center' }}>
+          <div style={{ fontSize: 14, color: '#e0e0e0', marginBottom: 16, lineHeight: 1.5 }}>
+            {messages[confirmAction]}
+          </div>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+            <button
+              onClick={() => setConfirmAction(null)}
+              style={{ ...btnStyle, flex: 'none', padding: '8px 24px' }}
+            >Cancel</button>
+            <button
+              onClick={() => {
+                if (confirmAction === 'newLedger') handleNewLedger();
+                else if (confirmAction === 'forkLedger') handleForkLedger();
+                else if (confirmAction === 'restore') handleRestore(restoreTarget);
+              }}
+              style={{ ...btnStyle, flex: 'none', padding: '8px 24px', background: '#00afd1', color: '#000', border: 'none', fontWeight: 600 }}
+            >Confirm</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '16px 20px', overflow: 'auto', background: '#0c0c0c' }}>
+      {/* Health section */}
+      <div style={sectionStyle}>
+        <div style={labelStyle}>Database</div>
+        <div style={valueStyle}>{meta?.databaseName || database?.name || '—'}</div>
+      </div>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+        <div style={{ ...sectionStyle, flex: 1, marginBottom: 0 }}>
+          <div style={labelStyle}>Connect Ledger</div>
+          <div style={{ ...valueStyle, fontSize: 11 }}>{meta?.connectLedgerId || 'not synced'}</div>
+        </div>
+        <div style={{ ...sectionStyle, flex: 1, marginBottom: 0 }}>
+          <div style={labelStyle}>Created</div>
+          <div style={valueStyle}>{meta?.createdAt ? new Date(meta.createdAt).toLocaleDateString() : '—'}</div>
+        </div>
+      </div>
+
+      {/* Document counts */}
+      <div style={sectionStyle}>
+        <div style={labelStyle}>Documents</div>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 4 }}>
+          {Object.entries(counts).map(([type, count]) => (
+            <div key={type} style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 18, color: '#00afd1', fontWeight: 600, fontFamily: 'monospace' }}>{count}</div>
+              <div style={{ fontSize: 10, color: '#666', textTransform: 'uppercase' }}>{type}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Lineage */}
+      {meta?.parentLedgerId && (
+        <div style={sectionStyle}>
+          <div style={labelStyle}>Lineage</div>
+          <div style={{ ...valueStyle, fontSize: 11 }}>{meta.parentLedgerId} → {meta.databaseName}</div>
+        </div>
+      )}
+
+      {/* Operations */}
+      <div style={{ marginTop: 'auto', paddingTop: 16 }}>
+        <div style={{ ...labelStyle, marginBottom: 8 }}>Operations</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={btnStyle} onClick={() => setConfirmAction('newLedger')}>New Ledger</button>
+          <button style={btnStyle} onClick={() => setConfirmAction('forkLedger')}>Fork Ledger</button>
+        </div>
+
+        {/* Restore from known ledgers */}
+        {knownLedgers.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ ...labelStyle, marginBottom: 6 }}>Restore Previous</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {knownLedgers.map(name => (
+                <button
+                  key={name}
+                  style={{ ...btnStyle, textAlign: 'left', fontSize: 11, fontFamily: 'monospace', flex: 'none' }}
+                  onClick={() => { setRestoreTarget(name); setConfirmAction('restore'); }}
+                >{name}</button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // === Window Exports (for App component) ===
 if (typeof window !== 'undefined') {
   window.escapeHtml = escapeHtml;
@@ -2863,4 +3128,5 @@ if (typeof window !== 'undefined') {
   window.JobForm = JobForm;
   window.JobsPanel = JobsPanel;
   window.ScreenGridPanel = ScreenGridPanel;
+  window.LedgerPanel = LedgerPanel;
 }
