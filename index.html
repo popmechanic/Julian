@@ -651,9 +651,6 @@ function App({ bootData }) {
   const { docs: persistedMessages } = useLiveQuery("type", { key: "message" });
 
   const [liveAssistant, setLiveAssistant] = useState(null);
-  // pendingClear: when set, we're waiting for persistedMessages to absorb liveAssistant
-  // before clearing it. Shape: { messageId?, persistedId?, fallbackTimer }
-  const pendingClearRef = useRef(null);
   const [streaming, setStreaming] = useState(false);
   const [connected, setConnected] = useState(false);
   const [setupNeeded, setSetupNeeded] = useState(null);
@@ -825,7 +822,7 @@ function App({ bootData }) {
       }
     };
 
-    _eventHandlers.onClaudeResult = (event) => {
+    _eventHandlers.onClaudeResult = async (event) => {
       // Intermediate turn results (tool use) — ignore, don't finalize
       if (event.subtype && event.subtype !== 'success') {
         return;
@@ -836,25 +833,35 @@ function App({ bootData }) {
       window.SFX?.play('success');
       setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
 
-      // Persist resultText fallback only if onClaudeText never fired (no messageId)
-      // Normal messages are already persisted by onClaudeText using messageId
-      let fallbackDocId = null;
-      if (finalBlocks.length > 0 && liveBlocksRef.current.length === 0 && event.resultText) {
-        fallbackDocId = 'msg-fallback-' + Date.now();
-        const _activeAgent = activeAgentRef.current;
-        const _agentDocs = agentDocsRef.current;
-        const speakerDoc = _activeAgent
-          ? (_agentDocs || []).find(a => a.name === _activeAgent)
-          : null;
-        resilientPut(database, {
-          _id: fallbackDocId,
-          type: 'message', category: 'transcript', role: 'assistant',
-          speakerType: 'agent', speakerName: _activeAgent || 'Julian',
-          agentName: _activeAgent || undefined,
-          gridPosition: speakerDoc?.gridPosition ?? undefined,
-          text: '', blocks: finalBlocks,
-          createdAt: new Date().toISOString(), serverSessionId,
-        }).catch(err => console.error('[chat] Fireproof put failed:', err));
+      // Determine the definitive doc ID for this message
+      const msgId = lastMsgIdRef.current || ('synthetic-' + Date.now());
+      const docId = 'msg-' + msgId;
+
+      // Final persistence write — awaited, so we KNOW it landed before clearing live state.
+      // This overwrites any intermediate writes from onClaudeText with the complete final blocks.
+      const _activeAgent = activeAgentRef.current;
+      const _agentDocs = agentDocsRef.current;
+      const speakerDoc = _activeAgent
+        ? (_agentDocs || []).find(a => a.name === _activeAgent)
+        : null;
+
+      if (finalBlocks.length > 0) {
+        try {
+          // Fetch existing doc to get _rev (onClaudeText may have already created it)
+          let existing = null;
+          try { existing = await database.get(docId); } catch (_) { /* not found — fine */ }
+          await resilientPut(database, {
+            ...(existing ? { _id: existing._id, _rev: existing._rev } : { _id: docId }),
+            type: 'message', category: 'transcript', role: 'assistant',
+            speakerType: 'agent', speakerName: _activeAgent || 'Julian',
+            agentName: _activeAgent || undefined,
+            gridPosition: speakerDoc?.gridPosition ?? undefined,
+            text: '', blocks: finalBlocks,
+            createdAt: existing?.createdAt || new Date().toISOString(), serverSessionId,
+          });
+        } catch (err) {
+          console.error('[chat] Final Fireproof put failed:', err);
+        }
       }
 
       // Auto-catalog: detect Write tool for memory/*.html
@@ -891,22 +898,17 @@ function App({ bootData }) {
         }, 2500);
       }
 
-      // Wait for persistedMessages to absorb the message before clearing live state.
-      // The useEffect watching persistedMessages will handle the actual clear.
+      // Persistence confirmed — clear live state immediately.
+      // No timers, no absorption detection. The write landed, so useLiveQuery
+      // will pick it up on the next render cycle and displayMessages will show
+      // the persisted copy.
       setConnected(true);
       notifiedArrivalRef.current = false;
-      const msgId = event.messageId || lastMsgIdRef.current || null;
-      if (pendingClearRef.current) clearTimeout(pendingClearRef.current.fallbackTimer);
-      const fallbackTimer = setTimeout(() => {
-        // Safety: clear after 5s even if persistence hasn't caught up
-        pendingClearRef.current = null;
-        setLiveAssistant(null);
-        setStreaming(false);
-        liveBlocksRef.current = [];
-        lastMsgIdRef.current = null;
-        if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
-      }, 5000);
-      pendingClearRef.current = { messageId: msgId, persistedId: fallbackDocId, fallbackTimer };
+      setLiveAssistant(null);
+      setStreaming(false);
+      liveBlocksRef.current = [];
+      lastMsgIdRef.current = null;
+      if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
     };
 
     _eventHandlers.onSessionEnd = async (event) => {
@@ -1073,24 +1075,23 @@ function App({ bootData }) {
         console.warn('[EventSource] Failed to persist agent message:', e);
       }
 
-      // If this agent is currently selected, show as live and wait for persistence
+      // If this agent is currently selected, show as live briefly then clear.
+      // The resilientPut above already succeeded, so the persisted doc will
+      // appear in useLiveQuery on the next render cycle.
       if (activeAgentRef.current === event.agentName) {
         window.SFX?.play('notification');
-        setLiveAssistant(prev => ({
+        setLiveAssistant({
           id: agentMsgId,
           role: 'assistant',
           blocks: [{ type: 'text', text }],
           thinking: false,
           streaming: false,
-        }));
-        // Wait for persistedMessages to absorb before clearing
-        if (pendingClearRef.current) clearTimeout(pendingClearRef.current.fallbackTimer);
-        const fallbackTimer = setTimeout(() => {
-          pendingClearRef.current = null;
+        });
+        // Clear after a short delay to let useLiveQuery catch up
+        setTimeout(() => {
           setLiveAssistant(null);
           setStreaming(false);
-        }, 5000);
-        pendingClearRef.current = { persistedId: agentMsgId, fallbackTimer };
+        }, 300);
       }
     };
   }, [database, serverSessionId]);
@@ -1276,25 +1277,6 @@ function App({ bootData }) {
     }
   }, [persistedMessages, liveAssistant]);
 
-  // Clear liveAssistant only after persistedMessages has absorbed the message
-  useEffect(() => {
-    const pc = pendingClearRef.current;
-    if (!pc || !persistedMessages) return;
-    // Check if the persisted twin is now in the query results
-    const found = persistedMessages.some(doc =>
-      (pc.persistedId && doc._id === pc.persistedId) ||
-      (pc.messageId && doc._id === ('msg-' + pc.messageId))
-    );
-    if (found) {
-      clearTimeout(pc.fallbackTimer);
-      pendingClearRef.current = null;
-      setLiveAssistant(null);
-      setStreaming(false);
-      liveBlocksRef.current = [];
-      lastMsgIdRef.current = null;
-      if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
-    }
-  }, [persistedMessages]);
 
   const displayMessages = React.useMemo(() => {
     const sorted = [...(persistedMessages || [])].sort((a, b) => {
