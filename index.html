@@ -2258,7 +2258,7 @@ function App({ bootData }) {
               backdropFilter: 'blur(10px)',
               borderBottom: '1px solid rgba(255,255,255,0.05)',
             }}>
-              {['SCREEN', 'BROWSER', 'FILES', 'SKILLS', 'AGENTS', 'JOBS', 'LEDGER'].map(tab => {
+              {['SCREEN', 'BROWSER', 'FILES', 'SKILLS', 'AGENTS', /* 'JOBS', */ 'LEDGER'].map(tab => {
                 const tabKey = tab.toLowerCase();
                 const isActive = tabKey === menuTab;
                 return (
