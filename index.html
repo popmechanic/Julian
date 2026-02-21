@@ -651,6 +651,8 @@ function App({ bootData }) {
   const { docs: persistedMessages } = useLiveQuery("type", { key: "message" });
 
   const [liveAssistant, setLiveAssistant] = useState(null);
+  // When set, we wait for this _id to appear in persistedMessages before clearing liveAssistant
+  const pendingClearIdRef = useRef(null);
   const [streaming, setStreaming] = useState(false);
   const [connected, setConnected] = useState(false);
   const [setupNeeded, setSetupNeeded] = useState(null);
@@ -897,17 +899,24 @@ function App({ bootData }) {
         }, 2500);
       }
 
-      // Persistence confirmed. Use rAF to give useLiveQuery one frame to
-      // absorb the persisted doc before we remove the live overlay.
+      // Persistence confirmed. Now wait for useLiveQuery to absorb the doc
+      // before clearing liveAssistant — see the useEffect below that watches
+      // persistedMessages for pendingClearIdRef.
       setConnected(true);
       notifiedArrivalRef.current = false;
-      requestAnimationFrame(() => {
-        setLiveAssistant(null);
-        setStreaming(false);
-        liveBlocksRef.current = [];
-        lastMsgIdRef.current = null;
-        if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
-      });
+      pendingClearIdRef.current = docId;
+      // Safety: if useLiveQuery never picks it up within 10s, force-clear
+      setTimeout(() => {
+        if (pendingClearIdRef.current === docId) {
+          console.warn('[chat] Safety timeout: clearing liveAssistant after 10s for', docId);
+          pendingClearIdRef.current = null;
+          setLiveAssistant(null);
+          setStreaming(false);
+          liveBlocksRef.current = [];
+          lastMsgIdRef.current = null;
+          if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
+        }
+      }, 10000);
     };
 
     _eventHandlers.onSessionEnd = async (event) => {
@@ -1074,9 +1083,7 @@ function App({ bootData }) {
         console.warn('[EventSource] Failed to persist agent message:', e);
       }
 
-      // If this agent is currently selected, show as live then clear immediately.
-      // The resilientPut above already succeeded (awaited), so useLiveQuery will
-      // pick up the persisted copy on the next render cycle — same pattern as onClaudeResult.
+      // If this agent is currently selected, show as live and wait for persistence
       if (activeAgentRef.current === event.agentName) {
         window.SFX?.play('notification');
         setLiveAssistant({
@@ -1086,12 +1093,16 @@ function App({ bootData }) {
           thinking: false,
           streaming: false,
         });
-        // Use rAF to ensure React renders the liveAssistant once before clearing,
-        // giving useLiveQuery one frame to absorb the persisted doc.
-        requestAnimationFrame(() => {
-          setLiveAssistant(null);
-          setStreaming(false);
-        });
+        // Wait for useLiveQuery to absorb the persisted doc before clearing
+        pendingClearIdRef.current = agentMsgId;
+        setTimeout(() => {
+          if (pendingClearIdRef.current === agentMsgId) {
+            console.warn('[chat] Safety timeout: clearing liveAssistant after 10s for agent msg', agentMsgId);
+            pendingClearIdRef.current = null;
+            setLiveAssistant(null);
+            setStreaming(false);
+          }
+        }, 10000);
       }
     };
   }, [database, serverSessionId]);
@@ -1277,6 +1288,23 @@ function App({ bootData }) {
     }
   }, [persistedMessages, liveAssistant]);
 
+  // Clear liveAssistant once persistedMessages absorbs the pending doc.
+  // This is the ONLY place liveAssistant gets cleared after a successful message —
+  // it guarantees the persisted copy is visible before the live overlay disappears.
+  useEffect(() => {
+    const pendingId = pendingClearIdRef.current;
+    if (!pendingId || !persistedMessages) return;
+    const found = persistedMessages.some(doc => doc._id === pendingId);
+    if (found) {
+      console.log('[chat] persistedMessages absorbed', pendingId, '— clearing liveAssistant');
+      pendingClearIdRef.current = null;
+      setLiveAssistant(null);
+      setStreaming(false);
+      liveBlocksRef.current = [];
+      lastMsgIdRef.current = null;
+      if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
+    }
+  }, [persistedMessages]);
 
   const displayMessages = React.useMemo(() => {
     const sorted = [...(persistedMessages || [])].sort((a, b) => {
