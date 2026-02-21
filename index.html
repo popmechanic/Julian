@@ -796,15 +796,18 @@ function App({ bootData }) {
       });
       liveBlocksRef.current = blocks;
       if (!notifiedArrivalRef.current) { window.SFX?.play('notification'); notifiedArrivalRef.current = true; }
-      const msgId = event.messageId || null;
-      if (msgId) lastMsgIdRef.current = msgId;
+      // Server may send empty string '' for messageId — treat as missing.
+      // Generate a synthetic ID so the message always gets persisted.
+      const rawMsgId = event.messageId || null;
+      const msgId = rawMsgId || lastMsgIdRef.current || ('synthetic-' + Date.now());
+      lastMsgIdRef.current = msgId;
       setLiveAssistant(prev => prev ? { ...prev, blocks, messageId: msgId, thinking: false, streaming: true } : {
         id: 'live-' + Date.now(), role: 'assistant', blocks, messageId: msgId, thinking: false, streaming: true
       });
 
       // Persist each assistant turn immediately so multi-turn messages don't vanish
       // Use messageId as _id to prevent duplicates if the same event re-fires
-      if (msgId && blocks.length > 0) {
+      if (blocks.length > 0) {
         const _activeAgent = activeAgentRef.current;
         const _agentDocs = agentDocsRef.current;
         const speakerDoc = _activeAgent
