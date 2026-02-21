@@ -1360,7 +1360,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
       backgroundColor: '#FFD600',
     }}>
       <div style={{ width: '100%', maxWidth: 480, display: 'flex', flexDirection: 'column', gap: 20 }}>
-        <div style={{ textAlign: 'center' }}>
+        <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <PixelFace talking={false} size={100} />
           <h1 style={{
             fontFamily: "'VT323', monospace",
