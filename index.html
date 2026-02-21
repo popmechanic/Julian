@@ -1573,7 +1573,7 @@ function App({ bootData }) {
       const response = await fetch('/api/send', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ message: text, targetAgent: _activeAgent || undefined, speakerName }),
+        body: JSON.stringify({ message: text, targetAgent: _activeAgent || undefined, targetGridPosition: activeDoc?.gridPosition ?? undefined, speakerName }),
       });
 
       if (!response.ok) {
@@ -1627,7 +1627,7 @@ function App({ bootData }) {
       const headers = await getAuthHeaders();
       await fetch('/api/send', {
         method: 'POST', headers,
-        body: JSON.stringify({ message: routingMsg, targetAgent: _activeAgent || undefined, speakerName }),
+        body: JSON.stringify({ message: routingMsg, targetAgent: _activeAgent || undefined, targetGridPosition: offerDoc?.gridPosition ?? undefined, speakerName }),
       });
       // Response arrives through EventSource
     } catch (err) {

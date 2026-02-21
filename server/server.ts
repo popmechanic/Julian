@@ -360,6 +360,44 @@ let lastReadIndex = 0;
 let inboxWatcher: ReturnType<typeof fsWatch> | null = null;
 let inboxHealthy = false;
 
+// ── Agent name resolution ────────────────────────────────────────────────
+// Maps chosen agent names (e.g., "Sable") to grid positions, and vice versa.
+// Populated when [AGENT_REGISTERED] and [AGENT_STATUS] markers are parsed.
+const agentNameToGrid = new Map<string, number[]>();
+const agentGridToName = new Map<number, string>();
+
+subscribe((event: ServerEvent) => {
+  if (event.type === 'agent_registered' && (event as any).agent) {
+    const { name, gridPosition } = (event as any).agent;
+    if (name && gridPosition != null) {
+      agentGridToName.set(gridPosition, name);
+      const existing = agentNameToGrid.get(name) || [];
+      if (!existing.includes(gridPosition)) existing.push(gridPosition);
+      agentNameToGrid.set(name, existing);
+      console.log(`[NameMap] ${name} -> agent-${gridPosition}`);
+    }
+  }
+  if (event.type === 'agent_status' && (event as any).agents) {
+    for (const a of (event as any).agents) {
+      if (a.name && a.gridPosition != null) {
+        agentGridToName.set(a.gridPosition, a.name);
+        const existing = agentNameToGrid.get(a.name) || [];
+        if (!existing.includes(a.gridPosition)) existing.push(a.gridPosition);
+        agentNameToGrid.set(a.name, existing);
+      }
+    }
+  }
+});
+
+function resolveAgentSpawnName(targetAgent?: string, targetGridPosition?: number): string | null {
+  if (targetGridPosition != null) return `agent-${targetGridPosition}`;
+  if (targetAgent) {
+    const positions = agentNameToGrid.get(targetAgent);
+    if (positions?.length) return `agent-${positions[0]}`;
+  }
+  return null;
+}
+
 // parseMarkersFromContent is imported from ./lib
 
 function spawnClaude() {
@@ -596,10 +634,13 @@ function setupInboxWatcher() {
         for (let i = lastReadIndex; i < messages.length; i++) {
           const msg = messages[i];
           if (msg.from === '_healthcheck') continue;
+          // Resolve spawn name (e.g., "agent-6") to chosen name (e.g., "Sable")
+          const gridNum = parseInt((msg.from || '').replace('agent-', ''));
+          const chosenName = !isNaN(gridNum) ? (agentGridToName.get(gridNum) || msg.from) : msg.from;
           append({
             sessionId,
             type: 'agent_message',
-            agentName: msg.from,
+            agentName: chosenName,
             content: [{ type: 'text', text: msg.text }],
           });
           console.log(`[Inbox] Agent response from ${msg.from} (${msg.text.length} chars)`);
@@ -926,7 +967,7 @@ const server = Bun.serve({
       if (!processAlive || !claudeProc) {
         return Response.json({ error: "No active session" }, { status: 409, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      const body = (await req.json()) as { message?: string; targetAgent?: string; speakerName?: string };
+      const body = (await req.json()) as { message?: string; targetAgent?: string; targetGridPosition?: number; speakerName?: string };
       if (!body.message || typeof body.message !== 'string' || body.message.length > MAX_MESSAGE_SIZE) {
         return Response.json({ error: `Message required (max ${MAX_MESSAGE_SIZE / 1000}KB)` }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
@@ -943,19 +984,29 @@ const server = Bun.serve({
       });
 
       if (body.targetAgent && inboxHealthy) {
-        // Direct inbox injection — bypasses Julian's context window
-        const sent = await sendToAgent(body.targetAgent, body.message, speakerName);
-        if (!sent) {
-          // Fall back to Julian relay
-          console.warn(`[Send] Inbox injection failed for ${body.targetAgent}, falling back to Julian relay`);
+        // Direct inbox injection — resolve chosen name to spawn name
+        const spawnName = resolveAgentSpawnName(body.targetAgent, body.targetGridPosition);
+        if (spawnName) {
+          const sent = await sendToAgent(spawnName, body.message, speakerName);
+          if (!sent) {
+            console.warn(`[Send] Inbox injection failed for ${spawnName}, falling back to Julian relay`);
+            const routedMessage = `[ROUTE TO AGENT: ${spawnName}] ${body.message}`;
+            if (!writeToStdin(routedMessage)) {
+              return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
+            }
+          }
+        } else {
+          // Name not yet registered — fall back to Julian relay with original name
+          console.warn(`[Send] No spawn name found for ${body.targetAgent}, using Julian relay`);
           const routedMessage = `[ROUTE TO AGENT: ${body.targetAgent}] ${body.message}`;
           if (!writeToStdin(routedMessage)) {
             return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
           }
         }
       } else if (body.targetAgent) {
-        // Inbox not healthy — use Julian relay
-        const routedMessage = `[ROUTE TO AGENT: ${body.targetAgent}] ${body.message}`;
+        // Inbox not healthy — use Julian relay with resolved spawn name if available
+        const spawnName = resolveAgentSpawnName(body.targetAgent, body.targetGridPosition);
+        const routedMessage = `[ROUTE TO AGENT: ${spawnName || body.targetAgent}] ${body.message}`;
         if (!writeToStdin(routedMessage)) {
           return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
         }
