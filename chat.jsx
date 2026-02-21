@@ -734,7 +734,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
               background: summoning ? '#1a1a1a' : '#f59e0b',
               border: `1px solid ${summoning ? '#333' : '#f59e0b'}`,
               borderRadius: 9999,
-              cursor: summoning ? 'default' : 'pointer',
+              cursor: summoning ? 'not-allowed' : 'pointer',
               letterSpacing: '0.15em',
               textTransform: 'uppercase',
               transition: 'background 300ms ease, color 300ms ease, border-color 300ms ease, box-shadow 300ms ease',
@@ -758,7 +758,7 @@ function AgentGrid({ agents = [], activeAgent = null, onSelectAgent, onSummon, o
               background: summoning ? '#1a1a1a' : '#00afd1',
               border: `1px solid ${summoning ? '#333' : '#00afd1'}`,
               borderRadius: 9999,
-              cursor: summoning ? 'default' : 'pointer',
+              cursor: summoning ? 'not-allowed' : 'pointer',
               letterSpacing: '0.15em',
               textTransform: 'uppercase',
               transition: 'background 300ms ease, color 300ms ease, border-color 300ms ease, box-shadow 300ms ease',
@@ -832,12 +832,12 @@ function StatusDots({ ok }) {
     <div className="flex gap-1 items-center">
       <div style={{
         width: 8, height: 8,
-        backgroundColor: ok ? '#FFD600' : '#333',
-        boxShadow: ok ? '0 0 5px #FFD600' : 'none',
-        animation: ok ? 'pulse-dot 2s ease-in-out infinite' : 'none',
+        backgroundColor: ok ? '#FFD600' : '#ff6b6b',
+        boxShadow: ok ? '0 0 5px #FFD600' : '0 0 4px #ff6b6b',
+        animation: ok ? 'pulse-dot 2s ease-in-out infinite' : 'pulse-warn 2s ease-in-out infinite',
       }} />
-      <div style={{ width: 8, height: 8, backgroundColor: '#333' }} />
-      <div style={{ width: 8, height: 8, backgroundColor: '#333' }} />
+      <div style={{ width: 8, height: 8, backgroundColor: ok ? '#333' : '#ff6b6b', opacity: ok ? 1 : 0.5, animation: ok ? 'none' : 'pulse-warn 2s ease-in-out infinite 0.2s' }} />
+      <div style={{ width: 8, height: 8, backgroundColor: ok ? '#333' : '#ff6b6b', opacity: ok ? 1 : 0.3, animation: ok ? 'none' : 'pulse-warn 2s ease-in-out infinite 0.4s' }} />
     </div>
   );
 }
@@ -1079,8 +1079,9 @@ function JulianScreenEmbed({ sessionActive, compact, onFileSelect, onMenuTab, no
         width: 8,
         height: 8,
         borderRadius: '50%',
-        backgroundColor: connected ? '#FFD600' : '#444',
-        boxShadow: connected ? '0 0 6px #FFD600' : 'none',
+        backgroundColor: connected ? '#FFD600' : '#ff6b6b',
+        boxShadow: connected ? '0 0 6px #FFD600' : '0 0 4px #ff6b6b',
+        animation: connected ? 'none' : 'pulse-warn 2s ease-in-out infinite',
         zIndex: 20,
       }} />
 
@@ -1107,22 +1108,21 @@ function ThinkingDots() {
       <span style={{ color: '#FFD600', fontSize: '1.1rem', fontFamily: "'VT323', monospace" }}>
         {'>'} PROCESSING
       </span>
-      <span style={{
-        color: '#FFD600',
-        animation: 'blink 1s step-end infinite',
-        fontFamily: "'VT323', monospace",
-        fontSize: '1.1rem',
-      }}>_</span>
+      <span className="flex gap-1 items-center" style={{ marginLeft: 4 }}>
+        <span style={{ display: 'inline-block', width: 6, height: 6, backgroundColor: '#FFD600', animation: 'thinking-pulse 1.2s ease-in-out infinite' }} />
+        <span style={{ display: 'inline-block', width: 6, height: 6, backgroundColor: '#FFD600', animation: 'thinking-pulse 1.2s ease-in-out infinite 0.2s' }} />
+        <span style={{ display: 'inline-block', width: 6, height: 6, backgroundColor: '#FFD600', animation: 'thinking-pulse 1.2s ease-in-out infinite 0.4s' }} />
+      </span>
     </div>
   );
 }
 
 function ToolCallBlock({ name, input }) {
   return (
-    <div style={{
+    <div className="message-enter" style={{
       margin: '4px 0',
       padding: '4px 0',
-      borderLeft: '2px solid #AA8800',
+      borderLeft: '3px solid #C8A800',
       paddingLeft: 8,
     }}>
       <div style={{
@@ -1170,7 +1170,7 @@ function MessageBubble({ message }) {
               fontSize: '1.1rem',
               fontFamily: "'VT323', monospace",
               color: '#FFD600',
-              textShadow: '0 0 2px #AA8800',
+              textShadow: '0 0 4px rgba(0,0,0,0.3)',
               lineHeight: 1.4,
             }}>
               <span style={{ color: '#FFD600' }}>{'> '}</span>
@@ -1183,14 +1183,13 @@ function MessageBubble({ message }) {
         }
         return null;
       })}
-      {message.streaming && !message.thinking && (
-        <span style={{
-          color: '#FFD600',
-          animation: 'blink 1s step-end infinite',
-          fontFamily: "'VT323', monospace",
-          fontSize: '1.1rem',
-        }}>_</span>
-      )}
+      <span style={{
+        visibility: message.streaming && !message.thinking ? 'visible' : 'hidden',
+        color: '#FFD600',
+        animation: 'blink 1s step-end infinite',
+        fontFamily: "'VT323', monospace",
+        fontSize: '1.1rem',
+      }}>_</span>
     </div>
   );
 }
@@ -1392,11 +1391,11 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
           flexDirection: 'column',
         }}>
           {/* Tabs */}
-          <div style={{ display: 'flex', borderBottom: '1px solid #2a2a2a' }}>
-            <button onClick={() => setTab('oauth')} style={tabStyle(tab === 'oauth')}>
+          <div role="tablist" style={{ display: 'flex', borderBottom: '1px solid #2a2a2a' }}>
+            <button role="tab" aria-selected={tab === 'oauth'} onClick={() => setTab('oauth')} style={tabStyle(tab === 'oauth')}>
               Sign in with Anthropic
             </button>
-            <button onClick={() => setTab('legacy')} style={tabStyle(tab === 'legacy')}>
+            <button role="tab" aria-selected={tab === 'legacy'} onClick={() => setTab('legacy')} style={tabStyle(tab === 'legacy')}>
               Paste Token
             </button>
           </div>
@@ -1438,9 +1437,9 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
                         fontWeight: 700,
                         textTransform: 'uppercase',
                         letterSpacing: '0.1em',
-                        cursor: oauthLoading ? 'default' : 'pointer',
+                        cursor: oauthLoading ? 'not-allowed' : 'pointer',
                         boxShadow: oauthLoading ? 'none' : '0 4px 0 #AA8800, 0 8px 10px rgba(0,0,0,0.15)',
-                        transition: 'all 0.1s',
+                        transition: 'background-color 100ms ease, box-shadow 100ms ease',
                       }}
                     >
                       {oauthStatus === 'starting' ? 'OPENING...' : 'SIGN IN WITH ANTHROPIC'}
@@ -1511,7 +1510,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
                           border: '1px solid #333',
                           fontFamily: "'VT323', monospace",
                           fontSize: '1rem',
-                          cursor: oauthLoading ? 'default' : 'pointer',
+                          cursor: oauthLoading ? 'not-allowed' : 'pointer',
                         }}
                       >
                         BACK
@@ -1529,7 +1528,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
                           fontSize: '1.1rem',
                           fontWeight: 700,
                           textTransform: 'uppercase',
-                          cursor: (oauthLoading || !oauthCode.trim()) ? 'default' : 'pointer',
+                          cursor: (oauthLoading || !oauthCode.trim()) ? 'not-allowed' : 'pointer',
                           boxShadow: (oauthLoading || !oauthCode.trim()) ? 'none' : '0 3px 0 #AA8800',
                         }}
                       >
@@ -1624,8 +1623,8 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
                     fontWeight: 700,
                     textTransform: 'uppercase',
                     letterSpacing: 1,
-                    cursor: (legacyLoading || !token.trim()) ? 'default' : 'pointer',
-                    transition: 'all 0.1s',
+                    cursor: (legacyLoading || !token.trim()) ? 'not-allowed' : 'pointer',
+                    transition: 'background-color 100ms ease, box-shadow 100ms ease',
                     alignSelf: 'center',
                   }}
                 >
@@ -1707,6 +1706,8 @@ function ChatInput({ onSend, disabled }) {
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
         placeholder={disabled ? "PROCESSING..." : "INPUT BUFFER..."}
         disabled={disabled}
+        spellCheck={false}
+        autoComplete="off"
         rows={1}
         style={{
           flex: 1,
@@ -1747,10 +1748,11 @@ function ChatInput({ onSend, disabled }) {
           fontWeight: 700,
           textTransform: 'uppercase',
           letterSpacing: 1,
-          cursor: disabled ? 'default' : 'pointer',
-          transition: 'all 0.1s',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          transition: 'background-color 100ms ease, box-shadow 100ms ease',
           flexShrink: 0,
         }}
+        aria-label="Send message"
       >
         A
       </button>
@@ -2384,10 +2386,10 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
             border: `1px solid ${helping ? '#333' : 'rgba(0,175,209,0.3)'}`,
             borderRadius: 9999,
             padding: '6px 16px',
-            cursor: helping ? 'default' : 'pointer',
+            cursor: helping ? 'not-allowed' : 'pointer',
             letterSpacing: '0.15em',
             textTransform: 'uppercase',
-            transition: 'all 300ms',
+            transition: 'color 250ms ease, background-color 250ms ease, border-color 250ms ease',
           }}
         >
           {helping ? 'THINKING...' : 'HELP ME'}
@@ -2490,7 +2492,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
             cursor: 'pointer',
             letterSpacing: '0.15em',
             textTransform: 'uppercase',
-            transition: 'all 300ms',
+            transition: 'border-color 250ms ease, color 250ms ease',
           }}
         >
           CANCEL
@@ -2510,7 +2512,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
             letterSpacing: '0.15em',
             textTransform: 'uppercase',
             boxShadow: '0 0 12px rgba(0,175,209,0.3)',
-            transition: 'all 300ms',
+            transition: 'background-color 250ms ease, box-shadow 250ms ease',
           }}
         >
           SAVE
@@ -2638,7 +2640,7 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
               cursor: 'pointer',
               letterSpacing: '0.15em',
               textTransform: 'uppercase',
-              transition: 'all 300ms',
+              transition: 'border-color 250ms ease, color 250ms ease',
             }}
           >
             BACK
@@ -2809,7 +2811,7 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
                     padding: '6px 16px',
                     letterSpacing: '0.1em',
                     textTransform: 'uppercase',
-                    transition: 'all 300ms',
+                    transition: 'background-color 250ms ease, border-color 250ms ease',
                     cursor: 'pointer',
                   }}
                 >
@@ -2858,7 +2860,7 @@ function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
             cursor: 'pointer',
             letterSpacing: '0.15em',
             textTransform: 'uppercase',
-            transition: 'all 300ms',
+            transition: 'background-color 250ms ease, box-shadow 250ms ease',
             boxShadow: '0 0 12px rgba(0,175,209,0.3)',
           }}
         >

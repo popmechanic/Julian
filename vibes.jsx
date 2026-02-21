@@ -740,6 +740,11 @@ const getAnimationStyles = () => `
       background-color: black;
     }
   }
+
+  @media (prefers-reduced-motion: reduce) {
+    @keyframes shredCard { from, to { clip-path: none; transform: none; } }
+    @keyframes collapseToLine { from, to { transform: none; } }
+  }
 `;
 
 
@@ -810,7 +815,7 @@ function getFormButtonStyle(variant, formColor) {
     fontWeight: "bold",
     letterSpacing: "2px",
     cursor: "pointer",
-    transition: "0.2s",
+    transition: "background-color 0.2s ease, transform 0.15s var(--ease-out)",
     borderRadius: "20px",
     textTransform: "none"
   };
@@ -840,7 +845,7 @@ function getButtonStyle(variant, isHovered, isActive, isMobile = false, hasIcon,
     fontWeight: 700,
     letterSpacing: "0.05em",
     cursor: "pointer",
-    transition: "all 0.15s ease",
+    transition: "transform 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out)",
     position: "relative",
     transform,
     boxShadow

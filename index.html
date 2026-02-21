@@ -155,6 +155,13 @@
         --vibes-yellow-accent: #eab308;
         --vibes-shadow-color: rgba(0, 0, 0, 0.2);
 
+        /* Timing & easing */
+        --ease-out: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+        --ease-out-quart: cubic-bezier(0.165, 0.84, 0.44, 1);
+        --duration-fast: 100ms;
+        --duration-standard: 150ms;
+        --duration-slow: 250ms;
+
         /* Text colors */
         --vibes-text-primary: var(--vibes-near-black);
 
@@ -199,13 +206,6 @@
       .screen-icon-glow {
         animation: screen-icon-glow 3s ease-in-out infinite;
       }
-      .screen-grid-item:hover .screen-icon-glow {
-        opacity: 1 !important;
-        transform: scale(1.05);
-      }
-      .screen-grid-item:hover .screen-grid-label {
-        color: white !important;
-      }
       .screen-panel-scroll::-webkit-scrollbar {
         width: 6px;
         background: #0c0c0c;
@@ -224,9 +224,14 @@
       /* ── Button press feedback ─────────────────────────────────────────── */
       button {
         touch-action: manipulation;
+        transition: transform var(--duration-fast) var(--ease-out);
       }
       button:active {
         transform: scale(0.97);
+      }
+      button:focus-visible {
+        outline: 2px solid #FFD600;
+        outline-offset: 2px;
       }
 
       /* ── Message entrance animation ────────────────────────────────────── */
@@ -238,26 +243,31 @@
         animation: message-enter 200ms cubic-bezier(0.165, 0.84, 0.44, 1);
       }
 
+      /* ── Smooth state transitions ──────────────────────────────────────── */
+      .app-state-enter {
+        animation: fadeIn var(--duration-slow) var(--ease-out);
+      }
+      @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+
       /* ── Reduced motion ────────────────────────────────────────────────── */
       @media (prefers-reduced-motion: reduce) {
-        .screen-icon-glow { animation: none; }
-        .screen-grid-item:hover .screen-icon-glow { transform: none; }
-        .message-enter { animation: none; }
-        button:active { transform: none; }
+        *, *::before, *::after {
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
       }
 
       /* ── Hover effects only on hover-capable devices ───────────────────── */
-      .screen-grid-item:hover .screen-icon-glow,
-      .screen-grid-item:hover .screen-grid-label {
-        /* Default: already defined above */
-      }
-      @media (hover: none) {
+      @media (hover: hover) and (pointer: fine) {
         .screen-grid-item:hover .screen-icon-glow {
-          opacity: 0.8 !important;
-          transform: none;
+          opacity: 1 !important;
+          transform: scale(1.05);
         }
         .screen-grid-item:hover .screen-grid-label {
-          color: rgba(255,255,255,0.4) !important;
+          color: white !important;
         }
       }
     </style>
@@ -1760,12 +1770,24 @@ function App({ bootData }) {
           0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
           40% { opacity: 1; transform: scale(1.2); }
         }
+        @keyframes pulse-warn {
+          0%, 100% { opacity: 0.4; }
+          50% { opacity: 1; }
+        }
+        @keyframes thinking-pulse {
+          0%, 100% { opacity: 0.3; }
+          50% { opacity: 1; }
+        }
         #send-btn:active {
           transform: translateY(4px);
           box-shadow: 0 0 0 #999, inset 0 2px 5px rgba(0,0,0,0.1) !important;
         }
         input::placeholder, textarea::placeholder {
-          color: rgba(0,0,0,0.4);
+          color: rgba(0,0,0,0.55);
+        }
+        ::selection {
+          background: rgba(255, 214, 0, 0.3);
+          color: #000;
         }
         @media (prefers-reduced-motion: reduce) {
           textarea { transition: none !important; }
@@ -1780,6 +1802,7 @@ function App({ bootData }) {
           font-weight: 900;
           z-index: 50;
           pointer-events: none;
+          user-select: none;
         }
         body::after {
           content: '\u00D7';
@@ -1791,6 +1814,7 @@ function App({ bootData }) {
           font-weight: 900;
           z-index: 50;
           pointer-events: none;
+          user-select: none;
         }
         #container {
           background-color: #FFD600 !important;
@@ -1799,7 +1823,7 @@ function App({ bootData }) {
 
       {setupNeeded === null ? (
         /* ── Loading ── */
-        <div style={{
+        <div className="app-state-enter" key="loading" style={{
           minHeight: '100vh',
           display: 'flex',
           alignItems: 'center',
@@ -1827,7 +1851,7 @@ function App({ bootData }) {
         />
       ) : isMobile ? (
         /* ── Mobile: Three-section vertical stack ── */
-        <div style={{
+        <div className="app-state-enter" key="mobile" style={{
           display: 'flex',
           flexDirection: 'column',
           height: '100vh',
@@ -1856,7 +1880,7 @@ function App({ bootData }) {
                 fontFamily: "'VT323', monospace",
                 fontSize: '0.75rem',
                 color: '#AA8800',
-                opacity: 0.6,
+                opacity: 0.8,
               }}>
                 {!sessionActive ? 'OFFLINE' : streaming ? 'PROCESSING...' : wakingUp ? 'WAKING UP...' : 'LISTENING'}
               </div>
@@ -1871,8 +1895,9 @@ function App({ bootData }) {
                 background: '#1a1a00',
                 border: '1px solid #333',
                 borderRadius: 4,
-                padding: '3px 8px',
+                padding: '6px 12px',
                 cursor: 'pointer',
+                minHeight: 44,
               }}
             >NEW</button>
             {sessionActive && (
@@ -1885,8 +1910,9 @@ function App({ bootData }) {
                   background: '#1a0000',
                   border: '1px solid #333',
                   borderRadius: 4,
-                  padding: '3px 8px',
+                  padding: '6px 12px',
                   cursor: 'pointer',
+                  minHeight: 44,
                 }}
               >END</button>
             )}
@@ -1947,6 +1973,7 @@ function App({ bootData }) {
               border: '4px solid #2a2a2a',
               borderRadius: '12px 12px 0 0',
               overflowY: 'auto',
+              scrollBehavior: 'smooth',
               padding: 12,
               position: 'relative',
             }}>
@@ -1999,7 +2026,7 @@ function App({ bootData }) {
                         background: streaming ? '#1a1a1a' : '#1a001a',
                         border: `1px solid ${streaming ? '#333' : '#FF88FF'}`,
                         borderRadius: 4,
-                        cursor: streaming ? 'default' : 'pointer',
+                        cursor: streaming ? 'not-allowed' : 'pointer',
                         letterSpacing: '0.1em',
                         textTransform: 'uppercase',
                       }}
@@ -2015,7 +2042,7 @@ function App({ bootData }) {
         </div>
       ) : (
         /* ── Desktop: Chat sidebar + JulianScreen ── */
-        <div style={{
+        <div className="app-state-enter" key="desktop" style={{
           display: 'flex',
           height: '100vh',
           padding: 16,
@@ -2076,7 +2103,7 @@ function App({ bootData }) {
                       fontFamily: "'VT323', monospace",
                       fontSize: '0.85rem',
                       color: '#AA8800',
-                      opacity: 0.6,
+                      opacity: 0.8,
                     }}>
                       {!sessionActive ? 'OFFLINE' : streaming ? 'PROCESSING...' : wakingUp ? 'WAKING UP...' : 'LISTENING'}
                     </div>
@@ -2123,6 +2150,7 @@ function App({ bootData }) {
               borderTop: 'none',
               borderBottom: 'none',
               overflowY: 'auto',
+              scrollBehavior: 'smooth',
               padding: 16,
               position: 'relative',
             }}>
@@ -2188,7 +2216,7 @@ function App({ bootData }) {
                         background: streaming ? '#1a1a1a' : '#1a001a',
                         border: `1px solid ${streaming ? '#333' : '#FF88FF'}`,
                         borderRadius: 4,
-                        cursor: streaming ? 'default' : 'pointer',
+                        cursor: streaming ? 'not-allowed' : 'pointer',
                         letterSpacing: '0.1em',
                         textTransform: 'uppercase',
                       }}
