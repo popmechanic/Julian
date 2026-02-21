@@ -1056,8 +1056,9 @@ function App({ bootData }) {
     _eventHandlers.onArtifactWritten = (event) => {
       // Refresh menu data when artifacts are written
       if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
-      // Auto-open the artifact in the browser tab
-      if (event.filename && (event.filename.endsWith('.html') || event.filename.endsWith('.md'))) {
+      // Auto-open HTML artifacts in the browser tab
+      // (.md files are only opened when clicked manually — not all .md files in memory/ are letters)
+      if (event.filename && event.filename.endsWith('.html')) {
         handleFileSelect(event.filename);
       }
     };
