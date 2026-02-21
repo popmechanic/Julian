@@ -1198,6 +1198,10 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
           gif: "image/gif",
           svg: "image/svg+xml",
           pdf: "application/pdf",
+          ttf: "font/ttf",
+          woff: "font/woff",
+          woff2: "font/woff2",
+          otf: "font/otf",
         };
         const contentType = contentTypes[ext] || "application/octet-stream";
         return new Response(content, {
