@@ -131,7 +131,7 @@ export function parseMarkersFromContent(
     // Detect Write tool targeting memory/
     if (block.type === 'tool_use' && block.name === 'Write') {
       const filePath = block.input?.file_path || '';
-      if (filePath.includes('memory/') && filePath.endsWith('.html')) {
+      if (filePath.includes('memory/') && (filePath.endsWith('.html') || filePath.endsWith('.md'))) {
         const filename = filePath.split('/').pop() || '';
         appendFn({
           sessionId,

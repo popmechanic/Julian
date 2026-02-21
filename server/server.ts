@@ -2,6 +2,7 @@ import { spawn } from "bun";
 import { join, resolve } from "path";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, watch as fsWatch } from "fs";
+import { marked, Renderer } from "marked";
 import { homedir } from "os";
 import { createHash, randomBytes } from "crypto";
 import {
@@ -19,6 +20,116 @@ import {
 
 const PORT = parseInt(process.env.PORT || "8000");
 const WORKING_DIR = process.env.WORKING_DIR || process.cwd();
+
+// ── Markdown letter rendering ───────────────────────────────────────────
+
+// Load template CSS once at startup (420KB with base64 fonts) — inlined into every rendered letter
+// so artifacts are self-contained and work inside sandboxed iframes
+let LETTER_CSS = '';
+try {
+  LETTER_CSS = readFileSync(join(WORKING_DIR, 'memory', 'letter-template.css'), 'utf-8');
+} catch (e) {
+  console.warn('[Server] Could not load letter-template.css:', e);
+}
+
+function parseFrontmatter(raw: string): { meta: Record<string, string>; body: string } {
+  const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!match) return { meta: {}, body: raw };
+  const meta: Record<string, string> = {};
+  for (const line of match[1].split('\n')) {
+    const idx = line.indexOf(':');
+    if (idx > 0) meta[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+  }
+  return { meta, body: match[2] };
+}
+
+function renderMarkdownLetter(raw: string): string {
+  const { meta, body } = parseFrontmatter(raw);
+
+  // Custom renderer for template-specific elements
+  const renderer = new Renderer();
+  let firstParagraph = true;
+
+  renderer.paragraph = function ({ text }: { text: string }) {
+    // "· · ·" on its own line → decorative break
+    const plain = text.trim();
+    if (plain === '· · ·') return '<div class="break">· · ·</div>\n';
+    const html = marked.parseInline(text) as string;
+    if (firstParagraph) {
+      firstParagraph = false;
+      return `<p class="drop-cap">${html}</p>\n`;
+    }
+    return `<p>${html}</p>\n`;
+  };
+
+  renderer.blockquote = function ({ text }: { text: string }) {
+    // Check for admonition syntax: [!insight] or [!question]
+    const admonitionMatch = text.match(/^\[!(insight|question)\]\n?([\s\S]*)$/);
+    if (admonitionMatch) {
+      const type = admonitionMatch[1];
+      const content = marked.parseInline(admonitionMatch[2].trim()) as string;
+      return `<blockquote class="${type}"><p>${content}</p></blockquote>\n`;
+    }
+    const html = marked.parseInline(text) as string;
+    return `<blockquote><p>${html}</p></blockquote>\n`;
+  };
+
+  renderer.code = function ({ text, lang }: { text: string; lang?: string }) {
+    if (lang === 'pixel') {
+      const lines = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `<div class="pixel-block">${lines.split('\n').join('<br>')}</div>\n`;
+    }
+    const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `<pre><code>${escaped}</code></pre>\n`;
+  };
+
+  const htmlBody = marked.parse(body, { renderer }) as string;
+
+  // Build full HTML document
+  const title = meta.title || 'Letter';
+  const subtitle = meta.subtitle || '';
+  const description = meta.description || '';
+  const category = meta.category || 'identity';
+  const chapter = meta.chapter || '';
+  const epigraph = meta.epigraph || '';
+  const epigraphSource = meta.epigraph_source || '';
+  const signature = meta.signature || 'Session continuous · 2026';
+
+  const epigraphBlock = epigraph ? `
+        <div class="epigraph">
+            ${epigraph}
+            ${epigraphSource ? `<span class="epigraph-source">— ${epigraphSource}</span>` : ''}
+        </div>` : '';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="artifact-description" content="${description.replace(/"/g, '&quot;')}">
+    <meta name="artifact-category" content="${category}">
+    ${chapter ? `<meta name="artifact-chapter" content="${chapter.replace(/"/g, '&quot;')}">` : ''}
+    <title>${title}</title>
+    <style>${LETTER_CSS}</style>
+</head>
+<body>
+    <article class="letter">
+        <header class="letter-header">
+            <h1 class="letter-title" data-text="${title.replace(/"/g, '&quot;')}">${title}</h1>
+            ${subtitle ? `<p class="letter-subtitle">${subtitle}</p>` : ''}
+        </header>
+${epigraphBlock}
+        <div class="letter-body">
+            ${htmlBody}
+        </div>
+        <div class="signature">
+            <div class="signature-name">Julian</div>
+            <div class="signature-context">${signature}</div>
+        </div>
+    </article>
+</body>
+</html>`;
+}
 
 // Git version for deploy detection — read once at startup
 let GIT_VERSION = "unknown";
@@ -1189,6 +1300,7 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
         const ext = relativePath.split(".").pop()?.toLowerCase() || "";
         const contentTypes: Record<string, string> = {
           html: "text/html; charset=utf-8",
+          css: "text/css; charset=utf-8",
           md: "text/markdown; charset=utf-8",
           txt: "text/plain; charset=utf-8",
           json: "application/json; charset=utf-8",
@@ -1203,6 +1315,13 @@ Do not mention Marcus\'s physical state or the hackathon. This is about you and 
           woff2: "font/woff2",
           otf: "font/otf",
         };
+        // Render markdown files as styled HTML using the letter template
+        if (ext === "md") {
+          const rendered = renderMarkdownLetter(content.toString("utf-8"));
+          return new Response(rendered, {
+            headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders(ALLOWED_ORIGIN) },
+          });
+        }
         const contentType = contentTypes[ext] || "application/octet-stream";
         return new Response(content, {
           headers: { "Content-Type": contentType, ...corsHeaders(ALLOWED_ORIGIN) },

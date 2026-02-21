@@ -881,11 +881,11 @@ function App({ bootData }) {
         }
       }
 
-      // Auto-catalog: detect Write tool for memory/*.html
+      // Auto-catalog: detect Write tool for memory/*.html or memory/*.md
       const writeBlocks = finalBlocks.filter(b =>
         b.type === 'tool_use' && b.name === 'Write' &&
         b.input?.file_path?.includes('memory/') &&
-        b.input?.file_path?.endsWith('.html')
+        (b.input?.file_path?.endsWith('.html') || b.input?.file_path?.endsWith('.md'))
       );
       for (const wb of writeBlocks) {
         const filename = wb.input.file_path.split('/').pop();
@@ -1053,9 +1053,13 @@ function App({ bootData }) {
       setStreaming(false);
     };
 
-    _eventHandlers.onArtifactWritten = () => {
+    _eventHandlers.onArtifactWritten = (event) => {
       // Refresh menu data when artifacts are written
       if (typeof refreshMenuDataRef.current === 'function') refreshMenuDataRef.current();
+      // Auto-open the artifact in the browser tab
+      if (event.filename && (event.filename.endsWith('.html') || event.filename.endsWith('.md'))) {
+        handleFileSelect(event.filename);
+      }
     };
 
     _eventHandlers.onAgentMessage = async (event) => {
