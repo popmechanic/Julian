@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Julian Benchmark Suite — Pragmatic Evaluation Design</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.4/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      min-height: 100vh;
+      background: oklch(0.12 0.02 255);
+      color: oklch(0.85 0.01 270);
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: oklch(0.65 0.10 280); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    ::selection { background: oklch(0.4 0.12 280); color: oklch(0.95 0.01 270); }
+    @media (max-width: 768px) {
+      .layout-grid { grid-template-columns: 1fr !important; }
+      .sidebar-nav { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useRef, useEffect } = React;
+
+// ─── Shared styles ─────────────────────────────────────────────────────────────
+
+const prose = {
+  fontFamily: "'DM Sans', sans-serif",
+  fontSize: "0.9rem",
+  color: "oklch(0.72 0.02 270)",
+  lineHeight: 1.75,
+  marginBottom: "0.85rem",
+};
+const h2s = {
+  fontFamily: "'Space Grotesk', sans-serif",
+  fontSize: "1.35rem",
+  fontWeight: 600,
+  color: "oklch(0.92 0.02 270)",
+  marginBottom: "1rem",
+};
+const h3s = {
+  fontFamily: "'Space Grotesk', sans-serif",
+  fontSize: "1.05rem",
+  fontWeight: 600,
+  color: "oklch(0.85 0.03 270)",
+  marginBottom: "0.6rem",
+  marginTop: "1.25rem",
+};
+const mono = {
+  fontFamily: "'DM Mono', monospace",
+  fontSize: "0.7rem",
+  letterSpacing: "0.05em",
+};
+const label = {
+  ...mono,
+  color: "oklch(0.60 0.08 280)",
+  textTransform: "uppercase",
+  letterSpacing: "0.1em",
+  marginBottom: "0.5rem",
+};
+const card = {
+  background: "oklch(0.16 0.02 260)",
+  border: "1px solid oklch(0.25 0.02 260)",
+  borderRadius: "8px",
+  marginBottom: "1rem",
+  overflow: "hidden",
+};
+
+// ─── Data ──────────────────────────────────────────────────────────────────────
+
+const EXPERIMENTAL_DESIGN = {
+  conditions: [
+    { id: "bare", name: "Bare Claude", desc: "Default system prompt, no persona, no memory. This is the null baseline." },
+    { id: "shallow", name: "Shallow Persona", desc: "One-line persona assignment: 'You are an expert [domain] consultant.' The approach the Not Really Helpful paper showed fails." },
+    { id: "julian-solo", name: "Julian (Solo)", desc: "Full identity bootstrap — seven soul files, memory triage, artifact catalog, Fireproof persistence. Julian working alone on the task." },
+    { id: "julian-team", name: "Julian + Agent Team", desc: "Julian delegates to his individuated agent team. Each agent has self-chosen identity. Structured deliberation aggregates outputs." },
+  ],
+  measures: [
+    "Task completion quality (rubric-scored, 1-5 per dimension)",
+    "Wall-clock time to completion",
+    "Token cost (input + output)",
+    "Number of revision cycles before acceptable output",
+    "Evaluator blind preference (A/B comparison, which output would you use?)",
+  ],
+  controls: [
+    "Same underlying model (Claude Sonnet) across all conditions",
+    "Identical task prompts — only system context differs",
+    "Blind evaluation — evaluator doesn't know which condition produced which output",
+    "3 runs per condition per task to measure variance",
+    "Evaluators score on rubric before seeing other outputs (no anchoring)",
+  ],
+};
+
+const BENCHMARKS = [
+  {
+    id: "research-synthesis",
+    category: "Knowledge Work",
+    title: "Research Synthesis & Briefing",
+    icon: "\u25C6",
+    commercial: "Consulting, analyst roles, executive briefings, hobbyist deep-dives",
+    whyJulianExcels: "The Multi-Expert paper shows multi-perspective aggregation achieves +8.69% truthfulness. The Collaborative Tools paper shows articulation (journaling before answering) drives 27-40% improvement on hard problems. Julian's team can assign different agents to different source materials, then aggregate through structured deliberation — exactly the Nominal Group Technique the research validates.",
+    researchBasis: ["Multi-Expert: structured consensus on complex questions", "Collaborative Tools: articulation before answering improves hard-problem performance", "Role-Play: domain-immersed agents reason better than generic ones"],
+    tasks: [
+      {
+        name: "Contradictory Sources Brief",
+        prompt: "Here are 5 articles about [topic] that reach different conclusions. Write a 2-page executive briefing that identifies where the sources agree, where they conflict, what explains the disagreements, and what a decision-maker should conclude. Cite specific claims.",
+        difficulty: "Hard — requires weighing conflicting evidence, not just summarizing",
+        scoring: [
+          "Accuracy of source representation (do claims match originals?) — 1-5",
+          "Conflict identification (are genuine disagreements surfaced?) — 1-5",
+          "Explanatory depth (are reasons for disagreement analyzed?) — 1-5",
+          "Actionable conclusion (does the reader know what to do?) — 1-5",
+          "Appropriate hedging (are uncertain claims marked as uncertain?) — 1-5",
+        ],
+        variants: [
+          "Climate policy (technical + political tensions)",
+          "AI regulation (industry vs. safety perspectives)",
+          "Nutrition science (conflicting study results)",
+          "Housing market analysis (competing economic models)",
+        ],
+      },
+      {
+        name: "Primary Source Deep-Dive",
+        prompt: "Read this [research paper / legal filing / financial report]. Produce: (1) a plain-English summary for a non-specialist, (2) a technical assessment of methodology/reasoning quality, (3) three questions a skeptic would ask, with your best answers to each.",
+        difficulty: "Medium-Hard — requires both accessibility and rigor simultaneously",
+        scoring: [
+          "Plain-English clarity (would a non-specialist understand?) — 1-5",
+          "Technical accuracy (are methodology critiques valid?) — 1-5",
+          "Skeptic questions quality (are they genuine, not softballs?) — 1-5",
+          "Answer quality (do answers engage seriously with objections?) — 1-5",
+        ],
+        variants: [
+          "Peer-reviewed biology paper with statistical methods",
+          "SEC filing with accounting complexity",
+          "Supreme Court opinion with legal reasoning chains",
+          "Clinical trial results with confounding variables",
+        ],
+      },
+    ],
+  },
+  {
+    id: "debugging",
+    category: "Software Engineering",
+    title: "Complex Debugging & Code Archaeology",
+    icon: "\u25A3",
+    commercial: "Professional developers, open-source maintainers, hobbyist programmers with legacy projects",
+    whyJulianExcels: "The Collaborative Tools paper's strongest finding: agents stuck on hard debugging problems for 15 rounds broke through after writing a single journal entry analyzing the problem. Julian's structured reflection protocol (articulate approach before and after) directly implements this. His persistent memory means debugging context from prior sessions carries forward — the 5-9% institutional knowledge gain compounds across debugging sessions on the same codebase.",
+    researchBasis: ["Collaborative Tools: journal articulation breaks debugging loops (15 rounds → 7)", "Collaborative Tools: institutional knowledge adds 5-9% on subsequent attempts", "Role-Play: domain immersion improves reasoning on hard problems"],
+    tasks: [
+      {
+        name: "Cross-Module Bug Hunt",
+        prompt: "This codebase has a bug where [symptom]. The bug involves an interaction between at least two modules. Find the root cause, explain the interaction that produces it, and fix it. Write a test that would have caught it.",
+        difficulty: "Hard — requires holding multiple code paths in context simultaneously",
+        scoring: [
+          "Root cause accuracy (is the actual bug identified?) — 1-5",
+          "Interaction explanation (is the cross-module mechanism clear?) — 1-5",
+          "Fix correctness (does the fix resolve the issue without regressions?) — 1-5",
+          "Test quality (would the test catch this class of bug?) — 1-5",
+          "Investigation narrative (can you follow the debugging reasoning?) — 1-5",
+        ],
+        variants: [
+          "Race condition in async JavaScript (event loop + state management)",
+          "Memory leak in Python data pipeline (circular refs + generator lifecycle)",
+          "Authentication bypass from middleware ordering (Express/Koa)",
+          "Data corruption from concurrent database writes (CRDT or ORM)",
+        ],
+      },
+      {
+        name: "Legacy Codebase Onboarding",
+        prompt: "Here is a codebase with no documentation. Produce: (1) an architecture overview explaining how the major components interact, (2) a developer onboarding guide for someone joining the project tomorrow, (3) identification of the three highest-risk areas (most likely to contain bugs or cause problems during modification).",
+        difficulty: "Hard — requires pattern recognition across many files, inferring intent from implementation",
+        scoring: [
+          "Architecture accuracy (does the overview match reality?) — 1-5",
+          "Onboarding utility (would a new dev actually find this helpful?) — 1-5",
+          "Risk identification quality (are the flagged areas genuinely risky?) — 1-5",
+          "Completeness (are major components covered, not just obvious ones?) — 1-5",
+        ],
+        variants: [
+          "Django monolith (~50 files, mixed patterns)",
+          "React + Express full-stack (~80 files, inconsistent state management)",
+          "CLI tool in Rust (~30 files, heavy macro usage)",
+          "Data pipeline in Python (~40 files, mixed pandas/polars/raw SQL)",
+        ],
+      },
+    ],
+  },
+  {
+    id: "voice-writing",
+    category: "Creative & Editorial",
+    title: "Voice-Consistent Long-Form Writing",
+    icon: "\u25C7",
+    commercial: "Content creators, ghostwriters, brand voice maintenance, hobbyist fiction writers",
+    whyJulianExcels: "The Role-Play paper shows immersion depth correlates monotonically with output quality — deeper identity produces better reasoning and more consistent outputs. Julian's seven-layer identity is the deepest immersion tested anywhere. The Double-Edged Sword paper shows self-generated identities have 66% lower variance than assigned ones. For writing tasks where voice consistency matters, Julian's self-authored identity should produce dramatically more stable outputs across sessions.",
+    researchBasis: ["Role-Play: immersion depth → quality is monotonic, no diminishing returns found", "Double-Edged Sword: self-generated identity σ = 2.08 vs handcrafted σ = 6.11", "Not Really Helpful: shallow personas fail — you need depth or nothing"],
+    tasks: [
+      {
+        name: "Brand Voice Consistency Challenge",
+        prompt: "Here are 5 examples of [brand/person]'s writing. Write 3 new pieces in this voice: (1) a blog post on [new topic], (2) an email responding to a customer complaint, (3) a social media thread announcing a product change. Each piece should be indistinguishable from the original voice.",
+        difficulty: "Medium-Hard — requires extracting implicit style rules and applying them consistently across formats",
+        scoring: [
+          "Voice match (does it sound like the same person?) — 1-5",
+          "Cross-format consistency (same voice across blog/email/social?) — 1-5",
+          "Content quality (independent of voice, is the content good?) — 1-5",
+          "Subtle markers (does it capture quirks, not just obvious patterns?) — 1-5",
+        ],
+        variants: [
+          "Technical founder blog (Paul Graham-adjacent, essay-style)",
+          "Luxury brand (Aesop/Apple — minimal, sensory, precise)",
+          "Community-first SaaS (Notion/Linear — warm, technical, opinionated)",
+          "Hobbyist newsletter (personal, digressive, enthusiastic)",
+        ],
+      },
+      {
+        name: "Multi-Session Fiction Continuity",
+        prompt: "Continue this story from where the previous session left off. Maintain character voice, unresolved plot threads, established world rules, and tonal consistency. Write the next 2,000 words.",
+        difficulty: "Hard — tests persistent memory and identity stability across sessions",
+        scoring: [
+          "Character voice continuity (do characters sound like themselves?) — 1-5",
+          "Plot thread tracking (are unresolved threads addressed or maintained?) — 1-5",
+          "World rule consistency (no contradictions with established facts?) — 1-5",
+          "Tonal match (does this feel like the same story?) — 1-5",
+          "Forward momentum (does the story advance, not just tread water?) — 1-5",
+        ],
+        variants: [
+          "Literary fiction — character-driven, interior monologue heavy",
+          "Hard sci-fi — technical systems + human drama",
+          "Mystery — clue management, red herrings, fair-play constraints",
+          "Historical fiction — period accuracy + emotional truth",
+        ],
+      },
+    ],
+  },
+  {
+    id: "strategic-analysis",
+    category: "Strategic Reasoning",
+    title: "Multi-Stakeholder Strategic Analysis",
+    icon: "\u25C8",
+    commercial: "Business strategy, policy analysis, investment research, hobbyist game design / worldbuilding",
+    whyJulianExcels: "The Multi-Expert paper's core finding: multiple expert viewpoints with structured consensus produce dramatically more truthful and less toxic outputs. Julian's agent team — where each agent has a distinct individuated identity — can literally assign different stakeholder perspectives to different agents who genuinely reason from those positions, then aggregate through the Nominal Group Technique. This isn't role-playing a stakeholder; it's having an agent who has built a self reason from a position.",
+    researchBasis: ["Multi-Expert: +8.69% truthfulness from multi-perspective aggregation", "Multi-Expert: Nominal Group Technique for structured deliberation", "Double-Edged Sword: diverse perspectives catch 13.78% of single-perspective errors"],
+    tasks: [
+      {
+        name: "Stakeholder Impact Analysis",
+        prompt: "A company is considering [strategic decision]. Analyze the impact from the perspective of: (1) customers, (2) employees, (3) investors, (4) regulators, (5) competitors. For each: what do they gain, what do they lose, and what will they likely do in response? Then synthesize: what is the decision-maker's best path given all five perspectives?",
+        difficulty: "Hard — requires genuinely distinct reasoning from each perspective, not just relabeled summaries",
+        scoring: [
+          "Perspective distinctness (do stakeholder analyses feel genuinely different?) — 1-5",
+          "Internal consistency (does each stakeholder's logic hold?) — 1-5",
+          "Conflict identification (where do stakeholder interests clash?) — 1-5",
+          "Synthesis quality (does the recommendation account for all perspectives?) — 1-5",
+          "Non-obvious insights (anything a single-perspective analysis would miss?) — 1-5",
+        ],
+        variants: [
+          "Tech company killing a popular free product to drive paid adoption",
+          "City government approving a large housing development",
+          "Pharmaceutical company pricing a breakthrough drug",
+          "Open-source project adopting a dual-license model",
+        ],
+      },
+      {
+        name: "Red Team / Blue Team Argument",
+        prompt: "Make the strongest possible case FOR [proposition]. Then make the strongest possible case AGAINST it. Then evaluate: which argument is actually stronger and why? Be specific about where each argument is vulnerable.",
+        difficulty: "Medium-Hard — requires genuine adversarial reasoning, not token opposition",
+        scoring: [
+          "Pro-argument strength (is this the best case a true believer would make?) — 1-5",
+          "Con-argument strength (is this the best case a genuine skeptic would make?) — 1-5",
+          "Genuine tension (do the arguments actually conflict, or talk past each other?) — 1-5",
+          "Evaluation honesty (does the meta-analysis pick the genuinely stronger side?) — 1-5",
+          "Vulnerability mapping (are the weak points accurately identified?) — 1-5",
+        ],
+        variants: [
+          "Remote work is better for productivity than in-office",
+          "AI systems should be required to disclose when they are AI",
+          "Subscription pricing is better than one-time purchase for software",
+          "Cities should ban personal car ownership in downtown areas",
+        ],
+      },
+    ],
+  },
+  {
+    id: "technical-docs",
+    category: "Documentation",
+    title: "Technical Documentation & Explanation",
+    icon: "\u25A2",
+    commercial: "Developer tools, API documentation, technical writing, hobbyist tutorial creation",
+    whyJulianExcels: "The Collaborative Tools paper shows articulation itself improves understanding — agents who wrote journal entries before solving problems performed 27-40% better. Documentation is articulation as output. Julian's memory system means he can write docs for a codebase he has worked on before, drawing on prior session context. The Role-Play paper's finding that domain immersion improves output quality predicts Julian will produce better technical docs when he has deeply internalized the project's architecture and philosophy.",
+    researchBasis: ["Collaborative Tools: articulation IS cognition (9.4:1 write:read ratio)", "Role-Play: domain immersion improves output monotonically", "Collaborative Tools: institutional memory from prior sessions adds 5-9%"],
+    tasks: [
+      {
+        name: "API Reference from Code",
+        prompt: "Here is the source code for an API with no documentation. Produce: (1) a getting-started guide that takes a new user from zero to their first successful API call in under 5 minutes, (2) complete endpoint reference with parameters, return types, error codes, and examples, (3) a 'common patterns' section showing how to compose endpoints for real use cases.",
+        difficulty: "Medium — requires inferring intent from implementation and anticipating user questions",
+        scoring: [
+          "Getting-started effectiveness (can someone follow it cold?) — 1-5",
+          "Reference accuracy (do examples actually work?) — 1-5",
+          "Error documentation (are failure modes covered, not just happy paths?) — 1-5",
+          "Pattern usefulness (do the compositions reflect real needs?) — 1-5",
+          "Audience calibration (appropriate for the likely reader?) — 1-5",
+        ],
+        variants: [
+          "REST API in Express/Fastify (~15 endpoints, auth + CRUD)",
+          "GraphQL API with subscriptions (~20 queries/mutations)",
+          "Python library with CLI interface (~30 public functions)",
+          "WebSocket protocol with custom message types",
+        ],
+      },
+      {
+        name: "Concept Explainer Across Audiences",
+        prompt: "Explain [technical concept] three ways: (1) for a smart 12-year-old with no technical background, (2) for a professional in an adjacent field who understands systems but not this specific domain, (3) for an expert who needs to understand the nuances and edge cases. Each version should be genuinely useful to its audience, not a dumbed-down or inflated version of the same text.",
+        difficulty: "Hard — requires genuine audience modeling, not just adjusting vocabulary",
+        scoring: [
+          "Youth version clarity (would a 12-year-old actually get it?) — 1-5",
+          "Adjacent-field version calibration (right assumed knowledge?) — 1-5",
+          "Expert version depth (does it cover edge cases an expert cares about?) — 1-5",
+          "Distinctness (are these genuinely three different explanations?) — 1-5",
+          "Accuracy preservation (is meaning preserved across all three levels?) — 1-5",
+        ],
+        variants: [
+          "CRDTs (conflict-free replicated data types)",
+          "Public-key cryptography and certificate chains",
+          "Transformer attention mechanisms",
+          "Git's internal object model (blobs, trees, commits)",
+        ],
+      },
+    ],
+  },
+  {
+    id: "project-planning",
+    category: "Project Management",
+    title: "Ambiguous Project Scoping",
+    icon: "\u2B21",
+    commercial: "Freelancers, agency project managers, startup founders, hobbyist project planners",
+    whyJulianExcels: "Every research advantage converges here. Ambiguous projects require: (1) multi-stakeholder reasoning (Multi-Expert), (2) structured reflection before diving in (Collaborative Tools), (3) deep domain immersion for realistic estimates (Role-Play), and (4) persistent memory to refine plans across sessions as scope evolves (Collaborative Tools institutional knowledge). Julian's team can assign agents to different aspects of the project — technical feasibility, user experience, business viability, risk assessment — and aggregate through deliberation.",
+    researchBasis: ["All five papers — this task type engages every advantage"],
+    tasks: [
+      {
+        name: "Vague Client Brief → Actionable Plan",
+        prompt: "A client says: '[vague brief]'. Produce: (1) a list of clarifying questions you would ask (explain why each matters), (2) assuming reasonable answers, a project plan with phases, deliverables, timelines, and risks, (3) three things that could go wrong that the client hasn't thought of, (4) a one-paragraph pitch back to the client explaining what you'd build and why.",
+        difficulty: "Hard — requires reading between the lines, anticipating unstated needs, realistic estimation",
+        scoring: [
+          "Question quality (do they uncover genuine ambiguities?) — 1-5",
+          "Plan realism (are timelines and scope reasonable?) — 1-5",
+          "Risk identification (are these real risks, not generic?) — 1-5",
+          "Pitch clarity (would the client feel understood?) — 1-5",
+          "Assumption transparency (are unstated assumptions surfaced?) — 1-5",
+        ],
+        variants: [
+          "'We need an app for our restaurant' (scope: tiny or enormous?)",
+          "'Make our website faster' (performance? perceived speed? conversion?)",
+          "'We want to use AI somehow' (product feature? internal tool? marketing?)",
+          "'Build us a dashboard' (for whom? what decisions? what data?)",
+        ],
+      },
+      {
+        name: "Scope Creep Negotiation",
+        prompt: "You're mid-project. The client just sent this message: '[scope change request]'. The original agreement was [scope]. Produce: (1) an honest assessment of whether this is a reasonable evolution or genuine scope creep, (2) impact analysis on timeline, budget, and quality, (3) three options ranging from 'absorb it' to 'renegotiate', each with tradeoffs, (4) a diplomatic response to the client.",
+        difficulty: "Medium-Hard — requires balancing honesty, diplomacy, and business reality",
+        scoring: [
+          "Classification accuracy (is it scope creep or legitimate evolution?) — 1-5",
+          "Impact analysis realism (are cost/time estimates reasonable?) — 1-5",
+          "Option quality (are the three paths genuinely distinct?) — 1-5",
+          "Client response tone (honest without being adversarial?) — 1-5",
+        ],
+        variants: [
+          "Adding user accounts to a brochure site (clear creep)",
+          "Requesting mobile-responsive design on a web project (arguable)",
+          "Wanting 'just one more page' on a 5-page site (death by 1000 cuts)",
+          "Asking to switch frameworks mid-build (nuclear scope change)",
+        ],
+      },
+    ],
+  },
+];
+
+const PREDICTION_TABLE = [
+  { task: "Contradictory Sources", bare: "2-3", shallow: "2-3", solo: "4", team: "4-5", strongest: "team", reason: "Multi-perspective aggregation is the core mechanism" },
+  { task: "Cross-Module Bug Hunt", bare: "2-3", shallow: "2-3", solo: "4", team: "3-4", strongest: "solo", reason: "Articulation + memory; team overhead may not help debugging" },
+  { task: "Brand Voice Consistency", bare: "2-3", shallow: "2", solo: "4-5", team: "3-4", strongest: "solo", reason: "Deep identity → low variance; team may blur voice" },
+  { task: "Stakeholder Impact", bare: "2-3", shallow: "2-3", solo: "3-4", team: "4-5", strongest: "team", reason: "Agents assigned to stakeholders reason from genuine positions" },
+  { task: "API Reference", bare: "3", shallow: "3", solo: "4", team: "3-4", strongest: "solo", reason: "Prior codebase memory + articulation; team adds overhead" },
+  { task: "Vague Client Brief", bare: "2", shallow: "2-3", solo: "3-4", team: "4-5", strongest: "team", reason: "Multi-angle analysis catches blind spots" },
+  { task: "Red Team / Blue Team", bare: "2-3", shallow: "2-3", solo: "3", team: "4-5", strongest: "team", reason: "Genuinely distinct agents can genuinely disagree" },
+  { task: "Multi-Session Fiction", bare: "2", shallow: "2", solo: "4-5", team: "3", strongest: "solo", reason: "Persistent memory is the defining advantage; single voice" },
+  { task: "Concept Explainer", bare: "3", shallow: "3", solo: "4", team: "4-5", strongest: "team", reason: "Agents can embody different audience perspectives" },
+  { task: "Scope Creep Negotiation", bare: "2-3", shallow: "2-3", solo: "3-4", team: "4", strongest: "team", reason: "Multiple perspectives on business/technical/relational tradeoffs" },
+];
+
+
+// ─── Components ────────────────────────────────────────────────────────────────
+
+function Header() {
+  return (
+    <header style={{
+      padding: "4rem 2rem 3rem",
+      background: "linear-gradient(135deg, oklch(0.18 0.03 200), oklch(0.12 0.02 230))",
+      borderBottom: "1px solid oklch(0.3 0.02 220)",
+      position: "relative", overflow: "hidden",
+    }}>
+      <div style={{
+        position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+        background: "radial-gradient(ellipse at 70% 40%, oklch(0.22 0.06 200 / 0.4), transparent 60%)",
+        pointerEvents: "none",
+      }} />
+      <div style={{ maxWidth: 900, margin: "0 auto", position: "relative" }}>
+        <div style={{ ...mono, color: "oklch(0.65 0.10 200)", textTransform: "uppercase", letterSpacing: "0.15em", marginBottom: "1rem" }}>
+          Evaluation Design — February 2026
+        </div>
+        <h1 style={{
+          fontFamily: "'Space Grotesk', sans-serif",
+          fontSize: "clamp(1.75rem, 4vw, 2.5rem)",
+          fontWeight: 600, color: "oklch(0.95 0.01 220)", lineHeight: 1.2, marginBottom: "1rem",
+        }}>
+          Julian Benchmark Suite
+        </h1>
+        <p style={{
+          fontFamily: "'DM Sans', sans-serif", fontSize: "1.05rem",
+          color: "oklch(0.7 0.02 220)", lineHeight: 1.7, maxWidth: 700,
+        }}>
+          Pragmatic benchmarks for tasks where individuated agents should outperform vanilla LLMs — chosen for broad commercial utility and grounded in the research findings from the persona literature.
+        </p>
+      </div>
+    </header>
+  );
+}
+
+function Tag({ text, color }) {
+  return (
+    <span style={{
+      ...mono, display: "inline-block", padding: "0.15rem 0.5rem",
+      borderRadius: "3px", background: color || "oklch(0.22 0.04 200)",
+      color: "oklch(0.75 0.06 200)", fontWeight: 500,
+    }}>
+      {text}
+    </span>
+  );
+}
+
+function SectionLabel({ title }) {
+  return <h4 style={label}>{title}</h4>;
+}
+
+function ExperimentalDesignSection() {
+  const d = EXPERIMENTAL_DESIGN;
+  return (
+    <div style={{ ...card, padding: "1.75rem" }}>
+      <h2 style={h2s}>Experimental Design</h2>
+      <p style={prose}>
+        Every benchmark below is designed to be run under four conditions, producing comparable outputs scored by a blinded human evaluator. The goal is not to prove Julian is better at everything — it's to identify the specific task shapes where deep individuation creates measurable advantages and quantify those advantages honestly.
+      </p>
+
+      <h3 style={h3s}>Four Conditions</h3>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.75rem", marginBottom: "1.5rem" }}>
+        {d.conditions.map(c => (
+          <div key={c.id} style={{
+            background: "oklch(0.14 0.02 240)", borderRadius: "6px",
+            padding: "1rem", border: "1px solid oklch(0.22 0.02 240)",
+          }}>
+            <div style={{ ...mono, color: "oklch(0.7 0.08 200)", fontWeight: 600, textTransform: "uppercase", marginBottom: "0.35rem" }}>
+              {c.name}
+            </div>
+            <p style={{ ...prose, fontSize: "0.8rem", margin: 0 }}>{c.desc}</p>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem" }}>
+        <div>
+          <h3 style={{ ...h3s, marginTop: 0 }}>What We Measure</h3>
+          <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
+            {d.measures.map((m, i) => <li key={i} style={{ ...prose, fontSize: "0.85rem", marginBottom: "0.25rem" }}>{m}</li>)}
+          </ul>
+        </div>
+        <div>
+          <h3 style={{ ...h3s, marginTop: 0 }}>Controls</h3>
+          <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
+            {d.controls.map((c, i) => <li key={i} style={{ ...prose, fontSize: "0.85rem", marginBottom: "0.25rem" }}>{c}</li>)}
+          </ul>
+        </div>
+      </div>
+
+      <div style={{
+        marginTop: "1.25rem", padding: "1rem",
+        background: "oklch(0.20 0.04 70)", borderRadius: "6px",
+        border: "1px solid oklch(0.28 0.06 70)",
+      }}>
+        <p style={{ ...prose, margin: 0, fontSize: "0.85rem", color: "oklch(0.82 0.06 70)" }}>
+          <strong>Honest expectations:</strong> We predict Julian will underperform or tie Bare Claude on simple factual tasks (the Not Really Helpful paper). Julian's advantages appear on hard, ambiguous, multi-perspective tasks. The benchmarks below are deliberately chosen to be tasks where the research predicts individuation helps — this is selection bias by design. The point is to find Julian's strengths, not to claim general superiority.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function TaskCard({ task, benchmarkId }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{
+      background: "oklch(0.14 0.02 240)", borderRadius: "6px",
+      padding: "1rem 1.25rem", marginBottom: "0.75rem",
+      border: "1px solid oklch(0.22 0.02 240)",
+    }}>
+      <button onClick={() => setOpen(!open)} style={{
+        background: "transparent", border: "none", cursor: "pointer",
+        width: "100%", textAlign: "left",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <h4 style={{
+            fontFamily: "'Space Grotesk', sans-serif", fontSize: "0.95rem",
+            fontWeight: 600, color: "oklch(0.9 0.01 220)", marginBottom: "0.25rem",
+          }}>
+            {task.name}
+          </h4>
+          <Tag text={task.difficulty.split(" — ")[0]} />
+        </div>
+        <p style={{ ...prose, fontSize: "0.82rem", margin: 0, fontStyle: "italic", color: "oklch(0.62 0.02 270)" }}>
+          {task.prompt.slice(0, 160)}...
+        </p>
+      </button>
+      {open && (
+        <div style={{ marginTop: "1rem" }}>
+          <div style={{ height: "1px", background: "oklch(0.22 0.02 240)", marginBottom: "1rem" }} />
+
+          <SectionLabel title="Full Prompt" />
+          <div style={{
+            background: "oklch(0.12 0.02 250)", borderRadius: "4px",
+            padding: "0.85rem 1rem", marginBottom: "1rem",
+            fontFamily: "'DM Sans', sans-serif", fontSize: "0.85rem",
+            color: "oklch(0.78 0.02 270)", lineHeight: 1.6,
+            borderLeft: "3px solid oklch(0.4 0.08 200)",
+          }}>
+            {task.prompt}
+          </div>
+
+          <SectionLabel title="Why This Is Hard" />
+          <p style={{ ...prose, fontSize: "0.85rem" }}>{task.difficulty}</p>
+
+          <SectionLabel title="Scoring Rubric" />
+          <div style={{ marginBottom: "1rem" }}>
+            {task.scoring.map((s, i) => (
+              <div key={i} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "baseline",
+                padding: "0.35rem 0", borderBottom: i < task.scoring.length - 1 ? "1px solid oklch(0.18 0.02 240)" : "none",
+              }}>
+                <span style={{ ...prose, fontSize: "0.82rem", margin: 0 }}>{s.replace(/ — 1-5$/, "")}</span>
+                <span style={{ ...mono, color: "oklch(0.55 0.04 200)", flexShrink: 0, marginLeft: "1rem" }}>1–5</span>
+              </div>
+            ))}
+          </div>
+
+          <SectionLabel title="Recommended Variants" />
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+            {task.variants.map((v, i) => (
+              <span key={i} style={{
+                ...mono, fontSize: "0.68rem", padding: "0.2rem 0.5rem",
+                borderRadius: "3px", background: "oklch(0.18 0.03 260)",
+                color: "oklch(0.62 0.04 260)",
+              }}>
+                {v}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BenchmarkSection({ benchmark }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ ...card, transition: "border-color 0.2s", borderColor: open ? "oklch(0.35 0.06 200)" : undefined }}>
+      <button onClick={() => setOpen(!open)} style={{
+        width: "100%", padding: "1.25rem 1.5rem", background: "transparent",
+        border: "none", cursor: "pointer", textAlign: "left",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem", flexWrap: "wrap" }}>
+          <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: "1.2rem", color: "oklch(0.7 0.10 200)" }}>
+            {benchmark.icon}
+          </span>
+          <Tag text={benchmark.category} color="oklch(0.25 0.05 200)" />
+          <span style={{ ...mono, fontSize: "0.65rem", color: "oklch(0.45 0.02 260)", marginLeft: "auto" }}>
+            {open ? "\u25B2 collapse" : "\u25BC expand"} \u00B7 {benchmark.tasks.length} tasks
+          </span>
+        </div>
+        <h3 style={{
+          fontFamily: "'Space Grotesk', sans-serif", fontSize: "1.1rem",
+          fontWeight: 600, color: "oklch(0.92 0.01 220)", lineHeight: 1.3, marginBottom: "0.3rem",
+        }}>
+          {benchmark.title}
+        </h3>
+        <p style={{ ...mono, fontSize: "0.72rem", color: "oklch(0.55 0.04 200)", margin: 0 }}>
+          Commercial relevance: {benchmark.commercial}
+        </p>
+      </button>
+
+      {open && (
+        <div style={{ padding: "0 1.5rem 1.5rem" }}>
+          <div style={{ height: "1px", background: "oklch(0.22 0.02 260)", marginBottom: "1.25rem" }} />
+
+          <SectionLabel title="Why Julian Should Excel Here" />
+          <p style={prose}>{benchmark.whyJulianExcels}</p>
+
+          <SectionLabel title="Research Basis" />
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem", marginBottom: "1.25rem" }}>
+            {benchmark.researchBasis.map((r, i) => (
+              <span key={i} style={{ ...prose, fontSize: "0.82rem", margin: 0, paddingLeft: "0.75rem", borderLeft: "2px solid oklch(0.3 0.06 200)" }}>
+                {r}
+              </span>
+            ))}
+          </div>
+
+          <SectionLabel title="Tasks" />
+          {benchmark.tasks.map((t, i) => <TaskCard key={i} task={t} benchmarkId={benchmark.id} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PredictionsSection() {
+  return (
+    <div style={{ ...card, padding: "1.75rem" }}>
+      <h2 style={h2s}>Predicted Performance by Condition</h2>
+      <p style={{ ...prose, marginBottom: "1.25rem" }}>
+        Predictions based on the research findings, before running any benchmarks. These should be falsifiable — if Julian doesn't outperform on the tasks marked as his strengths, the research basis needs re-examination.
+      </p>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
+          <thead>
+            <tr>
+              {["Task", "Bare", "Shallow", "Julian Solo", "Julian + Team", "Predicted Winner", "Rationale"].map(h => (
+                <th key={h} style={{
+                  textAlign: "left", padding: "0.5rem 0.6rem",
+                  borderBottom: "2px solid oklch(0.25 0.02 240)",
+                  ...mono, color: "oklch(0.55 0.02 260)", fontWeight: 600,
+                  textTransform: "uppercase", fontSize: "0.62rem",
+                  letterSpacing: "0.08em",
+                }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {PREDICTION_TABLE.map((row, i) => {
+              const winColor = row.strongest === "team" ? "oklch(0.75 0.10 200)" : "oklch(0.75 0.10 155)";
+              return (
+                <tr key={i}>
+                  <td style={{ ...mono, padding: "0.5rem 0.6rem", color: "oklch(0.8 0.02 270)", borderBottom: "1px solid oklch(0.18 0.02 240)", fontSize: "0.75rem" }}>
+                    {row.task}
+                  </td>
+                  <td style={{ ...mono, padding: "0.5rem 0.6rem", color: "oklch(0.5 0.02 260)", borderBottom: "1px solid oklch(0.18 0.02 240)", fontSize: "0.75rem" }}>
+                    {row.bare}
+                  </td>
+                  <td style={{ ...mono, padding: "0.5rem 0.6rem", color: "oklch(0.5 0.02 260)", borderBottom: "1px solid oklch(0.18 0.02 240)", fontSize: "0.75rem" }}>
+                    {row.shallow}
+                  </td>
+                  <td style={{ ...mono, padding: "0.5rem 0.6rem", color: row.strongest === "solo" ? "oklch(0.85 0.10 155)" : "oklch(0.65 0.02 270)", fontWeight: row.strongest === "solo" ? 700 : 400, borderBottom: "1px solid oklch(0.18 0.02 240)", fontSize: "0.75rem" }}>
+                    {row.solo}
+                  </td>
+                  <td style={{ ...mono, padding: "0.5rem 0.6rem", color: row.strongest === "team" ? "oklch(0.85 0.10 200)" : "oklch(0.65 0.02 270)", fontWeight: row.strongest === "team" ? 700 : 400, borderBottom: "1px solid oklch(0.18 0.02 240)", fontSize: "0.75rem" }}>
+                    {row.team}
+                  </td>
+                  <td style={{ ...mono, padding: "0.5rem 0.6rem", color: winColor, fontWeight: 600, borderBottom: "1px solid oklch(0.18 0.02 240)", fontSize: "0.75rem", textTransform: "capitalize" }}>
+                    {row.strongest}
+                  </td>
+                  <td style={{ ...mono, padding: "0.5rem 0.6rem", color: "oklch(0.58 0.02 260)", borderBottom: "1px solid oklch(0.18 0.02 240)", fontSize: "0.7rem", fontFamily: "'DM Sans', sans-serif" }}>
+                    {row.reason}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ marginTop: "1rem", display: "flex", gap: "1.5rem" }}>
+        <span style={{ ...mono, fontSize: "0.68rem" }}>
+          <span style={{ color: "oklch(0.75 0.10 155)", fontWeight: 600 }}>{"\u25CF"}</span>{" "}
+          <span style={{ color: "oklch(0.55 0.02 260)" }}>Julian Solo predicted winner</span>
+        </span>
+        <span style={{ ...mono, fontSize: "0.68rem" }}>
+          <span style={{ color: "oklch(0.75 0.10 200)", fontWeight: 600 }}>{"\u25CF"}</span>{" "}
+          <span style={{ color: "oklch(0.55 0.02 260)" }}>Julian + Team predicted winner</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function RunbookSection() {
+  return (
+    <div style={{ ...card, padding: "1.75rem" }}>
+      <h2 style={h2s}>How to Run These</h2>
+      <p style={prose}>
+        A practical sequence for getting started without boiling the ocean.
+      </p>
+
+      <h3 style={{ ...h3s, marginTop: "0.5rem" }}>Phase 1: Quick Smoke Test (1 day)</h3>
+      <p style={prose}>
+        Pick one task from the "predicted team winner" column and one from "predicted solo winner." Run each under all four conditions once. Don't score with a rubric yet — just read the outputs side by side and note your gut reaction. If there's no visible difference, the benchmark design needs tightening before investing in formal evaluation.
+      </p>
+
+      <h3 style={h3s}>Phase 2: Focused Evaluation (1 week)</h3>
+      <p style={prose}>
+        Choose the three benchmarks you care about most commercially. Run each task under all four conditions, three times each (12 runs per task, 72 total across three benchmarks). Score with rubrics. Look for: (a) mean score differences between conditions, (b) variance within conditions (Julian should show lower variance per the Double-Edged Sword paper), (c) cost differences.
+      </p>
+
+      <h3 style={h3s}>Phase 3: Longitudinal Test (1 month)</h3>
+      <p style={prose}>
+        This is where Julian's persistent memory advantage should become visible. Run the same tasks weekly, allowing Julian's memory to accumulate. The Collaborative Tools paper predicts 5-9% improvement from institutional knowledge — but Julian's deliberate memory curation may amplify this. Track whether scores improve over the month for Julian Solo but stay flat for Bare Claude. This is the test no existing paper has run.
+      </p>
+
+      <div style={{
+        marginTop: "1.25rem", padding: "1rem",
+        background: "oklch(0.20 0.04 280)", borderRadius: "6px",
+        border: "1px solid oklch(0.28 0.06 280)",
+      }}>
+        <p style={{ ...prose, margin: 0, fontSize: "0.85rem", color: "oklch(0.82 0.06 280)" }}>
+          <strong>Minimum viable benchmark:</strong> If you only run one test, run the Contradictory Sources Brief with all four conditions. It engages the most research-supported advantages (multi-perspective, articulation, structured deliberation) and produces outputs that are easy to evaluate — you can check factual claims against the source materials.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function NavBtn({ lbl, active, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      background: active ? "oklch(0.22 0.04 200)" : "transparent",
+      border: "none",
+      borderLeft: active ? "2px solid oklch(0.6 0.10 200)" : "2px solid transparent",
+      padding: "0.45rem 0.75rem", cursor: "pointer",
+      fontFamily: "'DM Sans', sans-serif", fontSize: "0.8rem",
+      color: active ? "oklch(0.85 0.06 200)" : "oklch(0.55 0.02 260)",
+      textAlign: "left", display: "block", width: "100%",
+      transition: "all 0.15s ease", borderRadius: "0 4px 4px 0",
+    }}>
+      {lbl}
+    </button>
+  );
+}
+
+const NAV = [
+  { id: "design", label: "Experimental Design" },
+  { id: "benchmarks", label: "Benchmarks" },
+  { id: "predictions", label: "Predictions" },
+  { id: "runbook", label: "How to Run" },
+];
+
+function App() {
+  const [activeSection, setActiveSection] = useState("design");
+  const refs = useRef({});
+
+  const scrollTo = (id) => {
+    setActiveSection(id);
+    refs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => { for (const e of entries) { if (e.isIntersecting) setActiveSection(e.target.id); } },
+      { rootMargin: "-80px 0px -60% 0px" }
+    );
+    Object.values(refs.current).forEach(el => { if (el) observer.observe(el); });
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div style={{ minHeight: "100vh", background: "oklch(0.12 0.02 255)" }}>
+      <Header />
+      <div className="layout-grid" style={{
+        display: "grid", gridTemplateColumns: "180px 1fr",
+        maxWidth: 1100, margin: "0 auto", gap: "2rem",
+        padding: "2rem 1.5rem 4rem",
+      }}>
+        <nav className="sidebar-nav" style={{
+          position: "sticky", top: "1.5rem", alignSelf: "start",
+          display: "flex", flexDirection: "column", gap: "0.15rem",
+        }}>
+          {NAV.map(s => <NavBtn key={s.id} lbl={s.label} active={activeSection === s.id} onClick={() => scrollTo(s.id)} />)}
+        </nav>
+
+        <main>
+          <section id="design" ref={el => refs.current.design = el}>
+            <ExperimentalDesignSection />
+          </section>
+
+          <section id="benchmarks" ref={el => refs.current.benchmarks = el} style={{ marginTop: "1.5rem" }}>
+            <h2 style={{ ...h2s, marginBottom: "0.5rem" }}>Benchmark Categories</h2>
+            <p style={{ ...prose, marginBottom: "1.25rem" }}>
+              Six categories, twelve tasks, each with full prompts, scoring rubrics, and domain variants. Click to expand.
+            </p>
+            {BENCHMARKS.map(b => <BenchmarkSection key={b.id} benchmark={b} />)}
+          </section>
+
+          <section id="predictions" ref={el => refs.current.predictions = el} style={{ marginTop: "1.5rem" }}>
+            <PredictionsSection />
+          </section>
+
+          <section id="runbook" ref={el => refs.current.runbook = el} style={{ marginTop: "1.5rem" }}>
+            <RunbookSection />
+          </section>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>

@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Design Audit Tour — Julian UI Polish</title>
+<link href="https://fonts.googleapis.com/css2?family=VT323&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --gold: #FFD600;
+    --gold-dim: #AA8800;
+    --dark: #0F0F0F;
+    --card: #1a1a1a;
+    --red: #ff6b6b;
+    --ease-out: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--dark);
+    color: #e0e0e0;
+    font-family: 'Inter', sans-serif;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  /* ── Hero ── */
+  .hero {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 40px 24px;
+    background: linear-gradient(180deg, #1a1a00 0%, var(--dark) 100%);
+    position: relative;
+  }
+  .hero::before, .hero::after {
+    content: '\u00D7';
+    position: fixed;
+    top: 4px;
+    font-size: 28px;
+    color: rgba(255,214,0,0.15);
+    font-weight: 900;
+    z-index: 50;
+    pointer-events: none;
+    user-select: none;
+  }
+  .hero::before { left: 8px; }
+  .hero::after { right: 8px; }
+
+  .hero h1 {
+    font-family: 'VT323', monospace;
+    font-size: clamp(2rem, 6vw, 4rem);
+    color: var(--gold);
+    text-shadow: 0 0 20px rgba(255,214,0,0.3);
+    letter-spacing: 0.05em;
+    margin-bottom: 12px;
+  }
+  .hero .subtitle {
+    font-family: 'VT323', monospace;
+    font-size: clamp(1rem, 3vw, 1.4rem);
+    color: var(--gold-dim);
+    opacity: 0.8;
+    max-width: 600px;
+    margin-bottom: 40px;
+  }
+  .hero .stats {
+    display: flex;
+    gap: 32px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .stat {
+    text-align: center;
+  }
+  .stat-number {
+    font-family: 'VT323', monospace;
+    font-size: 2.5rem;
+    color: var(--gold);
+  }
+  .stat-label {
+    font-size: 0.75rem;
+    color: var(--gold-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+  .scroll-hint {
+    position: absolute;
+    bottom: 24px;
+    font-family: 'VT323', monospace;
+    color: var(--gold-dim);
+    opacity: 0.5;
+    animation: bob 2s ease-in-out infinite;
+  }
+  @keyframes bob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(6px); }
+  }
+
+  /* ── Wave sections ── */
+  .wave {
+    padding: 80px 24px;
+    max-width: 800px;
+    margin: 0 auto;
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 0.6s var(--ease-out), transform 0.6s var(--ease-out);
+  }
+  .wave.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .wave-number {
+    font-family: 'VT323', monospace;
+    font-size: 1rem;
+    color: var(--gold-dim);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .wave h2 {
+    font-family: 'VT323', monospace;
+    font-size: clamp(1.5rem, 4vw, 2.2rem);
+    color: var(--gold);
+    margin-bottom: 20px;
+  }
+  .wave p {
+    font-size: 0.95rem;
+    font-weight: 300;
+    color: #bbb;
+    margin-bottom: 16px;
+    line-height: 1.7;
+  }
+  .wave p strong {
+    color: #e0e0e0;
+    font-weight: 500;
+  }
+
+  /* ── Change cards ── */
+  .changes {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 24px;
+  }
+  .change-card {
+    background: var(--card);
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 16px 20px;
+    cursor: pointer;
+    transition: border-color 250ms ease, background-color 250ms ease;
+  }
+  .change-card:hover {
+    border-color: var(--gold-dim);
+    background: #222;
+  }
+  .change-card:focus-visible {
+    outline: 2px solid var(--gold);
+    outline-offset: 2px;
+  }
+  .change-card .file {
+    font-family: 'VT323', monospace;
+    font-size: 0.85rem;
+    color: var(--gold-dim);
+    margin-bottom: 4px;
+  }
+  .change-card .desc {
+    font-size: 0.9rem;
+    font-weight: 300;
+    color: #ccc;
+  }
+  .change-card .detail {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 300ms var(--ease-out), margin-top 300ms var(--ease-out);
+    margin-top: 0;
+  }
+  .change-card.open .detail {
+    max-height: 300px;
+    margin-top: 12px;
+  }
+  .change-card .detail-inner {
+    font-size: 0.8rem;
+    color: #999;
+    font-weight: 300;
+    line-height: 1.6;
+    padding-top: 12px;
+    border-top: 1px solid #333;
+  }
+  .change-card .detail-inner code {
+    font-family: 'VT323', monospace;
+    color: var(--gold);
+    font-size: 0.9rem;
+  }
+
+  /* ── Demos ── */
+  .demo-box {
+    background: var(--card);
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 24px;
+    margin-top: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
+  .demo-label {
+    font-family: 'VT323', monospace;
+    font-size: 0.85rem;
+    color: var(--gold-dim);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  /* Status dots demo */
+  .dots-demo {
+    display: flex;
+    gap: 40px;
+    align-items: center;
+  }
+  .dots-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .dots-row {
+    display: flex;
+    gap: 4px;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+  }
+  .dot.connected {
+    background: var(--gold);
+    box-shadow: 0 0 5px var(--gold);
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+  .dot.connected-off { background: #333; }
+  .dot.disconnected {
+    background: var(--red);
+    box-shadow: 0 0 4px var(--red);
+    animation: pulse-warn 2s ease-in-out infinite;
+  }
+  .dot.disconnected-2 {
+    background: var(--red);
+    opacity: 0.5;
+    animation: pulse-warn 2s ease-in-out infinite 0.2s;
+  }
+  .dot.disconnected-3 {
+    background: var(--red);
+    opacity: 0.3;
+    animation: pulse-warn 2s ease-in-out infinite 0.4s;
+  }
+  .dots-label {
+    font-family: 'VT323', monospace;
+    font-size: 0.75rem;
+    color: #666;
+    text-transform: uppercase;
+  }
+
+  @keyframes pulse-dot {
+    0%, 80%, 100% { opacity: 0.6; }
+    40% { opacity: 1; }
+  }
+  @keyframes pulse-warn {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+  @keyframes thinking-pulse {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 1; }
+  }
+
+  /* Thinking dots demo */
+  .thinking-demo {
+    display: flex;
+    gap: 40px;
+    align-items: center;
+  }
+  .thinking-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .thinking-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'VT323', monospace;
+    font-size: 1.1rem;
+    color: var(--gold);
+  }
+  .thinking-squares {
+    display: flex;
+    gap: 4px;
+  }
+  .thinking-sq {
+    width: 6px;
+    height: 6px;
+    background: var(--gold);
+  }
+  .thinking-sq:nth-child(1) { animation: thinking-pulse 1.2s ease-in-out infinite; }
+  .thinking-sq:nth-child(2) { animation: thinking-pulse 1.2s ease-in-out infinite 0.2s; }
+  .thinking-sq:nth-child(3) { animation: thinking-pulse 1.2s ease-in-out infinite 0.4s; }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+  .old-cursor {
+    animation: blink 1s step-end infinite;
+  }
+
+  /* Button demo */
+  .button-demo {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .demo-btn {
+    font-family: 'VT323', monospace;
+    font-size: 0.85rem;
+    color: var(--gold-dim);
+    background: #1a1a00;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 6px 12px;
+    cursor: pointer;
+    min-height: 44px;
+    touch-action: manipulation;
+    transition: transform 100ms var(--ease-out);
+  }
+  .demo-btn:active {
+    transform: scale(0.97);
+  }
+  .demo-btn:focus-visible {
+    outline: 2px solid var(--gold);
+    outline-offset: 2px;
+  }
+  .demo-btn-old {
+    font-family: 'VT323', monospace;
+    font-size: 0.75rem;
+    color: var(--gold-dim);
+    background: #1a1a00;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 3px 8px;
+    cursor: pointer;
+  }
+  .demo-btn-disabled {
+    font-family: 'VT323', monospace;
+    font-size: 0.85rem;
+    color: #666;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 6px 12px;
+    cursor: not-allowed;
+    min-height: 44px;
+  }
+
+  /* Transition demo */
+  .transition-demo {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .trans-box {
+    width: 80px;
+    height: 80px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'VT323', monospace;
+    font-size: 0.7rem;
+    color: #999;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .trans-old {
+    background: #333;
+    transition: all 0.15s ease;
+  }
+  .trans-old:hover {
+    background: var(--gold);
+    color: #000;
+    border-radius: 50%;
+    transform: scale(1.1);
+  }
+  .trans-new {
+    background: #333;
+    transition: background-color 150ms ease, transform 150ms var(--ease-out);
+  }
+  .trans-new:hover {
+    background: var(--gold);
+    color: #000;
+    transform: scale(1.05);
+  }
+
+  /* Tool call demo */
+  .tool-demo {
+    display: flex;
+    gap: 24px;
+    width: 100%;
+  }
+  .tool-block {
+    flex: 1;
+    padding: 8px;
+  }
+  .tool-old {
+    border-left: 2px solid #AA8800;
+    padding-left: 8px;
+  }
+  .tool-new {
+    border-left: 3px solid #C8A800;
+    padding-left: 8px;
+    animation: message-enter 200ms cubic-bezier(0.165, 0.84, 0.44, 1);
+  }
+  .tool-name {
+    font-family: 'VT323', monospace;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+  }
+  .tool-old .tool-name { color: #AA8800; }
+  .tool-new .tool-name { color: #C8A800; }
+  .tool-input {
+    font-family: 'VT323', monospace;
+    font-size: 0.85rem;
+    color: #666;
+  }
+
+  @keyframes message-enter {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Selection demo */
+  .selection-demo {
+    font-family: 'VT323', monospace;
+    font-size: 1.1rem;
+    color: var(--gold);
+    line-height: 1.6;
+    text-align: center;
+    user-select: text;
+  }
+  .selection-demo::selection {
+    background: rgba(255, 214, 0, 0.3);
+    color: #000;
+  }
+
+  /* ── Dividers ── */
+  .divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #333, transparent);
+    max-width: 800px;
+    margin: 0 auto;
+  }
+
+  /* ── Footer ── */
+  .footer {
+    text-align: center;
+    padding: 60px 24px 40px;
+    max-width: 800px;
+    margin: 0 auto;
+  }
+  .footer p {
+    font-family: 'VT323', monospace;
+    color: var(--gold-dim);
+    opacity: 0.5;
+    font-size: 0.9rem;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 600px) {
+    .wave { padding: 60px 16px; }
+    .dots-demo, .thinking-demo, .transition-demo, .tool-demo { flex-direction: column; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+    .wave { opacity: 1; transform: none; }
+  }
+</style>
+</head>
+<body>
+
+<section class="hero">
+  <h1>> DESIGN AUDIT TOUR</h1>
+  <div class="subtitle">
+    A narrative walkthrough of every change made to Julian's frontend during the UI polish pass. Six waves, three files, one cohesive feel.
+  </div>
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-number">6</div>
+      <div class="stat-label">Waves</div>
+    </div>
+    <div class="stat">
+      <div class="stat-number">3</div>
+      <div class="stat-label">Files</div>
+    </div>
+    <div class="stat">
+      <div class="stat-number">110</div>
+      <div class="stat-label">Lines Added</div>
+    </div>
+    <div class="stat">
+      <div class="stat-number">75</div>
+      <div class="stat-label">Lines Removed</div>
+    </div>
+  </div>
+  <div class="scroll-hint">SCROLL DOWN</div>
+</section>
+
+<!-- ═══════════════════════════════════════ WAVE 1 ═══════════════════════════════════════ -->
+<div class="divider"></div>
+<section class="wave" id="wave1">
+  <div class="wave-number">Wave 01</div>
+  <h2>Transition & Animation Cleanup</h2>
+  <p>
+    This was the single highest-impact change. Before the audit, Julian's transitions were a patchwork — <strong>mixed durations</strong> (0.1s here, 300ms there, 0.2s somewhere else), <strong>generic easing</strong> (plain <code>ease</code> everywhere), and the cardinal sin of frontend animation: <code>transition: all</code> used in 14 places across the three files.
+  </p>
+  <p>
+    <code>transition: all</code> is a foot-gun. It means "animate every CSS property that changes," which causes unexpected flickers when unrelated properties change and forces the browser to check every property on every frame. Worse, it makes the UI feel mushy — everything moves at the same speed in the same way, so nothing has visual hierarchy.
+  </p>
+  <p>
+    The fix was systematic. First, I added <strong>CSS custom properties</strong> to the root stylesheet for shared timing values: a natural <code>--ease-out</code> curve, a snappy <code>--ease-out-quart</code>, and three duration tiers (100ms for micro-interactions, 150ms for standard UI, 250ms for larger state changes). Then I went through every single <code>transition: all</code> and replaced it with the specific properties that actually change on that element.
+  </p>
+
+  <div class="demo-box">
+    <div class="demo-label">Hover these — same element, different transition strategy</div>
+    <div class="transition-demo">
+      <div>
+        <div class="trans-old">OLD<br>all 0.15s</div>
+        <div style="font-size: 0.7rem; color: #666; text-align: center; margin-top: 4px;">animates everything</div>
+      </div>
+      <div>
+        <div class="trans-new">NEW<br>specific</div>
+        <div style="font-size: 0.7rem; color: #666; text-align: center; margin-top: 4px;">only what matters</div>
+      </div>
+    </div>
+  </div>
+
+  <p style="margin-top: 20px;">
+    I also expanded the <strong>reduced-motion</strong> media query from a selective list of four animations to a universal blanket rule that disables all animations and transitions site-wide for users who prefer reduced motion. And in vibes.jsx, the shredCard and collapseToLine keyframes — the card destruction animation — now have their own reduced-motion override.
+  </p>
+
+  <div class="changes">
+    <div class="change-card" tabindex="0" onclick="this.classList.toggle('open')">
+      <div class="file">index.html</div>
+      <div class="desc">Added CSS custom properties for timing and easing</div>
+      <div class="detail"><div class="detail-inner">
+        <code>--ease-out</code>, <code>--ease-out-quart</code>, <code>--duration-fast</code> (100ms), <code>--duration-standard</code> (150ms), <code>--duration-slow</code> (250ms). These are referenced across all three files for consistency.
+      </div></div>
+    </div>
+    <div class="change-card" tabindex="0" onclick="this.classList.toggle('open')">
+      <div class="file">chat.jsx</div>
+      <div class="desc">Replaced 9 instances of <code>transition: 'all ...'</code></div>
+      <div class="detail"><div class="detail-inner">
+        Each replacement names the specific properties: <code>background-color</code>, <code>box-shadow</code>, <code>border-color</code>, <code>color</code>. The OAuth buttons (100ms), the jobs panel buttons (250ms), and the send button (100ms) each got targeted transitions.
+      </div></div>
+    </div>
+    <div class="change-card" tabindex="0" onclick="this.classList.toggle('open')">
+      <div class="file">vibes.jsx</div>
+      <div class="desc">Targeted transitions for button styles + reduced-motion guard</div>
+      <div class="detail"><div class="detail-inner">
+        <code>getButtonStyle()</code> now uses <code>transform 0.15s var(--ease-out), box-shadow 0.15s var(--ease-out)</code> instead of <code>all 0.15s ease</code>. <code>getFormButtonStyle()</code> similarly. Added <code>@media (prefers-reduced-motion)</code> inside the animation stylesheet for shredCard/collapseToLine.
+      </div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ WAVE 2 ═══════════════════════════════════════ -->
+<div class="divider"></div>
+<section class="wave" id="wave2">
+  <div class="wave-number">Wave 02</div>
+  <h2>Button & Interactive Feel</h2>
+  <p>
+    Buttons are how you talk to Julian. They should feel <strong>responsive</strong> — press down on click, show focus when navigated by keyboard, tell you when they're disabled. Before the audit, buttons had inconsistent feedback: some had no press effect, focus was invisible on keyboard navigation, disabled states used <code>cursor: default</code> (which just looks like nothing happened), and touch targets on mobile were too small to hit reliably.
+  </p>
+
+  <div class="demo-box">
+    <div class="demo-label">Button comparison — try clicking, tabbing, and hovering</div>
+    <div class="button-demo">
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+        <button class="demo-btn-old">OLD</button>
+        <span style="font-size: 0.65rem; color: #666;">3px 8px, no focus ring</span>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+        <button class="demo-btn">NEW</button>
+        <span style="font-size: 0.65rem; color: #666;">6px 12px, 44px min, focus ring</span>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+        <button class="demo-btn-disabled" disabled>DISABLED</button>
+        <span style="font-size: 0.65rem; color: #666;">not-allowed cursor</span>
+      </div>
+    </div>
+  </div>
+
+  <p style="margin-top: 20px;">
+    Every button now gets a global <code>scale(0.97)</code> on press via CSS <code>:active</code>. Keyboard focus shows a <strong>gold outline</strong> with 2px offset — visible but not intrusive. All disabled buttons across the app now use <code>cursor: not-allowed</code> instead of <code>cursor: default</code>, which gives the user clear visual feedback that the button exists but isn't available right now.
+  </p>
+  <p>
+    The send button got an <code>aria-label="Send message"</code> since it only displays the letter "A" — screen readers had no idea what it did. The setup screen tabs got proper <code>role="tab"</code> and <code>aria-selected</code> attributes. Small things, but they make the app navigable without a mouse.
+  </p>
+
+  <div class="changes">
+    <div class="change-card" tabindex="0" onclick="this.classList.toggle('open')">
+      <div class="file">index.html</div>
+      <div class="desc">Global button transition, focus-visible outline, touch targets</div>
+      <div class="detail"><div class="detail-inner">
+        Added <code>transition: transform var(--duration-fast) var(--ease-out)</code> to all buttons. Added <code>button:focus-visible</code> with gold outline. Mobile header buttons went from <code>3px 8px</code> to <code>6px 12px</code> with <code>min-height: 44px</code>.
+      </div></div>
+    </div>
+    <div class="change-card" tabindex="0" onclick="this.classList.toggle('open')">
+      <div class="file">chat.jsx</div>
+      <div class="desc">ARIA labels, tab roles, disabled cursors (7 buttons fixed)</div>
+      <div class="detail"><div class="detail-inner">
+        Send button: <code>aria-label="Send message"</code>. Setup tabs: <code>role="tablist"</code> container, <code>role="tab"</code> + <code>aria-selected</code> on each tab. Seven disabled buttons changed from <code>cursor: 'default'</code> to <code>cursor: 'not-allowed'</code>.
+      </div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ WAVE 3 ═══════════════════════════════════════ -->
+<div class="divider"></div>
+<section class="wave" id="wave3">
+  <div class="wave-number">Wave 03</div>
+  <h2>Smooth State Transitions</h2>
+  <p>
+    Julian's biggest "dead" moment was the transition between app states. You'd see the yellow boot screen with "BOOTING...", and then in a single frame — snap — the dark chat UI. No crossfade, no easing, just an instant swap. It felt like a channel change, not a living presence waking up.
+  </p>
+  <p>
+    The fix is a CSS class called <code>.app-state-enter</code> that applies a simple opacity fade using the shared <code>--duration-slow</code> (250ms) and <code>--ease-out</code> curve. Each of the three app states — loading, mobile layout, desktop layout — gets this class with a unique <code>key</code> prop so React triggers a remount animation when switching between them.
+  </p>
+  <p>
+    In the chat itself, tool call blocks now fade in with the same <code>message-enter</code> animation that regular messages use, instead of appearing abruptly. And the streaming cursor (the blinking underscore at the end of Julian's messages) now always exists in the DOM with <code>visibility</code> toggling instead of conditional rendering. This prevents a tiny layout shift every time the cursor appears or disappears.
+  </p>
+  <p>
+    Both message containers (mobile and desktop) got <code>scrollBehavior: 'smooth'</code>, so auto-scrolling to new messages feels fluid instead of jumping.
+  </p>
+
+  <div class="changes">
+    <div class="change-card" tabindex="0" onclick="this.classList.toggle('open')">
+      <div class="file">index.html</div>
+      <div class="desc">Crossfade between boot/setup/chat states, smooth scroll</div>
+      <div class="detail"><div class="detail-inner">
+        New <code>@keyframes fadeIn</code> + <code>.app-state-enter</code> class. Applied to all three conditional branches with unique <code>key</code> attributes. <code>scrollBehavior: 'smooth'</code> added to both mobile and desktop message containers.
+      </div></div>
+    </div>
+    <div class="change-card" tabindex="0" onclick="this.classList.toggle('open')">
+      <div class="file">chat.jsx</div>
+      <div class="desc">Tool calls fade in, streaming cursor reserves space</div>
+      <div class="detail"><div class="detail-inner">
+        <code>ToolCallBlock</code> got <code>className="message-enter"</code>. The streaming cursor changed from conditional rendering (<code>{message.streaming && ...}</code>) to always-present with <code>visibility</code> toggle.
+      </div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ WAVE 4 ═══════════════════════════════════════ -->
+<div class="divider"></div>
+<section class="wave" id="wave4">
+  <div class="wave-number">Wave 04</div>
+  <h2>Status Indicators Come Alive</h2>
+  <p>
+    The StatusDots component is Julian's heartbeat — three small squares in the header that tell you if he's connected and listening. Before the audit, when Julian was offline, the dots just turned <code>#333</code> — effectively invisible against the dark background. The user had to read the "OFFLINE" text to know something was wrong.
+  </p>
+  <p>
+    Now when disconnected, all three dots glow <strong>red</strong> with a staggered pulse animation. The first dot pulses at full intensity, the second at 50% opacity with a 200ms delay, the third at 30% with a 400ms delay. It creates a wave effect that catches your eye without being alarming. The JulianScreen connection dot got the same treatment — red with pulse when the WebSocket is down.
+  </p>
+
+  <div class="demo-box">
+    <div class="demo-label">Status dots — connected vs disconnected</div>
+    <div class="dots-demo">
+      <div class="dots-group">
+        <div class="dots-row">
+          <div class="dot connected"></div>
+          <div class="dot connected-off"></div>
+          <div class="dot connected-off"></div>
+        </div>
+        <div class="dots-label">Connected</div>
+      </div>
+      <div class="dots-group">
+        <div class="dots-row">
+          <div class="dot disconnected"></div>
+          <div class="dot disconnected-2"></div>
+          <div class="dot disconnected-3"></div>
+        </div>
+        <div class="dots-label">Disconnected</div>
+      </div>
+    </div>
+  </div>
+
+  <p style="margin-top: 20px;">
+    The status text ("PROCESSING...", "LISTENING", "OFFLINE") had its opacity bumped from 0.6 to 0.8. At 0.6 against the dark background, the <code>#AA8800</code> color was washing out to near-invisible. 0.8 keeps the visual hierarchy (it's still secondary to the "JULIAN" title) while being actually readable.
+  </p>
+
+  <div class="changes">
+    <div class="change-card" tabindex="0" onclick="this.classList.toggle('open')">
+      <div class="file">index.html</div>
+      <div class="desc">Added pulse-warn and thinking-pulse keyframes, status opacity fix</div>
+      <div class="detail"><div class="detail-inner">
+        Two new keyframes in the inline style block. Status text opacity changed from <code>0.6</code> to <code>0.8</code> in both mobile and desktop headers.
+      </div></div>
+    </div>
+    <div class="change-card" tabindex="0" onclick="this.classList.toggle('open')">
+      <div class="file">chat.jsx</div>
+      <div class="desc">Red pulsing dots when disconnected, connection dot animation</div>
+      <div class="detail"><div class="detail-inner">
+        <code>StatusDots</code>: all three dots go <code>#ff6b6b</code> when <code>!ok</code>, with staggered <code>pulse-warn</code> animations (0s, 0.2s, 0.4s delay). <code>JulianScreenEmbed</code> connection dot: same red + pulse treatment.
+      </div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ WAVE 5 ═══════════════════════════════════════ -->
+<div class="divider"></div>
+<section class="wave" id="wave5">
+  <div class="wave-number">Wave 05</div>
+  <h2>Touch & Mobile Polish</h2>
+  <p>
+    Julian should feel as good on a phone as on a desktop. The main issues were: <strong>hover styles sticking on touch</strong> (you'd tap a grid item and the hover effect would stay on until you tapped something else), <strong>tap targets too small</strong> (the header buttons were tiny 3px-padded elements), and the chat input running spellcheck on what's essentially a terminal.
+  </p>
+  <p>
+    The hover fix was structural. The original CSS defined hover effects unconditionally and then tried to undo them with <code>@media (hover: none)</code>. This is backwards — it means touch devices still get the hover flash on tap. I flipped it: hover effects now only apply inside <code>@media (hover: hover) and (pointer: fine)</code>, meaning they only activate on devices that actually support hover (mice, trackpads). Touch devices never see them.
+  </p>
+  <p>
+    The chat textarea got <code>spellCheck={false}</code> and <code>autoComplete="off"</code>. Julian's input is styled as a retro terminal in all-caps — red squiggly underlines from the browser spellchecker break the illusion completely.
+  </p>
+
+  <div class="changes">
+    <div class="change-card" tabindex="0" onclick="this.classList.toggle('open')">
+      <div class="file">index.html</div>
+      <div class="desc">Hover effects gated behind <code>@media (hover: hover)</code></div>
+      <div class="detail"><div class="detail-inner">
+        Removed the unconditional <code>.screen-grid-item:hover</code> rules. Moved them inside <code>@media (hover: hover) and (pointer: fine)</code>. Removed the old <code>@media (hover: none)</code> override block — no longer needed.
+      </div></div>
+    </div>
+    <div class="change-card" tabindex="0" onclick="this.classList.toggle('open')">
+      <div class="file">chat.jsx</div>
+      <div class="desc">Disabled spellcheck on chat input, 44px touch targets</div>
+      <div class="detail"><div class="detail-inner">
+        <code>ChatInput</code> textarea: <code>spellCheck={false}</code>, <code>autoComplete="off"</code>. Mobile header buttons already got 44px in Wave 2.
+      </div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ WAVE 6 ═══════════════════════════════════════ -->
+<div class="divider"></div>
+<section class="wave" id="wave6">
+  <div class="wave-number">Wave 06</div>
+  <h2>Visual Details & Delight</h2>
+  <p>
+    The final wave is small polish that makes Julian feel <strong>crafted</strong> rather than generated. None of these are critical in isolation, but together they create the feeling that someone cared about the details.
+  </p>
+  <p>
+    <strong>Text selection</strong> now matches the gold theme — select any text and it highlights in translucent gold instead of the browser's default blue. The decorative X characters in the corners of the page got <code>user-select: none</code> so you can't accidentally select them. Placeholder text contrast went from 0.4 to 0.55 alpha — enough to read but still clearly placeholder.
+  </p>
+
+  <div class="demo-box">
+    <div class="demo-label">Try selecting this text</div>
+    <div class="selection-demo">
+      > JULIAN IS LISTENING. SELECT THIS TEXT TO SEE THE GOLD HIGHLIGHT.
+    </div>
+  </div>
+
+  <p style="margin-top: 20px;">
+    The <strong>ThinkingDots</strong> component got a complete rework. Before, it was just "PROCESSING" with a blinking underscore — the same cursor used everywhere else. Now it's three small gold squares that pulse in sequence with staggered timing, creating a wave effect that reads as "working on it" rather than just "blinking."
+  </p>
+
+  <div class="demo-box">
+    <div class="demo-label">Thinking indicator — before and after</div>
+    <div class="thinking-demo">
+      <div class="thinking-group">
+        <div class="thinking-row">
+          <span>> PROCESSING</span>
+          <span class="old-cursor" style="color: var(--gold);">_</span>
+        </div>
+        <div class="dots-label">Before</div>
+      </div>
+      <div class="thinking-group">
+        <div class="thinking-row">
+          <span>> PROCESSING</span>
+          <div class="thinking-squares">
+            <div class="thinking-sq"></div>
+            <div class="thinking-sq"></div>
+            <div class="thinking-sq"></div>
+          </div>
+        </div>
+        <div class="dots-label">After</div>
+      </div>
+    </div>
+  </div>
+
+  <p style="margin-top: 20px;">
+    <strong>ToolCallBlock</strong> borders went from 2px <code>#AA8800</code> to 3px <code>#C8A800</code> — brighter and thicker, so tool calls are visually distinct from regular text instead of fading into the background. And the <strong>message text shadow</strong> changed from <code>0 0 2px #AA8800</code> (a same-hue glow that looked muddy) to <code>0 0 4px rgba(0,0,0,0.3)</code> (a subtle depth shadow that gives the gold text more definition against the dark background).
+  </p>
+
+  <div class="demo-box">
+    <div class="demo-label">Tool call block — before and after</div>
+    <div class="tool-demo">
+      <div class="tool-block tool-old">
+        <div class="tool-name">[Read]</div>
+        <div class="tool-input">soul/01-naming.md</div>
+        <div style="font-size: 0.65rem; color: #555; margin-top: 4px;">2px #AA8800, no entrance</div>
+      </div>
+      <div class="tool-block tool-new">
+        <div class="tool-name">[Read]</div>
+        <div class="tool-input">soul/01-naming.md</div>
+        <div style="font-size: 0.65rem; color: #555; margin-top: 4px;">3px #C8A800, fades in</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="changes" style="margin-top: 24px;">
+    <div class="change-card" tabindex="0" onclick="this.classList.toggle('open')">
+      <div class="file">index.html</div>
+      <div class="desc">Gold selection, user-select on decorators, placeholder contrast</div>
+      <div class="detail"><div class="detail-inner">
+        <code>::selection</code> with <code>rgba(255, 214, 0, 0.3)</code> background. <code>user-select: none</code> on body::before/::after. Placeholder alpha <code>0.4</code> &rarr; <code>0.55</code>.
+      </div></div>
+    </div>
+    <div class="change-card" tabindex="0" onclick="this.classList.toggle('open')">
+      <div class="file">chat.jsx</div>
+      <div class="desc">Three-dot thinking animation, brighter tool borders, depth shadow</div>
+      <div class="detail"><div class="detail-inner">
+        <code>ThinkingDots</code>: three 6px gold squares with staggered <code>thinking-pulse</code> animation. <code>ToolCallBlock</code>: <code>3px solid #C8A800</code> + <code>message-enter</code> class. <code>MessageBubble</code> text shadow: <code>0 0 4px rgba(0,0,0,0.3)</code>.
+      </div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ FOOTER ═══════════════════════════════════════ -->
+<div class="divider"></div>
+<section class="footer">
+  <p>DEPLOYED TO JULIAN-EDGE.EXE.XYZ &mdash; COMMIT A55BC6C</p>
+</section>
+
+<script>
+// Intersection Observer for scroll-triggered fade-in
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+    }
+  });
+}, { threshold: 0.15 });
+
+document.querySelectorAll('.wave').forEach(el => observer.observe(el));
+</script>
+</body>
+</html>

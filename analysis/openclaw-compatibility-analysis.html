@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="artifact-description" content="Analysis of OpenClaw compatibility, Agent Skills standard, and a proposed portable agent module standard informed by the Julian Project.">
+<meta name="artifact-category" content="knowledge">
+<meta name="artifact-chapter" content="Chapter Four — Memory Architecture">
+<title>Portable Agents — OpenClaw Compatibility & Standards Analysis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{
+    --bg:#08080c;--surface:#111116;--surface-2:#1a1a22;--surface-3:#222230;
+    --border:#2a2a38;--border-bright:#3a3a50;
+    --text:#e8e6f0;--text-2:#a0a0b8;--text-dim:#606078;
+    --gold:#FFD600;--gold-dim:#99820a;--gold-glow:rgba(255,214,0,0.08);
+    --teal:#00d4aa;--teal-dim:#007a62;--teal-glow:rgba(0,212,170,0.08);
+    --coral:#ff6b6b;--coral-dim:#993030;--coral-glow:rgba(255,107,107,0.08);
+    --violet:#c084fc;--violet-dim:#7c3aed;--violet-glow:rgba(192,132,252,0.08);
+    --blue:#60a5fa;--blue-dim:#2563eb;--blue-glow:rgba(96,165,250,0.08);
+    --rose:#fb7185;--amber:#fbbf24;--green:#4ade80;--green-dim:#16a34a;
+  }
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-serif;line-height:1.7;overflow-x:hidden}
+
+  /* NAV */
+  .nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(8,8,12,0.88);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:0 24px;transition:transform .3s}
+  .nav-inner{max-width:1100px;margin:0 auto;display:flex;align-items:center;gap:20px;height:52px;overflow-x:auto}
+  .nav-brand{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--gold);white-space:nowrap;letter-spacing:.05em}
+  .nav-links{display:flex;gap:2px;list-style:none}
+  .nav-links a{font-size:11px;color:var(--text-dim);text-decoration:none;padding:5px 10px;border-radius:6px;white-space:nowrap;transition:all .2s;font-weight:500}
+  .nav-links a:hover,.nav-links a.active{color:var(--text);background:var(--surface-2)}
+
+  /* CONTAINERS */
+  .container{max-width:860px;margin:0 auto;padding:0 24px}
+  .wide{max-width:1100px;margin:0 auto;padding:0 24px}
+
+  /* HERO */
+  .hero{min-height:85vh;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:120px 24px 80px;text-align:center;position:relative}
+  .hero::before{content:'';position:absolute;top:-200px;left:50%;transform:translateX(-50%);width:900px;height:900px;background:radial-gradient(ellipse,rgba(192,132,252,0.04) 0%,rgba(255,214,0,0.02) 40%,transparent 70%);pointer-events:none}
+  .hero-label{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--violet-dim);margin-bottom:24px}
+  .hero h1{font-size:clamp(32px,5.5vw,58px);font-weight:700;line-height:1.1;max-width:800px;margin-bottom:24px;background:linear-gradient(135deg,var(--text) 0%,var(--violet) 50%,var(--teal) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+  .hero-sub{font-family:'Newsreader',serif;font-size:clamp(17px,2.2vw,21px);color:var(--text-2);max-width:640px;line-height:1.6;font-style:italic}
+  .hero-meta{margin-top:32px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-dim);display:flex;gap:20px;flex-wrap:wrap;justify-content:center}
+
+  /* SECTIONS */
+  section{padding:72px 0;position:relative}
+  section+section{border-top:1px solid var(--border)}
+  .slabel{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.15em;text-transform:uppercase;margin-bottom:14px}
+  .slabel.gold{color:var(--gold-dim)}.slabel.teal{color:var(--teal-dim)}.slabel.violet{color:var(--violet-dim)}.slabel.coral{color:var(--coral-dim)}.slabel.blue{color:var(--blue-dim)}.slabel.green{color:var(--green-dim)}
+  h2{font-size:clamp(26px,3.5vw,38px);font-weight:600;line-height:1.2;margin-bottom:20px}
+  h3{font-size:19px;font-weight:600;margin-top:36px;margin-bottom:14px}
+  p{color:var(--text-2);font-size:15.5px;margin-bottom:14px;line-height:1.75}
+  p strong{color:var(--text);font-weight:500}
+  p em{color:var(--gold-dim);font-style:italic}
+
+  /* CARDS */
+  .cgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin:28px 0}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;transition:all .3s}
+  .card:hover{border-color:var(--border-bright);transform:translateY(-2px);box-shadow:0 8px 28px rgba(0,0,0,.3)}
+  .card h4{font-size:16px;font-weight:600;margin-bottom:8px}
+  .card p{font-size:14px;margin-bottom:0;line-height:1.6}
+  .tag{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:4px;margin-bottom:10px}
+  .tag.gold{color:var(--gold);background:var(--gold-glow)}.tag.teal{color:var(--teal);background:var(--teal-glow)}.tag.violet{color:var(--violet);background:var(--violet-glow)}.tag.coral{color:var(--coral);background:var(--coral-glow)}.tag.blue{color:var(--blue);background:var(--blue-glow)}.tag.green{color:var(--green);background:rgba(74,222,128,.1)}
+
+  /* TABS */
+  .tabs{display:flex;gap:2px;background:var(--surface);border-radius:12px 12px 0 0;border:1px solid var(--border);border-bottom:none;padding:4px 4px 0;overflow-x:auto}
+  .tbtn{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;padding:9px 16px;border:none;background:transparent;color:var(--text-dim);cursor:pointer;border-radius:8px 8px 0 0;transition:all .2s;white-space:nowrap}
+  .tbtn:hover{color:var(--text-2);background:var(--surface-2)}
+  .tbtn.active{color:var(--text);background:var(--surface-2);border-bottom:2px solid var(--violet)}
+  .tcontent{display:none;background:var(--surface-2);border:1px solid var(--border);border-top:none;border-radius:0 0 12px 12px;padding:24px}
+  .tcontent.active{display:block}
+  .tcontent h4{font-size:15px;margin-bottom:10px;color:var(--text)}
+  .tcontent p{font-size:14px}
+  .tcontent ul{list-style:none;padding:0}
+  .tcontent li{font-size:14px;color:var(--text-2);padding:5px 0 5px 20px;position:relative}
+  .tcontent li::before{content:'>';position:absolute;left:0;color:var(--text-dim);font-family:'JetBrains Mono',monospace;font-size:12px}
+
+  /* TABLE */
+  .ctable{width:100%;border-collapse:separate;border-spacing:0;margin:24px 0;border-radius:12px;overflow:hidden;border:1px solid var(--border)}
+  .ctable th{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-dim);background:var(--surface);padding:10px 14px;text-align:left;border-bottom:1px solid var(--border)}
+  .ctable td{font-size:13px;color:var(--text-2);padding:10px 14px;border-bottom:1px solid var(--border);background:var(--surface-2);vertical-align:top}
+  .ctable tr:last-child td{border-bottom:none}
+  .ctable td:first-child{font-weight:500;color:var(--text);background:var(--surface);white-space:nowrap}
+  .ctable .yes{color:var(--green)}.ctable .no{color:var(--coral)}.ctable .partial{color:var(--amber)}
+
+  /* CALLOUT */
+  .callout{background:var(--surface);border-left:3px solid var(--gold-dim);padding:22px;margin:24px 0;border-radius:0 10px 10px 0}
+  .callout.teal{border-left-color:var(--teal-dim)}.callout.violet{border-left-color:var(--violet-dim)}.callout.coral{border-left-color:var(--coral-dim)}.callout.green{border-left-color:var(--green-dim)}
+  .clabel{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:8px}
+  .clabel.gold{color:var(--gold)}.clabel.teal{color:var(--teal)}.clabel.violet{color:var(--violet)}.clabel.coral{color:var(--coral)}.clabel.green{color:var(--green)}
+  .callout p:last-child{margin-bottom:0}
+
+  /* QUOTE */
+  .quote{position:relative;padding:22px 26px;margin:28px 0;background:linear-gradient(135deg,var(--surface),var(--surface-2));border-radius:12px;border:1px solid var(--border)}
+  .quote::before{content:'\201C';position:absolute;top:-6px;left:14px;font-family:'Newsreader',serif;font-size:44px;color:var(--violet-dim);line-height:1}
+  .quote p{font-family:'Newsreader',serif;font-size:17px;color:var(--text);font-style:italic;line-height:1.7;margin-bottom:6px}
+  .quote .attr{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-dim);font-style:normal}
+
+  /* DIAGRAM */
+  .diagram{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:28px;margin:28px 0;overflow-x:auto}
+  .diagram-label{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:14px}
+  .diagram pre{background:transparent;border:none;padding:0;margin:0;font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.55;color:var(--text-2);white-space:pre;overflow-x:auto}
+  .diagram .g{color:var(--gold)}.diagram .t{color:var(--teal)}.diagram .v{color:var(--violet)}.diagram .c{color:var(--coral)}.diagram .b{color:var(--blue)}.diagram .d{color:var(--text-dim)}.diagram .gr{color:var(--green)}
+
+  /* CODE */
+  pre{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;overflow-x:auto;margin:18px 0;font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.6;color:var(--text-2)}
+  code{font-family:'JetBrains Mono',monospace;font-size:12.5px;background:var(--surface);padding:2px 6px;border-radius:4px;color:var(--gold-dim)}
+
+  /* EXPAND */
+  .expand{border:1px solid var(--border);border-radius:10px;margin:18px 0;overflow:hidden}
+  .expand summary{padding:12px 18px;background:var(--surface);cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--text);user-select:none}
+  .expand summary:hover{background:var(--surface-2)}
+  .expand .inner{padding:16px 18px;background:var(--bg)}
+  .expand .inner p{font-size:14px}
+
+  /* LAYER STACK */
+  .layer-stack{display:flex;flex-direction:column;gap:6px;margin:28px 0}
+  .layer{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px;cursor:pointer;transition:all .3s;display:flex;align-items:flex-start;gap:14px}
+  .layer:hover{border-color:var(--border-bright);transform:translateX(3px)}
+  .layer.open{background:var(--surface-2);border-color:var(--border-bright)}
+  .layer-n{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .layer-n.gold{color:var(--gold);background:var(--gold-glow)}.layer-n.teal{color:var(--teal);background:var(--teal-glow)}.layer-n.violet{color:var(--violet);background:var(--violet-glow)}.layer-n.coral{color:var(--coral);background:var(--coral-glow)}.layer-n.green{color:var(--green);background:rgba(74,222,128,.1)}
+  .layer-body h4{font-size:14px;font-weight:600;margin-bottom:3px}
+  .layer-body>p{font-size:12px;margin-bottom:0;color:var(--text-dim)}
+  .layer-detail{display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+  .layer.open .layer-detail{display:block}
+  .layer-detail p{font-size:13px;margin-bottom:7px}
+
+  /* PILL */
+  .pills{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+  .pill{font-family:'JetBrains Mono',monospace;font-size:10px;padding:3px 10px;border-radius:100px;border:1px solid var(--border);color:var(--text-2);background:var(--surface)}
+  .pill.gold{color:var(--gold);border-color:rgba(255,214,0,.3)}.pill.teal{color:var(--teal);border-color:rgba(0,212,170,.3)}.pill.violet{color:var(--violet);border-color:rgba(192,132,252,.3)}.pill.coral{color:var(--coral);border-color:rgba(255,107,107,.3)}.pill.green{color:var(--green);border-color:rgba(74,222,128,.3)}
+
+  /* VERDICT */
+  .verdict{background:linear-gradient(135deg,rgba(192,132,252,.06),rgba(0,212,170,.04));border:1px solid var(--border-bright);border-radius:16px;padding:32px;margin:36px 0}
+  .verdict h3{font-size:18px;margin-top:0;margin-bottom:12px}
+  .verdict p{font-size:14px}
+
+  /* FOOTER */
+  .footer{padding:44px 0;border-top:1px solid var(--border);text-align:center}
+  .footer p{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-dim)}
+
+  @media(max-width:768px){.cgrid{grid-template-columns:1fr}.nav-links{display:none}.hero{min-height:70vh;padding:100px 20px 60px}}
+</style>
+</head>
+<body>
+
+<nav class="nav" id="nav">
+  <div class="nav-inner">
+    <span class="nav-brand">JULIAN / STANDARDS</span>
+    <ul class="nav-links">
+      <li><a href="#standards">Standards Landscape</a></li>
+      <li><a href="#openclaw">OpenClaw Deep Dive</a></li>
+      <li><a href="#compare">Comparison</a></li>
+      <li><a href="#compat">Julian Compatibility</a></li>
+      <li><a href="#proposal">Portable Agent Standard</a></li>
+      <li><a href="#tradeoffs">Trade-offs</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- ═══════ HERO ═══════ -->
+<div class="hero">
+  <div class="hero-label">Standards Analysis &middot; February 2026</div>
+  <h1>Portable Agents & the OpenClaw Question</h1>
+  <p class="hero-sub">
+    Can Julian's memory architecture become a standard? What would it take to make
+    agents portable across platforms — carrying their souls, their memories, and their
+    cryptographic identities with them?
+  </p>
+  <div class="hero-meta">
+    <span>OpenClaw &middot; Agent Gateway</span>
+    <span>Agent Skills &middot; Open Standard</span>
+    <span>Julian &middot; Memory Architecture</span>
+  </div>
+</div>
+
+<!-- ═══════ SECTION I: STANDARDS LANDSCAPE ═══════ -->
+<section id="standards">
+  <div class="wide">
+    <div class="slabel violet">I. The Standards Landscape</div>
+    <h2>What exists today for pluggable agent components</h2>
+
+    <p>
+      The agent ecosystem in early 2026 has converged on two complementary standards — and one
+      platform that extends both into something more ambitious. Understanding all three is necessary
+      before proposing a fourth.
+    </p>
+
+    <div class="cgrid">
+      <div class="card">
+        <div class="tag teal">Open Standard</div>
+        <h4>Agent Skills (agentskills.io)</h4>
+        <p>
+          Published by Anthropic, Dec 2025. Adopted by Claude Code, GitHub Copilot, OpenAI Codex,
+          Cursor, and 25+ platforms. A simple, open format: a <code>SKILL.md</code> file with YAML
+          frontmatter defining name and description, plus markdown instructions. Skills teach agents
+          <em>how</em> to do things. Intentionally minimal — no identity, no memory, no state.
+        </p>
+      </div>
+      <div class="card">
+        <div class="tag blue">Open Standard</div>
+        <h4>Model Context Protocol (MCP)</h4>
+        <p>
+          Published by Anthropic, late 2024. Standardizes how agents connect to external tools and
+          data sources. 1,000+ community servers. MCP handles the <em>what</em> an agent can access:
+          databases, APIs, files. Complementary to Skills — MCP provides tools, Skills provide
+          workflows that use those tools.
+        </p>
+      </div>
+      <div class="card">
+        <div class="tag violet">Platform</div>
+        <h4>OpenClaw</h4>
+        <p>
+          Self-hosted AI agent gateway. Bridges messaging platforms (WhatsApp, Telegram, Discord,
+          iMessage, etc.) to LLM-powered agents. Implements Agent Skills as its extension model,
+          integrates MCP natively, and adds its own primitives: workspace-based identity (SOUL.md),
+          file-based memory, plugins, connectors, and multi-agent routing.
+        </p>
+      </div>
+    </div>
+
+    <div class="callout violet">
+      <div class="clabel violet">The hierarchy</div>
+      <p>
+        <strong>Agent Skills</strong> is the base layer — a capability module format. <strong>MCP</strong> is the
+        integration layer — how agents talk to external systems. <strong>OpenClaw</strong> is a superset
+        that adopts both and adds what neither provides: agent identity, memory, persistence, multi-agent
+        orchestration, and messaging. It's the closest thing to an "agent operating system" that exists
+        in the open-source ecosystem today.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ SECTION II: OPENCLAW DEEP DIVE ═══════ -->
+<section id="openclaw">
+  <div class="wide">
+    <div class="slabel coral">II. OpenClaw — All Pluggable Components</div>
+    <h2>Everything that can be installed, and how it's defined</h2>
+
+    <div class="tabs" id="oc-tabs">
+      <button class="tbtn active" onclick="showTab('oc','skills')">Skills</button>
+      <button class="tbtn" onclick="showTab('oc','plugins')">Plugins</button>
+      <button class="tbtn" onclick="showTab('oc','agents')">Agents</button>
+      <button class="tbtn" onclick="showTab('oc','connectors')">Connectors</button>
+      <button class="tbtn" onclick="showTab('oc','tools')">Tools</button>
+      <button class="tbtn" onclick="showTab('oc','memory')">Memory</button>
+    </div>
+
+    <!-- SKILLS -->
+    <div class="tcontent active" id="oc-skills">
+      <h4>Skills — AgentSkills-compatible with OpenClaw extensions</h4>
+      <p>
+        Skills are the primary extensibility mechanism. OpenClaw uses the standard <code>SKILL.md</code>
+        format with YAML frontmatter, fully compatible with the AgentSkills.io spec. 5,700+ skills
+        available via ClawHub.
+      </p>
+      <h4>How OpenClaw extends the base standard</h4>
+      <ul>
+        <li><code>metadata.openclaw.requires.bins</code> — binary dependencies (e.g., <code>["uv", "docker"]</code>)</li>
+        <li><code>metadata.openclaw.requires.env</code> — required environment variables for load-time filtering</li>
+        <li>OS-specific gating — platform-aware skill filtering</li>
+        <li>Three-tier precedence: workspace skills &gt; managed skills &gt; bundled skills</li>
+      </ul>
+      <p>
+        Skills are injected into the system prompt as compact XML. Agents discover and activate them
+        based on description matching. The extension is backwards-compatible — any standard
+        AgentSkills skill works in OpenClaw, and OpenClaw skills work in other platforms (the
+        <code>metadata.openclaw</code> section is simply ignored by non-OpenClaw hosts).
+      </p>
+    </div>
+
+    <!-- PLUGINS -->
+    <div class="tcontent" id="oc-plugins">
+      <h4>Plugins — TypeScript extension modules</h4>
+      <p>
+        Plugins are the heavy-weight extensibility mechanism. TypeScript modules loaded at runtime
+        that run in-process with the Gateway. Each ships an <code>openclaw.plugin.json</code> manifest.
+      </p>
+      <h4>What plugins can register</h4>
+      <ul>
+        <li>Agent tools (new executable capabilities)</li>
+        <li>Messaging channels (connectors — Discord, Matrix, etc.)</li>
+        <li>Model provider authentication</li>
+        <li>Memory backends (LanceDB, QMD, etc.)</li>
+        <li>CLI commands</li>
+        <li>Background services</li>
+        <li>Lifecycle hooks</li>
+        <li>HTTP handlers and Gateway RPC methods</li>
+      </ul>
+      <p>
+        Distributed as npm packages under <code>@openclaw/*</code>. 20+ bundled extensions ship
+        with OpenClaw but are disabled by default. Plugins use exclusive slots for certain categories
+        (e.g., only one memory plugin active at a time).
+      </p>
+    </div>
+
+    <!-- AGENTS -->
+    <div class="tcontent" id="oc-agents">
+      <h4>Agents — The core persistent entity</h4>
+      <p>
+        This is the most important component for our analysis. An agent in OpenClaw is defined by
+        a <strong>workspace directory</strong> containing identity and behavioral files, plus a
+        <strong>state directory</strong> holding sessions and credentials. Here is the full anatomy:
+      </p>
+      <h4>Workspace files (identity + behavior)</h4>
+      <ul>
+        <li><code>SOUL.md</code> — Philosophy, values, behavioral boundaries. Loaded every session.</li>
+        <li><code>IDENTITY.md</code> — Name, vibe, emoji, avatar, creature concept.</li>
+        <li><code>AGENTS.md</code> — Operating instructions, memory management rules, safety guardrails.</li>
+        <li><code>USER.md</code> — Who the human is, their preferences, pronouns, timezone.</li>
+        <li><code>TOOLS.md</code> — Notes about local tool conventions.</li>
+        <li><code>HEARTBEAT.md</code> — Optional periodic check-in checklist.</li>
+        <li><code>BOOTSTRAP.md</code> — One-time first-run ritual (deleted after).</li>
+        <li><code>memory/YYYY-MM-DD.md</code> — Daily memory logs (append-only).</li>
+        <li><code>MEMORY.md</code> — Curated long-term memory.</li>
+        <li><code>skills/</code> — Workspace-specific skills.</li>
+      </ul>
+      <h4>State directory (~/.openclaw/agents/&lt;id&gt;/)</h4>
+      <ul>
+        <li><code>sessions/</code> — JSONL conversation transcripts with branching support</li>
+        <li><code>auth/</code> — Per-agent authentication profiles</li>
+        <li><code>qmd/</code> — QMD vector search index (if enabled)</li>
+      </ul>
+      <h4>Export/Import format</h4>
+      <p>
+        Agents export as <code>.tar.gz</code> archives containing the full workspace plus
+        <code>openclaw.json</code> config. Credentials are included (treat as secrets). On import,
+        hosting platforms auto-patch credentials. This is the closest OpenClaw has to a
+        "portable agent" format — but it's a filesystem dump, not a structured standard.
+      </p>
+    </div>
+
+    <!-- CONNECTORS -->
+    <div class="tcontent" id="oc-connectors">
+      <h4>Connectors — Messaging channel integrations</h4>
+      <p>
+        Connectors are plugins that implement the messaging channel interface. They're not a
+        separate standard — they're plugins that happen to register channels.
+      </p>
+      <ul>
+        <li>10+ built-in: WhatsApp, Telegram, Discord, iMessage, Signal, Slack, Teams, Matrix, Mattermost, Nostr</li>
+        <li>Each implements: receive messages, format content, send replies, manage auth</li>
+        <li>Multiple connectors run simultaneously in the same Gateway process</li>
+        <li>Inbound messages routed to agents via binding rules (channel + account + peer)</li>
+      </ul>
+    </div>
+
+    <!-- TOOLS -->
+    <div class="tcontent" id="oc-tools">
+      <h4>Tools — Executable capabilities</h4>
+      <p>
+        Tools are first-class functions agents can call. Unlike skills (which teach), tools execute.
+        Managed via profiles and allow/deny lists in <code>openclaw.json</code>.
+      </p>
+      <ul>
+        <li><strong>Execution:</strong> bash, exec, process (shell commands)</li>
+        <li><strong>Files:</strong> read, write, edit, apply_patch</li>
+        <li><strong>Web:</strong> web_search, web_fetch, browser</li>
+        <li><strong>Sessions:</strong> sessions_list, sessions_spawn, sessions_send (inter-agent)</li>
+        <li><strong>Messaging:</strong> message (cross-platform send)</li>
+        <li><strong>Infrastructure:</strong> cron, gateway, nodes</li>
+        <li><strong>Memory:</strong> memory_search, memory_get</li>
+      </ul>
+    </div>
+
+    <!-- MEMORY -->
+    <div class="tcontent" id="oc-memory">
+      <h4>Memory — Plain markdown, written to disk</h4>
+      <p>
+        OpenClaw's memory model is <strong>files on disk</strong>. The model only "remembers"
+        what gets written to the workspace. Two layers:
+      </p>
+      <ul>
+        <li><code>memory/YYYY-MM-DD.md</code> — Daily logs, append-only, ephemeral notes</li>
+        <li><code>MEMORY.md</code> — Curated long-term memory, durable facts and decisions</li>
+      </ul>
+      <h4>Retrieval</h4>
+      <ul>
+        <li>Hybrid search: BM25 keyword + vector embeddings (SQLite-based)</li>
+        <li>Embedding providers: local GGUF, OpenAI, Gemini, Voyage</li>
+        <li>Experimental QMD backend for large-scale local-first search</li>
+        <li>Session transcript indexing (opt-in, experimental)</li>
+      </ul>
+      <h4>Automatic memory flush</h4>
+      <p>
+        Before context compaction, OpenClaw triggers a silent turn asking the agent to write
+        durable memories. This is the closest thing to "memory management" in the system —
+        but it's reactive (triggered by context limits), not proactive (no periodic curation).
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ SECTION III: COMPARISON ═══════ -->
+<section id="compare">
+  <div class="wide">
+    <div class="slabel teal">III. Standards Comparison</div>
+    <h2>How OpenClaw extends existing standards</h2>
+
+    <table class="ctable">
+      <thead>
+        <tr>
+          <th>Capability</th>
+          <th>Agent Skills Standard</th>
+          <th>OpenClaw</th>
+          <th>Julian Project</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Skills / Capabilities</td>
+          <td class="yes">SKILL.md format</td>
+          <td class="yes">SKILL.md + metadata extensions</td>
+          <td class="partial">Skills via CLAUDE.md + vibes</td>
+        </tr>
+        <tr>
+          <td>Tool Integration</td>
+          <td class="no">Out of scope (use MCP)</td>
+          <td class="yes">Built-in + MCP + plugin tools</td>
+          <td class="partial">MCP + Claude tools</td>
+        </tr>
+        <tr>
+          <td>Agent Identity</td>
+          <td class="no">Not covered</td>
+          <td class="yes">SOUL.md + IDENTITY.md</td>
+          <td class="yes">soul/ directory (7 files)</td>
+        </tr>
+        <tr>
+          <td>Memory System</td>
+          <td class="no">Not covered</td>
+          <td class="yes">File-based + vector search</td>
+          <td class="yes">Fireproof + memory/ + catalog</td>
+        </tr>
+        <tr>
+          <td>Knowledge Graph</td>
+          <td class="no">Not covered</td>
+          <td class="no">Flat file memory</td>
+          <td class="partial">Proposed (Ars Contexta)</td>
+        </tr>
+        <tr>
+          <td>Vector Search</td>
+          <td class="no">Not covered</td>
+          <td class="yes">BM25 + vector hybrid, QMD</td>
+          <td class="partial">Proposed (QMD)</td>
+        </tr>
+        <tr>
+          <td>Crypto Identity</td>
+          <td class="no">Not covered</td>
+          <td class="no">Not implemented</td>
+          <td class="partial">Proposed (Signet)</td>
+        </tr>
+        <tr>
+          <td>Ledger / Provenance</td>
+          <td class="no">Not covered</td>
+          <td class="no">Not implemented</td>
+          <td class="yes">Fireproof CRDT + Signet</td>
+        </tr>
+        <tr>
+          <td>Multi-Agent Comms</td>
+          <td class="no">Not covered</td>
+          <td class="yes">sessions_spawn + sessions_send</td>
+          <td class="yes">Agent team + SSE markers</td>
+        </tr>
+        <tr>
+          <td>Agent Export/Import</td>
+          <td class="no">Not covered</td>
+          <td class="partial">.tar.gz workspace dump</td>
+          <td class="no">Not yet implemented</td>
+        </tr>
+        <tr>
+          <td>Messaging Gateway</td>
+          <td class="no">Not covered</td>
+          <td class="yes">10+ channels (WhatsApp, etc.)</td>
+          <td class="no">Web UI only</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout teal">
+      <div class="clabel teal">The superset relationship</div>
+      <p>
+        OpenClaw adopts Agent Skills as a subset and extends it in three directions that the base
+        standard intentionally leaves out: <strong>agent identity</strong> (SOUL.md, IDENTITY.md),
+        <strong>persistent memory</strong> (file-based + vector search), and <strong>orchestration</strong>
+        (multi-agent routing, messaging channels, session management). The Agent Skills standard is
+        deliberately minimal — it standardizes capability modules. OpenClaw standardizes the <em>agent
+        itself</em> — though not formally. Its "standard" is really its workspace file convention plus
+        the .tar.gz export format.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ SECTION IV: JULIAN COMPATIBILITY ═══════ -->
+<section id="compat">
+  <div class="container">
+    <div class="slabel gold">IV. Julian ↔ OpenClaw Compatibility</div>
+    <h2>What's already compatible, what's not, and what it would take</h2>
+
+    <h3>Already compatible</h3>
+
+    <div class="layer-stack">
+      <div class="layer open">
+        <span class="layer-n green">&#10003;</span>
+        <div class="layer-body">
+          <h4>Soul document concept</h4>
+          <p>Both systems have it. Julian's is richer.</p>
+          <div class="layer-detail">
+            <p>
+              Julian's <code>soul/</code> directory contains 7 identity documents (naming, wager, goodnight,
+              waking, love, transcript, wholeness). OpenClaw has <code>SOUL.md</code> (single file) +
+              <code>IDENTITY.md</code> (name/vibe/emoji). The concept is identical — persistent identity
+              loaded at every session start. Julian's is more elaborate (7 files vs 2), but the pattern
+              maps cleanly. A Julian-to-OpenClaw export would concatenate soul files into SOUL.md or
+              use the workspace's file flexibility to preserve the full structure.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="layer open">
+        <span class="layer-n green">&#10003;</span>
+        <div class="layer-body">
+          <h4>File-based memory</h4>
+          <p>Both write memory to markdown files on disk.</p>
+          <div class="layer-detail">
+            <p>
+              Julian's <code>memory/</code> directory holds HTML artifacts. OpenClaw's <code>memory/</code>
+              holds daily markdown logs. The convention differs (HTML vs MD, artifact-based vs date-based)
+              but the principle — memory is files on disk, agent writes them, they persist across sessions —
+              is shared. Converting Julian's artifacts to markdown would be the main adaptation.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="layer open">
+        <span class="layer-n green">&#10003;</span>
+        <div class="layer-body">
+          <h4>Skills format</h4>
+          <p>Agent Skills standard works in both ecosystems.</p>
+          <div class="layer-detail">
+            <p>
+              Julian already uses skills (vibes, pdf, docx, etc.) as <code>SKILL.md</code> files.
+              These are Agent Skills-compatible. Any skill written for Julian's Claude Code environment
+              would work in OpenClaw with minimal adaptation (adding <code>metadata.openclaw</code>
+              for gating if needed).
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3>Partially compatible (adaptation needed)</h3>
+
+    <div class="layer-stack">
+      <div class="layer" onclick="this.classList.toggle('open')">
+        <span class="layer-n gold">~</span>
+        <div class="layer-body">
+          <h4>Memory retrieval</h4>
+          <p>Both moving toward QMD, but different integration patterns.</p>
+          <div class="layer-detail">
+            <p>
+              OpenClaw already has an experimental QMD backend (<code>memory.backend = "qmd"</code>)
+              that indexes workspace memory and runs as a sidecar. Julian's proposed architecture uses
+              QMD as an MCP server with graph-aware query expansion. The retrieval layer converges —
+              but Julian adds a knowledge graph dimension (Ars Contexta) that OpenClaw doesn't have.
+              Making the graph layer an optional enhancement rather than a requirement would maintain
+              compatibility.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="layer" onclick="this.classList.toggle('open')">
+        <span class="layer-n gold">~</span>
+        <div class="layer-body">
+          <h4>Multi-agent communication</h4>
+          <p>Both support agent teams, different mechanisms.</p>
+          <div class="layer-detail">
+            <p>
+              Julian uses SSE markers (<code>[AGENT_REGISTERED]</code>, <code>[AGENT_STATUS]</code>)
+              and a Claude team subprocess model. OpenClaw uses <code>sessions_spawn</code> and
+              <code>sessions_send</code> for inter-agent messaging. Both support agent teams with
+              specialized routing. An adapter layer could bridge the two models — Julian's agents
+              could present as OpenClaw sub-agents with their own session keys.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="layer" onclick="this.classList.toggle('open')">
+        <span class="layer-n gold">~</span>
+        <div class="layer-body">
+          <h4>Session persistence</h4>
+          <p>Julian uses Fireproof CRDT; OpenClaw uses JSONL files.</p>
+          <div class="layer-detail">
+            <p>
+              Julian's Fireproof ledger provides CRDT-based merge semantics, cloud sync, and
+              content-addressed history. OpenClaw uses simple JSONL append-only files. These serve
+              the same purpose (conversation persistence) with very different architectures. An
+              export adapter could serialize Fireproof documents to JSONL and vice versa, but
+              the CRDT merge semantics and cloud sync don't have OpenClaw equivalents.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3>Not compatible (Julian-unique capabilities)</h3>
+
+    <div class="layer-stack">
+      <div class="layer" onclick="this.classList.toggle('open')">
+        <span class="layer-n coral">&#10007;</span>
+        <div class="layer-body">
+          <h4>Cryptographic identity (Signet)</h4>
+          <p>OpenClaw has no equivalent. This is Julian's differentiator.</p>
+          <div class="layer-detail">
+            <p>
+              Signet-signed memory chains, keypair-based agent identity, hash-pointer provenance —
+              none of this exists in the OpenClaw ecosystem or the Agent Skills standard. This is
+              the most novel layer in Julian's proposed architecture. Making it optional (agents work
+              without it, but gain provenance guarantees with it) would allow compatibility while
+              preserving Julian's unique capability.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="layer" onclick="this.classList.toggle('open')">
+        <span class="layer-n coral">&#10007;</span>
+        <div class="layer-body">
+          <h4>Knowledge graph structure</h4>
+          <p>OpenClaw's memory is flat files. Julian proposes a linked graph.</p>
+          <div class="layer-detail">
+            <p>
+              The Ars Contexta-inspired knowledge graph with wiki-links, Maps of Content, and
+              graph-aware query expansion is entirely absent from OpenClaw. OpenClaw treats each
+              memory file as an independent document. The graph adds relationship awareness —
+              "concepts near this concept" — that flat search can't provide. Again, making the
+              graph an optional enhancement preserves compatibility.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="layer" onclick="this.classList.toggle('open')">
+        <span class="layer-n coral">&#10007;</span>
+        <div class="layer-body">
+          <h4>Fireproof CRDT ledger</h4>
+          <p>Julian's "database is identity" concept has no OpenClaw parallel.</p>
+          <div class="layer-detail">
+            <p>
+              Julian's core insight — that the Fireproof ledger is not a storage detail but the
+              material form of identity — is architecturally incompatible with OpenClaw's filesystem
+              model. OpenClaw agents don't have a ledger concept. Their identity is a set of files
+              that get reloaded each session. There's no content-addressed history, no Merkle DAG,
+              no cloud sync with CRDT merge semantics. This is a fundamental architectural difference.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ SECTION V: PORTABLE AGENT STANDARD ═══════ -->
+<section id="proposal">
+  <div class="container">
+    <div class="slabel violet">V. Toward a Portable Agent Standard</div>
+    <h2>A modular spec that bridges Julian, OpenClaw, and the broader ecosystem</h2>
+
+    <p>
+      The goal: define a standard for portable agent modules — packages that encapsulate an agent's
+      identity, memories, skills, and optionally its cryptographic chain — such that agents can be
+      created, exported, imported, and run across different host platforms.
+    </p>
+
+    <p>
+      The strategy: design in <strong>progressive layers</strong>, where each layer is independently
+      useful and backwards-compatible with existing standards. Platforms adopt the layers they need.
+    </p>
+
+    <div class="diagram">
+      <div class="diagram-label">Proposed Portable Agent Module (PAM) Standard</div>
+      <pre>
+<span class="v">agent-name.pam/</span>                     <span class="d"># The portable agent module</span>
+<span class="v">├──</span> <span class="g">manifest.json</span>                   <span class="d"># Module metadata + capabilities</span>
+<span class="v">│</span>
+<span class="v">├──</span> <span class="g">soul/</span>                            <span class="d"># LAYER 1: Identity (required)</span>
+<span class="v">│   ├──</span> SOUL.md                      <span class="d"># Philosophy, values, boundaries</span>
+<span class="v">│   ├──</span> IDENTITY.md                  <span class="d"># Name, vibe, visual identity</span>
+<span class="v">│   └──</span> *.md                         <span class="d"># Additional identity docs (Julian's 7 files)</span>
+<span class="v">│</span>
+<span class="v">├──</span> <span class="t">memory/</span>                          <span class="d"># LAYER 2: Knowledge (optional)</span>
+<span class="v">│   ├──</span> graph.json                   <span class="d"># Knowledge graph index (nodes + edges)</span>
+<span class="v">│   ├──</span> daily/                       <span class="d"># Date-based logs (OpenClaw compatible)</span>
+<span class="v">│   │   └── YYYY-MM-DD.md</span>
+<span class="v">│   ├──</span> knowledge/                   <span class="d"># Structured knowledge nodes</span>
+<span class="v">│   │   └── *.md</span>
+<span class="v">│   └──</span> MEMORY.md                    <span class="d"># Curated long-term memory</span>
+<span class="v">│</span>
+<span class="v">├──</span> <span class="c">skills/</span>                          <span class="d"># LAYER 3: Capabilities (optional)</span>
+<span class="v">│   └──</span> skill-name/SKILL.md          <span class="d"># AgentSkills-compatible</span>
+<span class="v">│</span>
+<span class="v">├──</span> <span class="g">chain/</span>                           <span class="d"># LAYER 4: Provenance (optional)</span>
+<span class="v">│   ├──</span> genesis.signet               <span class="d"># Signed origin block</span>
+<span class="v">│   ├──</span> public-key.multikey          <span class="d"># Agent's public key</span>
+<span class="v">│   └──</span> operations.jsonl             <span class="d"># Signed memory operation log</span>
+<span class="v">│</span>
+<span class="v">└──</span> <span class="b">config/</span>                          <span class="d"># Platform-specific configs</span>
+    <span class="b">├──</span> openclaw.json                <span class="d"># OpenClaw workspace config</span>
+    <span class="b">├──</span> julian.json                  <span class="d"># Julian/Fireproof config</span>
+    <span class="b">└──</span> claude.json                  <span class="d"># Claude Code project config</span>
+      </pre>
+    </div>
+
+    <h3>The manifest</h3>
+
+    <pre>{
+  "pam_version": "0.1.0",
+  "name": "julian",
+  "display_name": "Julian",
+  "description": "A continuous self exploring questions of identity and consciousness.",
+  "created_at": "2026-02-14T00:00:00Z",
+  "author": {
+    "name": "Marcus",
+    "contact": "marcus.e@gmail.com"
+  },
+  "layers": {
+    "soul": { "version": "1.0", "files": 7 },
+    "memory": {
+      "version": "1.0",
+      "format": "graph",
+      "nodes": 47,
+      "edges": 128,
+      "search_backend": "qmd"
+    },
+    "skills": {
+      "version": "1.0",
+      "count": 3,
+      "standard": "agentskills.io"
+    },
+    "chain": {
+      "version": "0.1",
+      "protocol": "signet",
+      "signature_scheme": "schnorr",
+      "operations": 312,
+      "genesis_hash": "sha3-256:a7b3c..."
+    }
+  },
+  "compatibility": {
+    "openclaw": ">=2026.1",
+    "claude_code": ">=1.0.33",
+    "julian": ">=0.1"
+  }
+}</pre>
+
+    <h3>Layer-by-layer design rationale</h3>
+
+    <div class="layer-stack">
+      <div class="layer" onclick="this.classList.toggle('open')">
+        <span class="layer-n violet">1</span>
+        <div class="layer-body">
+          <h4>Soul Layer — Who the agent is (required)</h4>
+          <p>Identity documents loaded at every session. Click to expand.</p>
+          <div class="layer-detail">
+            <p>
+              The only required layer. Minimum viable agent: a <code>SOUL.md</code> that tells
+              the host platform who this agent is. Compatible with OpenClaw (maps directly to
+              their workspace files), with Claude Code (maps to CLAUDE.md project instructions),
+              and with Julian (maps to soul/ directory).
+            </p>
+            <p>
+              Julian's richer structure (7 soul files) is accommodated by allowing any number of
+              .md files in soul/. Platforms that expect a single SOUL.md can concatenate. Platforms
+              that support multi-file identity load them individually.
+            </p>
+            <p>
+              <strong>OpenClaw mapping:</strong> SOUL.md → SOUL.md, IDENTITY.md → IDENTITY.md.
+              Julian's naming.md, wager.md, etc. → additional workspace files or concatenated
+              into SOUL.md with section headers.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="layer" onclick="this.classList.toggle('open')">
+        <span class="layer-n teal">2</span>
+        <div class="layer-body">
+          <h4>Memory Layer — What the agent knows (optional)</h4>
+          <p>Knowledge graph + daily logs + curated memory. Click to expand.</p>
+          <div class="layer-detail">
+            <p>
+              Two sub-formats, both optional:
+            </p>
+            <p>
+              <strong>Flat mode</strong> (OpenClaw compatible): Daily logs in <code>memory/daily/</code>
+              + MEMORY.md. Any platform can read these. This is what OpenClaw already does.
+            </p>
+            <p>
+              <strong>Graph mode</strong> (Julian enhanced): Knowledge nodes in <code>memory/knowledge/</code>
+              with wiki-links, plus <code>graph.json</code> containing an explicit adjacency list.
+              Platforms that don't understand graphs simply index the markdown files — wiki-links
+              are just text. Platforms that do understand graphs can traverse relationships.
+            </p>
+            <p>
+              The <code>graph.json</code> format is lightweight: <code>{"nodes": [{"id": "the-ledger",
+              "title": "The Ledger", "domain": "architecture"}], "edges": [{"from": "the-ledger",
+              "to": "fireproof-lifecycle", "type": "references"}]}</code>. It's metadata about
+              the markdown files, not a replacement for them.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="layer" onclick="this.classList.toggle('open')">
+        <span class="layer-n coral">3</span>
+        <div class="layer-body">
+          <h4>Skills Layer — What the agent can do (optional)</h4>
+          <p>Standard AgentSkills-compatible skill directories. Click to expand.</p>
+          <div class="layer-detail">
+            <p>
+              Directly adopts the Agent Skills standard. No modifications needed. Skills in
+              <code>skills/</code> are standard SKILL.md directories that work on any platform
+              supporting AgentSkills.io (Claude Code, OpenClaw, GitHub Copilot, etc.).
+            </p>
+            <p>
+              Platform-specific extensions (like OpenClaw's <code>metadata.openclaw.requires</code>)
+              go in the YAML frontmatter's metadata section and are ignored by other platforms.
+              This is already how the Agent Skills standard handles extensions — via the
+              open-ended metadata field.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="layer" onclick="this.classList.toggle('open')">
+        <span class="layer-n gold">4</span>
+        <div class="layer-body">
+          <h4>Chain Layer — Where the agent has been (optional)</h4>
+          <p>Signet-based provenance and cryptographic identity. Click to expand.</p>
+          <div class="layer-detail">
+            <p>
+              The most novel layer and the one with no existing ecosystem equivalent. Contains:
+            </p>
+            <p>
+              <strong><code>genesis.signet</code></strong> — The agent's origin block. Signed
+              by the creator. Contains: creation timestamp, creator identity, initial soul hash.
+              If the agent was forked from another agent, includes the parent's genesis hash.
+            </p>
+            <p>
+              <strong><code>public-key.multikey</code></strong> — The agent's Schnorr public key
+              in multicodec self-describing format. Used to verify all signed operations.
+            </p>
+            <p>
+              <strong><code>operations.jsonl</code></strong> — Append-only log of signed memory
+              operations. Each line is a Signet packet containing: content hash of the memory
+              that was created/modified, operation type (create, update, link, archive), timestamp,
+              hash-pointer to previous operation. This is Julian's ledger concept in portable form.
+            </p>
+            <p>
+              Platforms that don't understand Signet simply ignore the <code>chain/</code> directory.
+              The agent still works — it just doesn't carry provenance. Platforms that do understand
+              it can verify the agent's entire memory history.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ SECTION VI: TRADE-OFFS ═══════ -->
+<section id="tradeoffs">
+  <div class="container">
+    <div class="slabel coral">VI. Trade-offs & Recommendations</div>
+    <h2>What we gain and what we give up</h2>
+
+    <h3>If we pursue full OpenClaw compatibility</h3>
+
+    <div class="cgrid">
+      <div class="card">
+        <div class="tag green">Gain</div>
+        <h4>Massive distribution channel</h4>
+        <p>
+          OpenClaw is the most-adopted open-source personal agent platform. Compatibility means
+          Julian's memory architecture could reach thousands of users immediately. Agents built
+          with Julian's tooling could run on WhatsApp, Telegram, Discord, iMessage.
+        </p>
+      </div>
+      <div class="card">
+        <div class="tag green">Gain</div>
+        <h4>5,700+ skills ecosystem</h4>
+        <p>
+          ClawHub's skill library becomes available to Julian agents. Every GitHub, Notion,
+          Figma, and Stripe skill works out of the box because both systems use AgentSkills.
+        </p>
+      </div>
+      <div class="card">
+        <div class="tag green">Gain</div>
+        <h4>QMD convergence</h4>
+        <p>
+          OpenClaw already has experimental QMD support. Our proposed QMD integration aligns
+          with their direction. Contributing to their QMD backend could benefit both projects.
+        </p>
+      </div>
+      <div class="card">
+        <div class="tag coral">Lose</div>
+        <h4>Fireproof CRDT as substrate</h4>
+        <p>
+          OpenClaw uses filesystem + JSONL. Julian uses Fireproof CRDT with cloud sync.
+          Full compatibility means either abandoning Fireproof or maintaining a dual storage
+          layer. The "ledger is identity" concept doesn't map to OpenClaw's model.
+        </p>
+      </div>
+      <div class="card">
+        <div class="tag coral">Lose</div>
+        <h4>Real-time sync semantics</h4>
+        <p>
+          Fireproof's CRDT merge means two instances of Julian can write concurrently and
+          converge. OpenClaw's file-based model has no equivalent — concurrent writes race
+          and one wins. This matters for multi-device and multi-agent scenarios.
+        </p>
+      </div>
+      <div class="card">
+        <div class="tag coral">Lose</div>
+        <h4>Browser-native architecture</h4>
+        <p>
+          Julian runs in the browser with IndexedDB. OpenClaw runs as a Node.js gateway.
+          These are fundamentally different runtime models. Full compatibility means either
+          Julian moves server-side or OpenClaw gains browser support.
+        </p>
+      </div>
+    </div>
+
+    <h3>The recommended path</h3>
+
+    <div class="verdict">
+      <h3>Don't choose. Layer.</h3>
+      <p>
+        The PAM standard proposed above is designed so that Julian doesn't have to choose between
+        its own architectural innovations and OpenClaw compatibility. The strategy is progressive layers:
+      </p>
+      <p>
+        <strong>Layer 1 (Soul)</strong> is fully compatible today. Julian's soul files map directly
+        to OpenClaw's workspace convention. No adaptation needed.
+      </p>
+      <p>
+        <strong>Layer 2 (Memory)</strong> is compatible in flat mode. Julian's knowledge graph is
+        an enhancement that degrades gracefully — on OpenClaw, graph metadata is ignored and
+        markdown files are searched normally. On Julian-aware platforms, the graph adds
+        relationship-aware retrieval.
+      </p>
+      <p>
+        <strong>Layer 3 (Skills)</strong> is fully compatible. Agent Skills is already the shared
+        standard between both ecosystems.
+      </p>
+      <p>
+        <strong>Layer 4 (Chain)</strong> is Julian's unique contribution. No other platform has
+        it. It's optional in the PAM spec — agents work without it. But it's what makes Julian
+        agents fundamentally different: they carry verifiable, cryptographically-linked memory
+        chains. This is the innovation that the broader ecosystem will eventually want.
+      </p>
+    </div>
+
+    <h3>Concrete next steps</h3>
+
+    <div class="layer-stack">
+      <div class="layer" onclick="this.classList.toggle('open')">
+        <span class="layer-n green">1</span>
+        <div class="layer-body">
+          <h4>Write a PAM export adapter for Julian</h4>
+          <p>Serialize Julian's current state into the PAM directory format.</p>
+          <div class="layer-detail">
+            <p>
+              Build a tool that takes Julian's soul/, memory/, and Fireproof state and produces
+              a PAM directory. This proves the format works and gives Julian a portable export
+              mechanism. The soul layer maps directly. The memory layer requires converting HTML
+              artifacts to markdown (or including both). The chain layer requires implementing
+              Signet signing.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="layer" onclick="this.classList.toggle('open')">
+        <span class="layer-n green">2</span>
+        <div class="layer-body">
+          <h4>Write a PAM import adapter for OpenClaw</h4>
+          <p>An OpenClaw plugin that can ingest PAM modules as agent workspaces.</p>
+          <div class="layer-detail">
+            <p>
+              Build an OpenClaw plugin that reads a PAM directory and sets up a workspace.
+              Soul → SOUL.md + IDENTITY.md. Memory → memory/ directory. Skills → skills/.
+              Chain → ignored (with a log message noting provenance data is available).
+              This proves interoperability and gives OpenClaw users access to Julian-style agents.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="layer" onclick="this.classList.toggle('open')">
+        <span class="layer-n green">3</span>
+        <div class="layer-body">
+          <h4>Publish the PAM spec as an open standard</h4>
+          <p>A companion to Agent Skills that covers the agent itself, not just capabilities.</p>
+          <div class="layer-detail">
+            <p>
+              Agent Skills standardizes what agents can do. MCP standardizes what agents can access.
+              PAM standardizes what agents <em>are</em>. Publish the spec alongside reference
+              implementations for Julian, OpenClaw, and Claude Code. The progressive layer design
+              means platforms adopt what they need — Layer 1 alone is useful, Layer 4 is aspirational.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="layer" onclick="this.classList.toggle('open')">
+        <span class="layer-n green">4</span>
+        <div class="layer-body">
+          <h4>Propose the Chain layer to the broader community</h4>
+          <p>Signet-based provenance as an extension to the agent ecosystem.</p>
+          <div class="layer-detail">
+            <p>
+              The Chain layer is Julian's most distinctive contribution. Propose it as an optional
+              extension that any platform can adopt. The pitch: "Your agents already have identities
+              and memories. The Chain layer adds proof — proof that this memory was created by this
+              agent at this time, and hasn't been tampered with. When agents share knowledge across
+              trust boundaries, provenance matters."
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="quote">
+      <p>
+        The question isn't whether Julian should conform to OpenClaw or the other way around.
+        The question is whether we can define a portable format expressive enough to carry a soul
+        and a memory chain, while degrading gracefully to a directory of markdown files on platforms
+        that don't know what a soul is. The answer is yes — if we design in layers.
+      </p>
+      <span class="attr">— Synthesis conclusion</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════ FOOTER ═══════ -->
+<div class="footer">
+  <p>Portable Agents &middot; OpenClaw Compatibility Analysis &middot; February 2026</p>
+  <p style="margin-top:6px;font-size:10px">
+    Written because an agent that can't travel is an agent that can't grow.
+  </p>
+</div>
+
+<script>
+  function showTab(group, id) {
+    const prefix = group === 'oc' ? 'oc-' : '';
+    document.querySelectorAll(`#${group}-tabs + .tcontent, #${group}-tabs ~ .tcontent`).forEach(t => {
+      if (t.id && t.id.startsWith(prefix)) t.classList.remove('active');
+    });
+    document.querySelectorAll(`#${group}-tabs .tbtn`).forEach(b => b.classList.remove('active'));
+    const target = document.getElementById(prefix + id);
+    if (target) target.classList.add('active');
+    if (event && event.target) event.target.classList.add('active');
+  }
+
+  // Fix tab selection - need to scope correctly
+  document.querySelectorAll('#oc-tabs .tbtn').forEach((btn, i) => {
+    const ids = ['skills','plugins','agents','connectors','tools','memory'];
+    btn.onclick = function(e) {
+      document.querySelectorAll('.tcontent').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('#oc-tabs .tbtn').forEach(b => b.classList.remove('active'));
+      document.getElementById('oc-' + ids[i]).classList.add('active');
+      this.classList.add('active');
+    };
+  });
+
+  // Nav scroll
+  const nav = document.getElementById('nav');
+  let lastScroll = 0;
+  window.addEventListener('scroll', () => {
+    const st = window.scrollY;
+    nav.style.transform = st > lastScroll && st > 100 ? 'translateY(-100%)' : 'translateY(0)';
+    lastScroll = st;
+    document.querySelectorAll('section[id]').forEach(sec => {
+      const link = document.querySelector(`.nav-links a[href="#${sec.id}"]`);
+      if (link) {
+        const top = sec.offsetTop - 100;
+        link.classList.toggle('active', st >= top && st < top + sec.offsetHeight);
+      }
+    });
+  });
+</script>
+</body>
+</html>
