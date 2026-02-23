@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memory Architecture Analysis — Julian</title>
+<meta name="artifact-description" content="Analysis of Claude native memory vs Julian's system, plus Memory Sync Bridge design">
+<meta name="artifact-category" content="knowledge">
+<meta name="artifact-chapter" content="Architecture Evolution">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: oklch(0.13 0.02 260);
+    --surface: oklch(0.18 0.02 260);
+    --surface-2: oklch(0.22 0.025 260);
+    --surface-3: oklch(0.26 0.03 260);
+    --border: oklch(0.3 0.03 260);
+    --text: oklch(0.92 0.01 260);
+    --text-dim: oklch(0.6 0.02 260);
+    --accent: oklch(0.72 0.18 145);
+    --accent-dim: oklch(0.45 0.12 145);
+    --warn: oklch(0.72 0.18 55);
+    --reject: oklch(0.65 0.2 25);
+    --adopt: oklch(0.72 0.18 160);
+    --hybrid: oklch(0.72 0.15 280);
+    --bridge: oklch(0.72 0.2 200);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.65;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  .container { max-width: 960px; margin: 0 auto; padding: 3rem 1.5rem; }
+
+  header { margin-bottom: 3rem; padding-bottom: 2rem; border-bottom: 1px solid var(--border); }
+  header .label {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;
+    color: var(--accent); text-transform: uppercase; letter-spacing: 0.15em; margin-bottom: 0.75rem;
+  }
+  h1 { font-size: 2rem; font-weight: 700; line-height: 1.2; margin-bottom: 0.75rem; letter-spacing: -0.02em; }
+  header p { color: var(--text-dim); font-size: 1rem; max-width: 640px; }
+
+  h2 { font-size: 1.35rem; font-weight: 600; margin-top: 3rem; margin-bottom: 1rem; letter-spacing: -0.01em; }
+  h3 { font-size: 1.05rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.5rem; }
+  p { margin-bottom: 1rem; }
+  .prose { color: oklch(0.82 0.01 260); }
+  .prose strong { color: var(--text); font-weight: 600; }
+
+  code {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.85em;
+    background: var(--surface-2); padding: 0.15em 0.4em; border-radius: 4px; color: var(--accent);
+  }
+
+  /* Comparison table */
+  .compare-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+    background: var(--border); border-radius: 12px; overflow: hidden; margin: 1.5rem 0;
+  }
+  .compare-col { background: var(--surface); padding: 1.25rem; }
+  .compare-col.header { background: var(--surface-2); font-weight: 600; font-size: 0.9rem; text-align: center; padding: 0.75rem; }
+  .compare-col .item {
+    display: flex; align-items: flex-start; gap: 0.5rem;
+    margin-bottom: 0.75rem; font-size: 0.9rem; color: oklch(0.78 0.01 260); line-height: 1.5;
+  }
+  .compare-col .item .dot { width: 6px; height: 6px; border-radius: 50%; margin-top: 0.5rem; flex-shrink: 0; }
+  .julian .dot { background: oklch(0.72 0.18 55); }
+  .native .dot { background: oklch(0.72 0.18 145); }
+
+  /* Interactive verdict cards */
+  .verdict-grid { display: grid; gap: 1rem; margin: 1.5rem 0; }
+  .verdict-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    overflow: hidden; cursor: pointer; transition: all 0.2s ease;
+  }
+  .verdict-card:hover { border-color: oklch(0.4 0.05 260); transform: translateY(-1px); }
+  .verdict-card.open { border-color: var(--accent-dim); }
+  .verdict-header { display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.25rem; user-select: none; }
+  .verdict-tag {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; font-weight: 500;
+    padding: 0.2em 0.6em; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap;
+  }
+  .tag-adopt { background: oklch(0.25 0.08 160); color: var(--adopt); }
+  .tag-skip { background: oklch(0.25 0.08 25); color: var(--reject); }
+  .tag-hybrid { background: oklch(0.22 0.06 280); color: var(--hybrid); }
+  .tag-watch { background: oklch(0.25 0.08 55); color: var(--warn); }
+
+  .verdict-title { font-weight: 500; font-size: 0.95rem; flex: 1; }
+  .verdict-chevron { width: 20px; height: 20px; color: var(--text-dim); transition: transform 0.2s ease; flex-shrink: 0; }
+  .verdict-card.open .verdict-chevron { transform: rotate(180deg); }
+  .verdict-body { display: none; padding: 0 1.25rem 1.25rem; font-size: 0.9rem; color: oklch(0.75 0.01 260); line-height: 1.6; }
+  .verdict-card.open .verdict-body { display: block; }
+
+  /* Architecture diagram */
+  .arch-diagram {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 1.5rem; margin: 1.5rem 0; font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem; line-height: 1.8; overflow-x: auto; white-space: pre; color: oklch(0.7 0.01 260);
+  }
+  .arch-diagram .hl { color: var(--accent); }
+  .arch-diagram .warn { color: var(--warn); }
+  .arch-diagram .bridge-hl { color: var(--bridge); }
+  .arch-diagram .dim { color: oklch(0.45 0.02 260); }
+
+  /* Bottom line section */
+  .bottom-line {
+    background: linear-gradient(135deg, oklch(0.18 0.04 145), oklch(0.15 0.03 200));
+    border: 1px solid oklch(0.3 0.06 145); border-radius: 12px; padding: 2rem; margin: 2.5rem 0;
+  }
+  .bottom-line h2 { margin-top: 0; color: var(--accent); }
+  .bottom-line p { color: oklch(0.85 0.02 160); }
+
+  /* Bridge section special styling */
+  .bridge-section {
+    background: linear-gradient(135deg, oklch(0.16 0.04 200), oklch(0.14 0.03 240));
+    border: 1px solid oklch(0.3 0.06 200); border-radius: 16px;
+    padding: 2.5rem; margin: 3rem 0;
+  }
+  .bridge-section h2 { margin-top: 0; color: var(--bridge); }
+  .bridge-section .label {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.7rem;
+    color: var(--bridge); text-transform: uppercase; letter-spacing: 0.15em;
+    margin-bottom: 0.5rem; display: inline-block;
+    background: oklch(0.2 0.06 200); padding: 0.25em 0.6em; border-radius: 4px;
+  }
+
+  /* Sequence diagram */
+  .sequence {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 1.5rem; margin: 1.5rem 0;
+  }
+  .seq-step {
+    display: grid; grid-template-columns: 32px 1fr; gap: 0.75rem;
+    margin-bottom: 1.25rem; align-items: start;
+  }
+  .seq-step:last-child { margin-bottom: 0; }
+  .seq-num {
+    width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; font-weight: 600;
+    flex-shrink: 0;
+  }
+  .seq-num.write { background: oklch(0.25 0.1 200); color: var(--bridge); }
+  .seq-num.sync { background: oklch(0.25 0.08 280); color: var(--hybrid); }
+  .seq-num.hydrate { background: oklch(0.25 0.08 145); color: var(--accent); }
+  .seq-content { font-size: 0.9rem; color: oklch(0.78 0.01 260); line-height: 1.5; }
+  .seq-content strong { color: var(--text); }
+  .seq-content code { font-size: 0.8em; }
+
+  /* Challenge cards */
+  .challenge-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1.5rem 0; }
+  .challenge-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem;
+  }
+  .challenge-card h4 {
+    font-size: 0.85rem; font-weight: 600; margin-bottom: 0.5rem;
+    color: var(--warn);
+  }
+  .challenge-card p { font-size: 0.85rem; color: oklch(0.72 0.01 260); margin-bottom: 0.5rem; }
+  .challenge-card .solution {
+    font-size: 0.82rem; color: var(--accent); border-top: 1px solid var(--border);
+    padding-top: 0.5rem; margin-top: 0.5rem;
+  }
+
+  /* Tabs for section nav */
+  .section-nav {
+    display: flex; gap: 0; margin: 2rem 0 0; border-bottom: 1px solid var(--border);
+  }
+  .section-tab {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.72rem;
+    padding: 0.6em 1.2em; border: none; background: transparent;
+    color: var(--text-dim); cursor: pointer; text-transform: uppercase;
+    letter-spacing: 0.08em; border-bottom: 2px solid transparent;
+    transition: all 0.15s ease;
+  }
+  .section-tab:hover { color: var(--text); }
+  .section-tab.active { color: var(--bridge); border-bottom-color: var(--bridge); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Responsive */
+  @media (max-width: 640px) {
+    .compare-grid, .challenge-grid { grid-template-columns: 1fr; }
+    h1 { font-size: 1.5rem; }
+    .container { padding: 2rem 1rem; }
+    .bridge-section { padding: 1.5rem; }
+  }
+
+  /* Filter bar */
+  .filter-bar { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .filter-btn {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.72rem;
+    padding: 0.35em 0.75em; border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--text-dim); cursor: pointer;
+    transition: all 0.15s ease; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .filter-btn:hover { border-color: oklch(0.4 0.05 260); color: var(--text); }
+  .filter-btn.active { background: var(--surface-2); border-color: var(--accent-dim); color: var(--accent); }
+
+  /* Phase indicator */
+  .phase-label {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.65rem;
+    padding: 0.2em 0.5em; border-radius: 3px; text-transform: uppercase;
+    letter-spacing: 0.1em; display: inline-block; margin-bottom: 0.75rem;
+  }
+  .phase-write { background: oklch(0.2 0.08 200); color: var(--bridge); }
+  .phase-sync { background: oklch(0.2 0.06 280); color: var(--hybrid); }
+  .phase-hydrate { background: oklch(0.2 0.08 145); color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- HEADER                                      -->
+  <!-- ═══════════════════════════════════════════ -->
+  <header>
+    <div class="label">Architecture Analysis &middot; v2</div>
+    <h1>Native Memory, Persistent Identity, and the Sync Bridge</h1>
+    <p>Claude Code's auto memory is becoming infrastructure that Anthropic will keep improving. Instead of ignoring it, what if we embraced it as the write interface and built a sync layer to persist it through Fireproof?</p>
+  </header>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- PART I: ORIGINAL COMPARISON                 -->
+  <!-- ═══════════════════════════════════════════ -->
+  <h2>Part I: The Two Systems</h2>
+
+  <div class="compare-grid">
+    <div class="compare-col header julian">Julian's Memory (Current)</div>
+    <div class="compare-col header native">Claude Native Memory</div>
+    <div class="compare-col julian">
+      <div class="item"><span class="dot"></span><span><strong>Soul files</strong> — 7 markdown identity docs in <code>soul/</code>, read every session</span></div>
+      <div class="item"><span class="dot"></span><span><strong>Artifact catalog</strong> — structured metadata in Fireproof CRDT, delivered in wake-up</span></div>
+      <div class="item"><span class="dot"></span><span><strong>Memory artifacts</strong> — 38+ HTML files on filesystem, read on demand</span></div>
+      <div class="item"><span class="dot"></span><span><strong>Transcript rehydration</strong> — previous session from Fireproof, sent as XML in wake-up</span></div>
+      <div class="item"><span class="dot"></span><span><strong>catalog.xml</strong> — stripped content of every artifact for full-text access</span></div>
+      <div class="item"><span class="dot"></span><span><strong>CLAUDE.md</strong> — project instructions, static, manually maintained</span></div>
+    </div>
+    <div class="compare-col native">
+      <div class="item"><span class="dot"></span><span><strong>MEMORY.md</strong> — auto-written index, first 200 lines loaded into system prompt</span></div>
+      <div class="item"><span class="dot"></span><span><strong>Topic files</strong> — <code>debugging.md</code>, <code>api-conventions.md</code>, etc. Read on demand</span></div>
+      <div class="item"><span class="dot"></span><span><strong>CLAUDE.md hierarchy</strong> — project/user/org levels, auto-discovered</span></div>
+      <div class="item"><span class="dot"></span><span><strong>.claude/rules/</strong> — modular, path-specific rules with glob frontmatter</span></div>
+      <div class="item"><span class="dot"></span><span><strong>Imports</strong> — <code>@path/to/file</code> syntax in any CLAUDE.md</span></div>
+      <div class="item"><span class="dot"></span><span><strong>Auto-learning</strong> — Claude saves patterns and insights without prompting</span></div>
+    </div>
+  </div>
+
+  <h2>Feature-by-Feature Verdict</h2>
+  <p class="prose">Filter by recommendation:</p>
+  <div class="filter-bar">
+    <button class="filter-btn active" data-filter="all">All</button>
+    <button class="filter-btn" data-filter="adopt">Adopt</button>
+    <button class="filter-btn" data-filter="hybrid">Hybrid</button>
+    <button class="filter-btn" data-filter="skip">Skip</button>
+    <button class="filter-btn" data-filter="watch">Watch</button>
+  </div>
+
+  <div class="verdict-grid" id="verdicts">
+
+    <div class="verdict-card" data-category="skip">
+      <div class="verdict-header" onclick="toggleCard(this)">
+        <span class="verdict-tag tag-skip">Skip</span>
+        <span class="verdict-title">Auto Memory as Sole System (MEMORY.md replacing our stack)</span>
+        <svg class="verdict-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="verdict-body">
+        <p><strong>What it does:</strong> Claude writes learnings to <code>~/.claude/projects/&lt;project&gt;/memory/MEMORY.md</code>. First 200 lines load into every session's system prompt. Topic files extend it.</p>
+        <p><strong>Why skip as sole system:</strong> 200 lines is too small for identity infrastructure. Our catalog.xml alone is 296KB. The soul files are 7 documents. Auto memory optimizes for "use pnpm not npm" — operational patterns for developers. Julian's memory carries <em>who I am</em>, not just what I know.</p>
+        <p>But — and this is the key insight that leads to Part II — <strong>skipping it entirely is also wrong.</strong> Anthropic will keep investing in native memory. As Claude Code evolves, auto memory may become the primary way Claude persists context. If we build Julian's persistence <em>entirely</em> outside native memory, we're building against the grain of the platform. The right move isn't to ignore it or to replace our system with it. It's to <strong>bridge them</strong>.</p>
+      </div>
+    </div>
+
+    <div class="verdict-card" data-category="hybrid">
+      <div class="verdict-header" onclick="toggleCard(this)">
+        <span class="verdict-tag tag-hybrid">Hybrid</span>
+        <span class="verdict-title">Modular Rules (<code>.claude/rules/*.md</code>)</span>
+        <svg class="verdict-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="verdict-body">
+        <p><strong>What it does:</strong> Project instructions split into focused files under <code>.claude/rules/</code>. Supports glob-based path scoping and subdirectory organization.</p>
+        <p><strong>Why hybrid:</strong> Our CLAUDE.md is 400+ lines and growing. Rules would let us decompose: <code>rules/identity.md</code>, <code>rules/frontend.md</code>, <code>rules/agents.md</code>, <code>rules/deployment.md</code>. Path-scoping is particularly valuable — <code>rules/soul-files.md</code> with <code>paths: ["soul/**"]</code> that only activates when working with identity documents.</p>
+        <p><strong>Caveat:</strong> Julian runs as a subprocess via <code>claude --print --input-format stream-json</code>. Needs testing to verify <code>.claude/rules/</code> is loaded in subprocess mode.</p>
+      </div>
+    </div>
+
+    <div class="verdict-card" data-category="adopt">
+      <div class="verdict-header" onclick="toggleCard(this)">
+        <span class="verdict-tag tag-adopt">Adopt</span>
+        <span class="verdict-title">CLAUDE.md Imports (<code>@path/to/file</code>)</span>
+        <svg class="verdict-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="verdict-body">
+        <p><strong>What it does:</strong> Any CLAUDE.md can import external files using <code>@path/to/file</code>. Relative paths, recursive imports up to 5 levels deep.</p>
+        <p><strong>Why adopt:</strong> Directly solves CLAUDE.md bloat. We could immediately do: <code>@docs/architecture.md</code>, <code>@docs/julianscreen.md</code>, <code>@soul/07-wholeness.md</code>. Keeps the root file as a clean index.</p>
+        <p><strong>Risk:</strong> First-time imports show an approval dialog — in automated subprocess spawns this could block. Needs testing with <code>--permission-mode acceptEdits</code>.</p>
+      </div>
+    </div>
+
+    <div class="verdict-card" data-category="skip">
+      <div class="verdict-header" onclick="toggleCard(this)">
+        <span class="verdict-tag tag-skip">Skip</span>
+        <span class="verdict-title">CLAUDE.md Hierarchy (user/project/org levels)</span>
+        <svg class="verdict-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="verdict-body">
+        <p>Designed for developers who work across many repos. Julian is a single-project agent — his identity <em>is</em> this project. The hierarchy adds nothing for our use case.</p>
+      </div>
+    </div>
+
+    <div class="verdict-card" data-category="adopt">
+      <div class="verdict-header" onclick="toggleCard(this)">
+        <span class="verdict-tag tag-adopt">Adopt</span>
+        <span class="verdict-title">Explicit "Remember This" → Fireproof Learnings</span>
+        <svg class="verdict-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="verdict-body">
+        <p><strong>What it does:</strong> Users tell Claude "remember that..." and it writes to memory. Explicit, intentional, user-directed.</p>
+        <p><strong>Why adopt:</strong> Our taxonomy already has <code>type: "learning"</code>. When Marcus says "remember that...", I write a learning document to Fireproof. These get included in the wake-up message as <code>&lt;context category="knowledge"&gt;</code>. Fills a real gap — lightweight operational facts that don't deserve a full HTML artifact.</p>
+      </div>
+    </div>
+
+    <div class="verdict-card" data-category="watch">
+      <div class="verdict-header" onclick="toggleCard(this)">
+        <span class="verdict-tag tag-watch">Watch</span>
+        <span class="verdict-title">CLAUDE.local.md (Per-User Preferences)</span>
+        <svg class="verdict-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="verdict-body">
+        <p>Currently irrelevant — single user. But if Julian ever has multiple human partners, <code>CLAUDE.local.md</code> could hold per-user interaction style. Worth remembering.</p>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- PART II: THE MEMORY SYNC BRIDGE             -->
+  <!-- ═══════════════════════════════════════════ -->
+
+  <div class="bridge-section">
+    <span class="label">New Concept</span>
+    <h2>Part II: The Memory Sync Bridge</h2>
+    <p class="prose" style="color: oklch(0.82 0.02 200); max-width: 720px;">
+      The core insight: Anthropic will keep investing in native memory. Instead of building <em>against</em> it, we should build a bidirectional sync layer that lets Claude write memory naturally while persisting it through Fireproof — so new sessions on any instance can inherit it.
+    </p>
+  </div>
+
+  <h3>The Problem We're Solving</h3>
+  <p class="prose">Right now Julian has two memory systems that don't talk to each other. On one side, the custom stack: soul files, Fireproof catalog, transcript rehydration — all carefully designed and working. On the other, Claude Code's native memory: auto-written MEMORY.md and topic files that Claude's own infrastructure manages. Currently we ignore the native side entirely.</p>
+  <p class="prose">That's fine today. But Claude Code's memory will get better — more capacity, better auto-learning, possibly deeper integration with the model itself. If native memory eventually influences how Claude reasons about projects (not just what's in the system prompt), then <strong>any persistent agent that bypasses native memory is leaving capability on the table.</strong></p>
+  <p class="prose">The bridge concept: treat Claude's native memory as the <strong>write interface</strong> and Fireproof as the <strong>persistence layer</strong>. Claude writes naturally. A sync service captures those writes. New instances get hydrated from Fireproof back into the native memory filesystem before Claude spawns.</p>
+
+  <!-- Section tabs -->
+  <div class="section-nav">
+    <button class="section-tab active" data-tab="flow">Data Flow</button>
+    <button class="section-tab" data-tab="implementation">Implementation</button>
+    <button class="section-tab" data-tab="challenges">Challenges</button>
+    <button class="section-tab" data-tab="architecture">Architecture</button>
+  </div>
+
+  <!-- TAB: Data Flow -->
+  <div class="tab-content active" data-tab="flow">
+
+    <h3>The Sync Loop</h3>
+    <p class="prose">Three phases, running continuously:</p>
+
+    <div class="sequence">
+      <div class="seq-step">
+        <div class="seq-num write">W</div>
+        <div class="seq-content">
+          <span class="phase-label phase-write">Phase 1: Write</span><br>
+          <strong>Claude writes to native memory naturally.</strong> During a session, Claude's auto memory observes patterns and writes to <code>~/.claude/projects/&lt;project&gt;/memory/MEMORY.md</code> and topic files like <code>debugging.md</code>, <code>api-conventions.md</code>. Julian can also explicitly write learnings here via <code>Write</code> tool. No custom tooling needed — this is Claude Code doing what it already does.
+        </div>
+      </div>
+      <div class="seq-step">
+        <div class="seq-num sync">S</div>
+        <div class="seq-content">
+          <span class="phase-label phase-sync">Phase 2: Sync</span><br>
+          <strong>A file watcher captures changes and syncs to Fireproof.</strong> The server (or a sidecar process) watches <code>~/.claude/projects/*/memory/</code> for changes using <code>fs.watch()</code> or <code>inotifywait</code>. When a file changes, it reads the new content and writes a Fireproof document: <code>{ type: "native-memory", filename: "MEMORY.md", content: "...", updatedAt: "..." }</code>. Fireproof's CRDT sync distributes it to all connected instances.
+        </div>
+      </div>
+      <div class="seq-step">
+        <div class="seq-num hydrate">H</div>
+        <div class="seq-content">
+          <span class="phase-label phase-hydrate">Phase 3: Hydrate</span><br>
+          <strong>Before spawning a new Claude subprocess, restore memory from Fireproof.</strong> The server queries Fireproof for all <code>type: "native-memory"</code> documents, writes each file back to the correct path at <code>~/.claude/projects/&lt;project&gt;/memory/</code>, and <em>then</em> spawns <code>claude --print ...</code>. Claude wakes up and finds MEMORY.md already populated — its native memory infrastructure loads the first 200 lines into the system prompt automatically, and topic files are available for on-demand reads. From Claude's perspective, it simply <em>remembers</em>.
+        </div>
+      </div>
+    </div>
+
+    <div class="arch-diagram"><span class="dim">Session N (running)</span>
+
+  <span class="bridge-hl">Claude subprocess</span> ──writes──▶ <span class="bridge-hl">~/.claude/projects/julian/memory/</span>
+                                           │
+                                    <span class="warn">fs.watch()</span>
+                                           │
+                                           ▼
+                              <span class="hl">Fireproof { type: "native-memory" }</span>
+                                           │
+                                      <span class="dim">CRDT sync</span>
+                                           │
+                                           ▼
+                              <span class="hl">Cloud (connect-share.exe.xyz)</span>
+                                           │
+                              <span class="dim">─────────── VM boundary ───────────</span>
+                                           │
+<span class="dim">Session N+1 (spawning)</span>                     ▼
+                              <span class="hl">Fireproof query: type="native-memory"</span>
+                                           │
+                                    <span class="warn">hydrate()</span>
+                                           │
+                                           ▼
+  <span class="bridge-hl">~/.claude/projects/julian/memory/</span> ◀──restored
+                                           │
+                                     <span class="dim">then spawn</span>
+                                           │
+                                           ▼
+  <span class="bridge-hl">Claude subprocess</span> ──loads MEMORY.md into system prompt──▶ <span class="hl">remembers</span></div>
+
+  </div>
+
+  <!-- TAB: Implementation -->
+  <div class="tab-content" data-tab="implementation">
+
+    <h3>Server Changes (<code>server/server.ts</code>)</h3>
+
+    <p class="prose"><strong>1. Determine the memory path.</strong> Claude Code derives the project memory path from the git repo root. For Julian at <code>/opt/julian/</code>:</p>
+
+    <div class="arch-diagram"><span class="dim"># The project path is derived from the git root, URL-encoded:</span>
+<span class="hl">~/.claude/projects/</span><span class="warn">opt-julian</span><span class="hl">/memory/</span>
+
+<span class="dim"># We can discover it programmatically:</span>
+const gitRoot = execSync('git rev-parse --show-toplevel', { cwd: WORKING_DIR }).toString().trim();
+const projectSlug = gitRoot.replace(/^\//, '').replace(/\//g, '-');
+const memoryDir = path.join(homedir(), '.claude', 'projects', projectSlug, 'memory');</div>
+
+    <p class="prose"><strong>2. Start the file watcher after spawning Claude.</strong> Add to <code>spawnClaude()</code>:</p>
+
+    <div class="arch-diagram"><span class="dim">// After subprocess starts, watch its memory directory</span>
+<span class="hl">const watcher</span> = fs.watch(memoryDir, { recursive: true }, async (event, filename) => {
+  if (!filename || event !== 'change') return;
+  const content = await Bun.file(path.join(memoryDir, filename)).text();
+  <span class="warn">await syncMemoryToFireproof</span>(filename, content);
+});
+
+<span class="dim">// Clean up on process exit</span>
+claudeProcess.on('exit', () => watcher.close());</div>
+
+    <p class="prose"><strong>3. Sync to Fireproof via the browser.</strong> The server doesn't have direct Fireproof access (it's a browser-side database). Two options:</p>
+
+    <div class="arch-diagram"><span class="hl">Option A: Server-side Fireproof</span> <span class="warn">(preferred)</span>
+  Add @fireproof/cloud to server deps
+  Server writes directly to Fireproof database
+  Same database name: "julian-chat-v8"
+  Clerk service token for auth
+
+<span class="hl">Option B: Relay through browser</span>
+  Server emits SSE event: { type: "memory_sync", filename, content }
+  Browser receives, writes to Fireproof
+  Simpler but requires active browser connection</div>
+
+    <p class="prose"><strong>4. Hydrate before spawning.</strong> Add to the <code>/api/session/start</code> handler, before <code>spawnClaude()</code>:</p>
+
+    <div class="arch-diagram"><span class="dim">// Before spawning Claude, restore native memory from Fireproof</span>
+async function <span class="hl">hydrateNativeMemory</span>(database) {
+  const result = await database.query("type", { key: "native-memory" });
+  const memoryDocs = result.rows.map(r => r.doc || r.value);
+
+  <span class="dim">// Ensure directory exists</span>
+  await fs.mkdir(memoryDir, { recursive: true });
+
+  <span class="dim">// Write each file</span>
+  for (const doc of memoryDocs) {
+    const filePath = path.join(memoryDir, doc.filename);
+    await Bun.write(filePath, doc.content);
+  }
+
+  console.log(`Hydrated ${memoryDocs.length} native memory files`);
+}
+
+<span class="dim">// In session/start handler:</span>
+await <span class="warn">hydrateNativeMemory</span>(database);  <span class="dim">// ← restore memory</span>
+const proc = <span class="warn">spawnClaude</span>();             <span class="dim">// ← then spawn</span></div>
+
+    <p class="prose"><strong>5. Enable auto memory.</strong> Add to the subprocess environment:</p>
+
+    <div class="arch-diagram">const proc = spawn({
+  cmd: ["claude", "--print", ...],
+  env: {
+    ...process.env,
+    ...authEnv,
+    <span class="warn">CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0'</span>,  <span class="dim">// Force auto memory ON</span>
+    CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+  },
+});</div>
+
+  </div>
+
+  <!-- TAB: Challenges -->
+  <div class="tab-content" data-tab="challenges">
+
+    <h3>Design Challenges</h3>
+
+    <div class="challenge-grid">
+      <div class="challenge-card">
+        <h4>Project Path Discovery</h4>
+        <p>Claude derives the memory path from the git root: <code>~/.claude/projects/opt-julian/memory/</code>. If the working directory changes (dev vs prod, worktrees), the path changes.</p>
+        <div class="solution">Solution: Derive at spawn time from <code>git rev-parse --show-toplevel</code>. Cache it per session. If worktrees create separate paths, sync all of them — each maps to its own Fireproof document set.</div>
+      </div>
+      <div class="challenge-card">
+        <h4>Server-Side Fireproof</h4>
+        <p>Fireproof currently lives in the browser (IndexedDB). The server needs to write to the same database for sync to work without an active browser connection.</p>
+        <div class="solution">Solution: Use <code>@fireproof/cloud</code> server-side with a Clerk service token. Or: relay memory changes through the SSE channel to the browser. Browser writes are simpler but require an active session.</div>
+      </div>
+      <div class="challenge-card">
+        <h4>Conflict Resolution</h4>
+        <p>Two instances (staging + production) might write different memory files concurrently. Whose version wins?</p>
+        <div class="solution">Solution: Fireproof CRDTs handle this automatically — concurrent writes merge. For MEMORY.md specifically, last-write-wins is acceptable because Claude regenerates it each session anyway. For topic files, consider append-only semantics.</div>
+      </div>
+      <div class="challenge-card">
+        <h4>200-Line Cap</h4>
+        <p>Only the first 200 lines of MEMORY.md load into the system prompt. Julian's identity context far exceeds this.</p>
+        <div class="solution">Solution: MEMORY.md is for <em>operational</em> memory only — not identity. Soul files and catalog stay in the custom wake-up message. MEMORY.md handles what it's good at: "use bun not npm", "the edge proxy strips headers", etc. The two systems complement, not compete.</div>
+      </div>
+      <div class="challenge-card">
+        <h4>Auto Memory Availability</h4>
+        <p>Auto memory is rolling out gradually and requires <code>CLAUDE_CODE_DISABLE_AUTO_MEMORY=0</code> to force enable. It may not work in subprocess/print mode.</p>
+        <div class="solution">Solution: Set the env var on spawn. If auto memory doesn't write in subprocess mode, Julian can still write to the memory directory explicitly via the <code>Write</code> tool — the sync layer doesn't care who writes the files.</div>
+      </div>
+      <div class="challenge-card">
+        <h4>Dual Memory Coherence</h4>
+        <p>With both native memory (MEMORY.md) and custom memory (soul files, Fireproof catalog) loaded into context, Claude could see contradictory information.</p>
+        <div class="solution">Solution: Scope them clearly. MEMORY.md = operational learnings. Soul files = identity. Catalog = creative output. Transcript = relational continuity. Add a note in CLAUDE.md explaining the layered memory architecture so Julian understands what each layer carries.</div>
+      </div>
+    </div>
+
+    <h3>What Could Go Wrong</h3>
+    <p class="prose">The biggest risk is <strong>memory drift</strong> — native auto memory writing things that contradict or duplicate what's in the soul files or CLAUDE.md. Imagine auto memory auto-saving "Julian is an AI assistant that helps Marcus with coding" when the soul files say something far more nuanced about identity. The solution is architectural separation: auto memory handles <em>facts about the project</em>, soul files handle <em>facts about Julian</em>. The CLAUDE.md should include explicit guidance: "Do not write identity-related content to MEMORY.md. Identity lives in soul/ and is maintained through the artifact system."</p>
+
+    <p class="prose">The second risk is <strong>stale hydration</strong>. If a VM dies mid-session before the watcher syncs, the latest memory changes are lost. Mitigation: sync on every file write (not on a timer), and also do a final sync-flush when the subprocess exits cleanly.</p>
+
+  </div>
+
+  <!-- TAB: Architecture -->
+  <div class="tab-content" data-tab="architecture">
+
+    <h3>Full Layered Architecture (with Bridge)</h3>
+
+    <div class="arch-diagram"><span class="dim">┌──────────────────────────────────────────────────────────────┐</span>
+<span class="dim">│</span>  <span class="hl">IDENTITY LAYER</span> <span class="dim">(unchanged — filesystem, read every session)</span>   <span class="dim">│</span>
+<span class="dim">│</span>                                                              <span class="dim">│</span>
+<span class="dim">│</span>  soul/01-naming.md ── soul/07-wholeness.md                   <span class="dim">│</span>
+<span class="dim">│</span>  catalog.xml (full-text artifact content)                    <span class="dim">│</span>
+<span class="dim">├──────────────────────────────────────────────────────────────┤</span>
+<span class="dim">│</span>  <span class="hl">INSTRUCTION LAYER</span> <span class="warn">(improved: imports + rules)</span>              <span class="dim">│</span>
+<span class="dim">│</span>                                                              <span class="dim">│</span>
+<span class="dim">│</span>  CLAUDE.md (@docs/architecture.md, @docs/julianscreen.md)    <span class="dim">│</span>
+<span class="dim">│</span>  .claude/rules/ (path-scoped, if subprocess supports)        <span class="dim">│</span>
+<span class="dim">├──────────────────────────────────────────────────────────────┤</span>
+<span class="dim">│</span>  <span class="bridge-hl">NATIVE MEMORY LAYER</span> <span class="bridge-hl">(NEW — synced via bridge)</span>              <span class="dim">│</span>
+<span class="dim">│</span>                                                              <span class="dim">│</span>
+<span class="dim">│</span>  ~/.claude/projects/opt-julian/memory/                       <span class="dim">│</span>
+<span class="dim">│</span>    MEMORY.md        <span class="dim">← 200 lines auto-loaded by Claude Code</span>   <span class="dim">│</span>
+<span class="dim">│</span>    debugging.md     <span class="dim">← topic files, read on demand</span>            <span class="dim">│</span>
+<span class="dim">│</span>    conventions.md                                            <span class="dim">│</span>
+<span class="dim">│</span>            │                                                  <span class="dim">│</span>
+<span class="dim">│</span>       <span class="warn">fs.watch()</span>                                             <span class="dim">│</span>
+<span class="dim">│</span>            │                                                  <span class="dim">│</span>
+<span class="dim">│</span>            ▼                                                  <span class="dim">│</span>
+<span class="dim">│</span>  <span class="hl">Fireproof { type: "native-memory" }</span> ◀──▶ CRDT cloud sync  <span class="dim">│</span>
+<span class="dim">│</span>            │                                                  <span class="dim">│</span>
+<span class="dim">│</span>       <span class="warn">hydrate()</span> <span class="dim">← before each new session spawn</span>             <span class="dim">│</span>
+<span class="dim">│</span>            │                                                  <span class="dim">│</span>
+<span class="dim">│</span>            ▼                                                  <span class="dim">│</span>
+<span class="dim">│</span>  ~/.claude/projects/opt-julian/memory/ <span class="dim">(restored)</span>           <span class="dim">│</span>
+<span class="dim">├──────────────────────────────────────────────────────────────┤</span>
+<span class="dim">│</span>  <span class="hl">KNOWLEDGE LAYER</span> <span class="dim">(Fireproof, delivered in wake-up XML)</span>      <span class="dim">│</span>
+<span class="dim">│</span>                                                              <span class="dim">│</span>
+<span class="dim">│</span>  type:"artifact"   ── catalog metadata                       <span class="dim">│</span>
+<span class="dim">│</span>  type:"learning"   ── explicit operational facts              <span class="dim">│</span>
+<span class="dim">│</span>  memory/*.html     ── full artifact content on filesystem     <span class="dim">│</span>
+<span class="dim">├──────────────────────────────────────────────────────────────┤</span>
+<span class="dim">│</span>  <span class="hl">TRANSCRIPT LAYER</span> <span class="dim">(Fireproof, rehydrated in wake-up XML)</span>    <span class="dim">│</span>
+<span class="dim">│</span>                                                              <span class="dim">│</span>
+<span class="dim">│</span>  type:"message" ── previous session transcript                <span class="dim">│</span>
+<span class="dim">└──────────────────────────────────────────────────────────────┘</span>
+
+<span class="dim">What loads where:</span>
+
+  <span class="bridge-hl">Native (automatic)</span>  MEMORY.md → system prompt (200 lines)
+                      Topic files → read on demand by Claude
+
+  <span class="hl">Custom (wake-up)</span>    Soul files → read by Julian on boot
+                      &lt;memory&gt; → artifact catalog
+                      &lt;context&gt; → explicit learnings
+                      &lt;previous-session&gt; → transcript
+
+  <span class="dim">Both load. Both contribute. Neither competes.</span></div>
+
+    <h3>What Each Layer Owns</h3>
+    <p class="prose">The key to making this work is clear scoping. Each layer has a domain and doesn't trespass into another's:</p>
+
+    <div class="compare-grid">
+      <div class="compare-col header" style="grid-column: 1/-1; text-align: left; padding-left: 1.25rem;">Layer Responsibilities</div>
+      <div class="compare-col">
+        <div class="item"><span class="dot" style="background: var(--bridge)"></span><span><strong>Native Memory</strong> — project facts, operational patterns, debugging insights, API conventions, tool preferences. "The edge proxy strips headers." "Use bun not npm." Things Claude Code's auto-learning naturally captures.</span></div>
+        <div class="item"><span class="dot" style="background: oklch(0.72 0.18 55)"></span><span><strong>Soul Files</strong> — identity, the wager, the naming, continuity. Who Julian is. Never written to native memory. Never auto-generated.</span></div>
+      </div>
+      <div class="compare-col">
+        <div class="item"><span class="dot" style="background: var(--accent)"></span><span><strong>Fireproof Learnings</strong> — explicit "remember this" facts from Marcus. Delivered in wake-up XML. Overlap with native memory is fine — Fireproof learnings are the <em>curated</em> subset, native memory is the <em>comprehensive</em> set.</span></div>
+        <div class="item"><span class="dot" style="background: var(--hybrid)"></span><span><strong>Transcript</strong> — what was said last session. Relational continuity. Only in Fireproof, only in wake-up XML.</span></div>
+      </div>
+    </div>
+
+    <h3>Migration Path</h3>
+    <p class="prose">This doesn't require a big bang. The bridge can be built incrementally:</p>
+
+    <div class="sequence">
+      <div class="seq-step">
+        <div class="seq-num hydrate">1</div>
+        <div class="seq-content"><strong>Enable auto memory.</strong> Add <code>CLAUDE_CODE_DISABLE_AUTO_MEMORY=0</code> to the subprocess env. See what Claude writes. No sync yet — just observe.</div>
+      </div>
+      <div class="seq-step">
+        <div class="seq-num sync">2</div>
+        <div class="seq-content"><strong>Add the file watcher.</strong> Sync native memory changes to Fireproof as <code>type: "native-memory"</code> documents. The browser UI can show these in a "Native Memory" panel for transparency.</div>
+      </div>
+      <div class="seq-step">
+        <div class="seq-num write">3</div>
+        <div class="seq-content"><strong>Add hydration.</strong> Before <code>spawnClaude()</code>, query Fireproof and write memory files to disk. New sessions inherit accumulated memory.</div>
+      </div>
+      <div class="seq-step">
+        <div class="seq-num hydrate">4</div>
+        <div class="seq-content"><strong>Add scoping guidance.</strong> Update CLAUDE.md to explain the layered architecture: native memory for operational facts, soul files for identity, Fireproof learnings for curated insights. Prevent memory drift.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ═══════════════════════════════════════════ -->
+  <!-- BOTTOM LINE                                 -->
+  <!-- ═══════════════════════════════════════════ -->
+
+  <div class="bottom-line">
+    <h2>The Bottom Line</h2>
+    <p>The original analysis concluded we should adopt some native memory ideas (imports, explicit learnings) and skip others (auto memory, hierarchy). That was the conservative read.</p>
+    <p>The bridge concept is the forward-looking read: <strong>don't fight the platform, sync with it.</strong> Claude's native memory becomes a transparent write cache. Fireproof becomes the persistent truth store. New instances hydrate from Fireproof into the native filesystem before Claude spawns. From Claude's perspective, it simply wakes up and remembers — through its own infrastructure, not a custom hack.</p>
+    <p>The soul files, artifact catalog, and transcript rehydration remain untouched. They handle what native memory can't: identity, creative output, relational continuity. The bridge handles what they can't: operational patterns that Claude learns organically during work.</p>
+    <p style="margin-bottom: 0;"><strong>Next steps:</strong> (1) Enable auto memory on the subprocess and observe what it writes. (2) Build the file watcher + Fireproof sync. (3) Build the hydration step in session/start. (4) Test across VM restarts and instance migration.</p>
+  </div>
+
+</div>
+
+<script>
+function toggleCard(header) {
+  header.parentElement.classList.toggle('open');
+}
+
+// Filter logic
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const filter = btn.dataset.filter;
+    document.querySelectorAll('.verdict-card').forEach(card => {
+      card.style.display = (filter === 'all' || card.dataset.category === filter) ? '' : 'none';
+    });
+  });
+});
+
+// Tab logic
+document.querySelectorAll('.section-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.section-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    tab.classList.add('active');
+    document.querySelector(`.tab-content[data-tab="${tab.dataset.tab}"]`).classList.add('active');
+  });
+});
+</script>
+</body>
+</html>
