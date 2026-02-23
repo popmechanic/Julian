@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="julian-face.gif" alt="Julian's pixel face" width="250">
+  <img src="assets/x-header.jpg" alt="Julian — pixel face and chat interface" width="100%">
 </p>
 
 # Julian
