@@ -71,6 +71,63 @@ export function corsHeaders(origin: string) {
 
 // ── Marker parsing ────────────────────────────────────────────────────────
 
+// Try to parse JSON starting from the first '{' in a string.
+// If it fails and we have a pending buffer, try joining them.
+function tryParseMarkerJSON(line: string, pending: string | null): { parsed: any; remaining: null } | null {
+  const braceIdx = line.indexOf('{');
+  if (braceIdx === -1) return null;
+
+  const jsonStr = pending ? pending + line.slice(braceIdx) : line.slice(braceIdx);
+  try {
+    return { parsed: JSON.parse(jsonStr), remaining: null };
+  } catch {
+    return null;
+  }
+}
+
+function emitMarker(
+  type: string,
+  parsed: any,
+  appendFn: (partial: Omit<ServerEvent, 'id' | 'ts'>) => ServerEvent,
+  sessionId: string | null,
+): void {
+  if (type === 'agent_registered') {
+    if (!parsed.name || parsed.gridPosition == null) {
+      console.warn('[Marker] AGENT_REGISTERED missing required fields (name, gridPosition):', JSON.stringify(parsed).slice(0, 200));
+      return;
+    }
+    if (!parsed.color) console.warn(`[Marker] AGENT_REGISTERED "${parsed.name}" missing color`);
+    if (!parsed.colorName) console.warn(`[Marker] AGENT_REGISTERED "${parsed.name}" missing colorName`);
+    if (!parsed.faceVariant) console.warn(`[Marker] AGENT_REGISTERED "${parsed.name}" missing faceVariant, using defaults`);
+    appendFn({
+      sessionId,
+      type: 'agent_registered',
+      agent: {
+        name: parsed.name,
+        color: parsed.color,
+        colorName: parsed.colorName,
+        gender: parsed.gender || 'man',
+        gridPosition: parsed.gridPosition,
+        faceVariant: parsed.faceVariant || { eyes: 'default', mouth: 'default' },
+        individuationArtifact: parsed.individuationArtifact || '',
+        createdAt: parsed.createdAt || new Date().toISOString(),
+      },
+    });
+  } else if (type === 'agent_status') {
+    if (!parsed.agents) {
+      console.warn('[Marker] AGENT_STATUS missing agents array:', JSON.stringify(parsed).slice(0, 200));
+      return;
+    }
+    appendFn({ sessionId, type: 'agent_status', agents: parsed.agents });
+  } else if (type === 'ui_action') {
+    if (!parsed.target || !parsed.action) {
+      console.warn('[Marker] UI_ACTION missing target or action:', JSON.stringify(parsed).slice(0, 200));
+      return;
+    }
+    appendFn({ sessionId, type: 'ui_action', target: parsed.target, action: parsed.action, data: parsed.data });
+  }
+}
+
 export function parseMarkersFromContent(
   content: any[],
   appendFn: (partial: Omit<ServerEvent, 'id' | 'ts'>) => ServerEvent,
@@ -78,53 +135,61 @@ export function parseMarkersFromContent(
 ): void {
   for (const block of content) {
     if (block.type === 'text' && typeof block.text === 'string') {
-      // [AGENT_REGISTERED] marker
-      const regLines = block.text.split('\n').filter((l: string) => l.includes('[AGENT_REGISTERED]'));
-      for (const line of regLines) {
-        try {
-          const jsonStr = line.slice(line.indexOf('{'));
-          const agent = JSON.parse(jsonStr);
-          if (agent.name && agent.gridPosition != null) {
-            appendFn({
-              sessionId,
-              type: 'agent_registered',
-              agent: {
-                name: agent.name,
-                color: agent.color,
-                colorName: agent.colorName,
-                gender: agent.gender || 'man',
-                gridPosition: agent.gridPosition,
-                faceVariant: agent.faceVariant || { eyes: 'default', mouth: 'default' },
-                individuationArtifact: agent.individuationArtifact || '',
-                createdAt: agent.createdAt || new Date().toISOString(),
-              },
-            });
+      const lines = block.text.split('\n');
+      let pendingMarker: { type: string; text: string } | null = null;
+
+      for (const line of lines) {
+        // If we have a pending incomplete marker, try joining with this line
+        if (pendingMarker) {
+          const joined = pendingMarker.text + line;
+          const result = tryParseMarkerJSON(joined, null);
+          if (result) {
+            emitMarker(pendingMarker.type, result.parsed, appendFn, sessionId);
+            pendingMarker = null;
+            continue;
           }
-        } catch {}
+          // Still can't parse — drop the pending marker with a warning
+          console.warn(`[Marker] Multi-line parse failed for ${pendingMarker.type}:`, pendingMarker.text.slice(0, 200));
+          pendingMarker = null;
+        }
+
+        // [AGENT_REGISTERED] marker
+        if (line.includes('[AGENT_REGISTERED]')) {
+          const result = tryParseMarkerJSON(line, null);
+          if (result) {
+            emitMarker('agent_registered', result.parsed, appendFn, sessionId);
+          } else {
+            pendingMarker = { type: 'agent_registered', text: line };
+          }
+          continue;
+        }
+
+        // [AGENT_STATUS] marker
+        if (line.includes('[AGENT_STATUS]')) {
+          const result = tryParseMarkerJSON(line, null);
+          if (result) {
+            emitMarker('agent_status', result.parsed, appendFn, sessionId);
+          } else {
+            pendingMarker = { type: 'agent_status', text: line };
+          }
+          continue;
+        }
+
+        // [UI_ACTION] marker
+        if (line.includes('[UI_ACTION]')) {
+          const result = tryParseMarkerJSON(line, null);
+          if (result) {
+            emitMarker('ui_action', result.parsed, appendFn, sessionId);
+          } else {
+            pendingMarker = { type: 'ui_action', text: line };
+          }
+          continue;
+        }
       }
 
-      // [AGENT_STATUS] marker
-      const statusLines = block.text.split('\n').filter((l: string) => l.includes('[AGENT_STATUS]'));
-      for (const line of statusLines) {
-        try {
-          const jsonStr = line.slice(line.indexOf('{'));
-          const status = JSON.parse(jsonStr);
-          if (status.agents) {
-            appendFn({ sessionId, type: 'agent_status', agents: status.agents });
-          }
-        } catch {}
-      }
-
-      // [UI_ACTION] marker
-      const uiActionLines = block.text.split('\n').filter((l: string) => l.includes('[UI_ACTION]'));
-      for (const line of uiActionLines) {
-        try {
-          const jsonStr = line.slice(line.indexOf('{'));
-          const parsed = JSON.parse(jsonStr);
-          if (parsed.target && parsed.action) {
-            appendFn({ sessionId, type: 'ui_action', target: parsed.target, action: parsed.action, data: parsed.data });
-          }
-        } catch {}
+      // Warn about any dangling pending marker at end of block
+      if (pendingMarker) {
+        console.warn(`[Marker] Incomplete ${pendingMarker.type} at end of content block:`, pendingMarker.text.slice(0, 200));
       }
     }
 
