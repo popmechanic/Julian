@@ -668,16 +668,13 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
 
   const appendPrompt = mode === 'demo' ? DEMO_SYSTEM_PROMPT : NORMAL_SYSTEM_PROMPT;
 
-  // Remote mode: teleport into an existing Remote Control session on another machine
+  // Remote mode: connect to a Remote Control session via `claude -r`
+  // No --print (incompatible with RC), no format flags — plain text I/O
   // Local mode: spawn a fresh Claude process with full flags
   const cmd = REMOTE_SESSION
     ? [
         "claude",
-        "--print",
-        "--teleport", REMOTE_SESSION,
-        "--input-format", "stream-json",
-        "--output-format", "stream-json",
-        "--verbose",
+        "-r", REMOTE_SESSION,
       ]
     : [
         "claude",
@@ -724,6 +721,22 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
         buffer = lines.pop() || "";
         for (const line of lines) {
           if (!line.trim()) continue;
+
+          // Remote mode: plain text output — emit each line as claude_text
+          if (REMOTE_SESSION) {
+            lastActivity = Date.now();
+            // Strip ANSI escape codes from interactive output
+            const clean = line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim();
+            if (!clean) continue;
+            append({
+              sessionId,
+              type: 'claude_text',
+              messageId: '',
+              content: [{ type: 'text', text: clean }],
+            });
+            continue;
+          }
+
           try {
             const parsed = JSON.parse(line);
             lastActivity = Date.now();
@@ -841,12 +854,16 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
 
 function writeToStdin(message: string): boolean {
   if (!claudeProc || !processAlive) return false;
-  const jsonl = JSON.stringify({
-    type: "user",
-    message: { role: "user", content: [{ type: "text", text: message }] },
-  }) + "\n";
+  // Remote mode: plain text input (interactive claude -r)
+  // Local mode: stream-json protocol
+  const payload = REMOTE_SESSION
+    ? message + "\n"
+    : JSON.stringify({
+        type: "user",
+        message: { role: "user", content: [{ type: "text", text: message }] },
+      }) + "\n";
   try {
-    (claudeProc.stdin as any).write(jsonl);
+    (claudeProc.stdin as any).write(payload);
     (claudeProc.stdin as any).flush();
     lastActivity = Date.now();
     return true;
