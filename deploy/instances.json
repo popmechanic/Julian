@@ -23,5 +23,10 @@
     "url": "https://julian-edge.exe.xyz",
     "provisioned": "2026-02-17T22:00:00Z",
     "branch": "post-hackathon"
+  },
+  "julian-remote": {
+    "url": "https://julian-remote.exe.xyz",
+    "provisioned": "2026-02-28T00:00:00Z",
+    "branch": "remote-control"
   }
 }
