@@ -21,7 +21,6 @@ export async function extractStructured<T>(
     "--print",
     "--model", "haiku",
     "--no-session-persistence",
-    "--output-format", "json",
     "--json-schema", schemaStr,
     "--tools", "",
   ], {

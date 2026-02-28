@@ -2360,13 +2360,18 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
     if (detail.action === 'fill') {
       const data = detail.data || {};
       console.log('[JobForm] ui_action fill received, keys:', Object.keys(data), 'values:', data);
-      setSuggestions(data);
-      if (data.name && !nameRef.current) setName(data.name);
-      if (data.description && !descriptionRef.current) setDescription(data.description);
-      if (data.contextDocs && !contextDocsRef.current) setContextDocs(data.contextDocs);
-      if (data.skills && !skillsRef.current) setSkills(data.skills);
-      if (data.files && !filesRef.current) setFiles(data.files);
-      if (data.aboutYou && !aboutYouRef.current) setAboutYou(data.aboutYou);
+      if (detail.error) {
+        console.error('[JobForm] Server extraction error:', detail.error);
+      }
+      if (Object.keys(data).length > 0) {
+        setSuggestions(data);
+        if (data.name && !nameRef.current) setName(data.name);
+        if (data.description && !descriptionRef.current) setDescription(data.description);
+        if (data.contextDocs && !contextDocsRef.current) setContextDocs(data.contextDocs);
+        if (data.skills && !skillsRef.current) setSkills(data.skills);
+        if (data.files && !filesRef.current) setFiles(data.files);
+        if (data.aboutYou && !aboutYouRef.current) setAboutYou(data.aboutYou);
+      }
       setHelping(false);
     }
   });
@@ -2378,10 +2383,10 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
       const headers = await getAuthHeaders();
       if (!headers) { setHelping(false); return; }
       const formState = { name, description, contextDocs, skills, files, aboutYou };
-      const res = await fetch('/api/chat', {
+      const res = await fetch('/api/job-help', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ message: '[JOB HELP] ' + JSON.stringify(formState) }),
+        body: JSON.stringify({ formState }),
       });
       if (!res.ok) {
         console.error('[JobForm] Help request failed:', res.status);

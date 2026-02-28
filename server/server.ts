@@ -453,10 +453,19 @@ registerCommand('[JOB HELP]', async (payload, ctx) => {
       // Filter to only expected job form fields — Haiku may return extra keys
       const expectedFields = ['name', 'description', 'contextDocs', 'skills', 'files', 'aboutYou'];
       const suggestions: Record<string, string> = {};
+      // Try exact match first, then case-insensitive fallback
       for (const field of expectedFields) {
-        if (raw[field]) suggestions[field] = raw[field];
+        if (raw[field]) {
+          suggestions[field] = raw[field];
+        } else {
+          const match = Object.entries(raw).find(([k]) => k.toLowerCase() === field.toLowerCase());
+          if (match && match[1]) suggestions[field] = match[1];
+        }
       }
-      console.log('[JobHelp] Extraction complete, raw keys:', Object.keys(raw).join(', '), 'filtered:', Object.keys(suggestions).join(', '));
+      console.log('[JobHelp] raw keys:', Object.keys(raw).join(', '), '→ filtered:', Object.keys(suggestions).join(', '));
+      if (Object.keys(suggestions).length === 0) {
+        console.warn('[JobHelp] No matching fields after filtering. Raw:', JSON.stringify(raw).slice(0, 500));
+      }
       ctx.append({
         sessionId: ctx.sessionId,
         type: 'ui_action',
@@ -467,6 +476,14 @@ registerCommand('[JOB HELP]', async (payload, ctx) => {
     })
     .catch(err => {
       console.error('[JobHelp] Extraction failed:', err.message);
+      ctx.append({
+        sessionId: ctx.sessionId,
+        type: 'ui_action',
+        target: 'job-form',
+        action: 'fill',
+        data: {},
+        error: err.message,
+      });
     });
 
   return null;
@@ -1394,6 +1411,23 @@ const server = Bun.serve({
         'and full identity data for all known agents, including individuationArtifact.';
       writeToStdin(msg);
       return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
+    }
+
+    // Job Help (session-independent — uses Haiku subprocess, not Claude session)
+    if (url.pathname === "/api/job-help" && req.method === "POST") {
+      if (!(await verifyClerkToken(req))) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
+      }
+      const body = (await req.json()) as { formState?: Record<string, string> };
+      if (!body.formState) {
+        return Response.json({ error: "formState required" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
+      }
+      const handler = commandRegistry.get('[JOB HELP]');
+      if (!handler) {
+        return Response.json({ error: "Handler not registered" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
+      }
+      const result = await handler(JSON.stringify(body.formState), { append, sessionId });
+      return result || Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
     // Send message (legacy /api/chat path — redirects to /api/send)
