@@ -2490,11 +2490,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
   );
 }
 
-function JobsPanel({ database, useLiveQuery, getAuthHeaders }) {
-  const [view, setView] = useState('list'); // 'list' | 'form' | 'detail'
-  const [selectedJob, setSelectedJob] = useState(null);
-  const { docs: jobDocs } = useLiveQuery("type", { key: "job" });
-  const { docs: agentDocs } = useLiveQuery("type", { key: "agent-identity" });
+function JobsPanel({ database, getAuthHeaders, jobView: view, setJobView: setView, selectedJob, setSelectedJob, jobDraft, setJobDraft, jobDocs, agentDocs }) {
 
   const jobs = useMemo(() => {
     return [...(jobDocs || [])].sort((a, b) => {
