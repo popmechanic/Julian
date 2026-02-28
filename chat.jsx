@@ -2381,9 +2381,9 @@ function JobForm({ job, onCancel, onSave, saveJob, requestHelp }) {
     setSuggestions(null);
     try {
       const formState = { name, description, contextDocs, skills, files, aboutYou };
-      const ok = await requestHelp(formState);
+      const { ok, status } = await requestHelp(formState);
       if (!ok) {
-        console.error('[JobForm] Help request failed');
+        console.error('[JobForm] Help request failed:', status);
         setHelping(false);
       }
       // Results arrive via julian:ui-action event above
@@ -2572,11 +2572,6 @@ function useJobs(database, jobDocs, agentDocs, getAuthHeaders) {
     });
   }, [jobDocs]);
 
-  const openJobs = useMemo(() =>
-    (jobDocs || []).filter(j => j.status === 'open'),
-    [jobDocs]
-  );
-
   const deleteJob = useCallback(async (jobId) => {
     window.SFX?.play('delete');
     try {
@@ -2628,16 +2623,16 @@ function useJobs(database, jobDocs, agentDocs, getAuthHeaders) {
 
   const requestHelp = useCallback(async (formState) => {
     const headers = await getAuthHeaders();
-    if (!headers) return false;
+    if (!headers) return { ok: false, status: 0 };
     const res = await fetch('/api/job-help', {
       method: 'POST',
       headers,
       body: JSON.stringify({ formState }),
     });
-    return res.ok;
+    return { ok: res.ok, status: res.status };
   }, [getAuthHeaders]);
 
-  return { jobs, openJobs, deleteJob, assignAgent, saveJob, requestHelp };
+  return { jobs, deleteJob, assignAgent, saveJob, requestHelp };
 }
 window.useJobs = useJobs;
 
