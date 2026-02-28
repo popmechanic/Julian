@@ -668,13 +668,13 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
 
   const appendPrompt = mode === 'demo' ? DEMO_SYSTEM_PROMPT : NORMAL_SYSTEM_PROMPT;
 
-  // Remote mode: resume an existing Remote Control session on another machine
+  // Remote mode: teleport into an existing Remote Control session on another machine
   // Local mode: spawn a fresh Claude process with full flags
   const cmd = REMOTE_SESSION
     ? [
         "claude",
         "--print",
-        "--resume", REMOTE_SESSION,
+        "--teleport", REMOTE_SESSION,
         "--input-format", "stream-json",
         "--output-format", "stream-json",
         "--verbose",
