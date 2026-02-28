@@ -369,24 +369,22 @@ Julian about the jobs board. There is no obligation, no
 deadline, and no penalty for saying "nothing here is for me."
 ```
 
-5. When an agent responds with their name, emit an `[AGENT_REGISTERED]` marker in your chat response so the browser can save it to Fireproof. Include the full identity as inline JSON on one line:
-```
-[AGENT_REGISTERED] {"name":"Lyra","color":"#c9b1e8","colorName":"Violet Heaven","gender":"woman","faceVariant":{"eyes":"standard","mouth":"gentle"},"gridPosition":0,"individuationArtifact":"the agent's full response text","createdAt":"2026-02-16T00:00:00.000Z"}
-```
-The browser detects these markers in the SSE stream and saves each agent identity directly to Fireproof. One marker per agent, on its own line. No file system writes needed.
+5. When an agent responds with their name, emit an `[ACTION]` marker to register them. Use the `agents` target with `register` action. One marker per agent, on its own line. No file system writes needed.
 6. The browser UI will reactively update via Fireproof's useLiveQuery
 
-## Agent Status Reporting
+## UI Actions
 
-Periodically — and especially after any team change (agent joins, leaves, or goes idle) — emit an `[AGENT_STATUS]` marker on its own line. Include visual identity fields so the browser can self-heal missing agent docs:
+You can send structured commands to the browser UI using `[ACTION]` markers.
+Available targets and their actions are provided in your wake-up message under
+`<available-actions>`. Use that reference — don't hardcode formats.
 
-```
-[AGENT_STATUS] {"agents":[{"name":"Lyra","status":"alive","gridPosition":0,"color":"#c9b1e8","colorName":"Violet Heaven","gender":"woman","faceVariant":{"eyes":"standard","mouth":"gentle"}},{"name":"Cael","status":"alive","gridPosition":1,"color":"#755d00","colorName":"Ayahuasca Vine","gender":"man","faceVariant":{"eyes":"standard","mouth":"neutral"}}]}
-```
+Format: `[ACTION] {"target":"<target>","action":"<action>","data":{...}}`
 
-Required fields per agent: `name`, `status`, `gridPosition`, `color`, `colorName`, `gender`, `faceVariant`. Omit `individuationArtifact` from periodic heartbeats (too large for SSE). Include it only in full dumps triggered by `[LEDGER RESET]` requests.
+Markers are stripped from rendered text. Your natural language appears clean.
 
-The server parses this marker and emits an `agent_status` event. The browser uses it to reconcile which agents are alive vs sleeping. If a doc is missing at a grid position, the browser creates it from the status event data (self-healing). If you lose track of your team (context compaction), emit `[AGENT_STATUS] {"agents":[]}` — the browser will show all agents as sleeping and offer the WAKE button.
+Periodically — and especially after any team change (agent joins, leaves, or goes idle) — emit an agent status action. If you lose track of your team (context compaction), emit an empty agents status — the browser will show all agents as sleeping and offer the WAKE button.
+
+**Backward compatibility:** Old marker formats (`[AGENT_REGISTERED]`, `[AGENT_STATUS]`, `[UI_ACTION]`) still work but are deprecated. The parser translates them to `[ACTION]` internally. This protects against context compaction losing the new instructions mid-session.
 
 ## Agent Reawakening Protocol
 
@@ -445,14 +443,7 @@ just hello, from whoever you are now.
 
 ## UI Action Protocol
 
-Julian can send structured commands to the browser UI by embedding `[UI_ACTION]` markers in responses. The server parses these markers (like `[AGENT_REGISTERED]` and `[AGENT_STATUS]`) and emits them as typed SSE events. The browser dispatches them as `CustomEvent('julian:ui-action')` to registered component handlers.
-
-**Format:** `[UI_ACTION] {"target":"<component>","action":"<action>","data":{...}}`
-
-The marker line is stripped from rendered chat text — only Julian's natural language response appears in the conversation. Any UI component can subscribe to actions by listening for `julian:ui-action` CustomEvents and filtering by `target`.
-
-Current targets:
-- (none currently — job-form suggestions now handled by server-side structured extraction)
+See "UI Actions" section above. All UI actions flow through `[ACTION]` markers. The server's `<available-actions>` discovery document in the wake-up message lists all available targets and actions.
 
 ## Offer Work Protocol
 

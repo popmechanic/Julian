@@ -104,6 +104,21 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 const motion = window.motion || { div: 'div' };
 const AnimatePresence = window.AnimatePresence || (({ children }) => children);
 
+/* ── useUIAction hook ─────────────────────────────────────────────────────── */
+
+function useUIAction(target, handler) {
+  const handlerRef = useRef(handler);
+  handlerRef.current = handler;
+  useEffect(() => {
+    const listener = (e) => {
+      if (e.detail?.target === target) handlerRef.current(e.detail);
+    };
+    window.addEventListener('julian:ui-action', listener);
+    return () => window.removeEventListener('julian:ui-action', listener);
+  }, [target]);
+}
+window.useUIAction = useUIAction;
+
 /* ── Utilities ───────────────────────────────────────────────────────────── */
 
 function escapeHtml(str) {
@@ -2160,6 +2175,70 @@ function ScreenGridPanel({ data, rootLabel = 'memory', onFileSelect }) {
 
 /* ── Job Components ─────────────────────────────────────────────────────── */
 
+function ConfirmModal({ message, onConfirm, onCancel }) {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 9999,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'rgba(0,0,0,0.7)',
+      backdropFilter: 'blur(4px)',
+    }} onClick={onCancel}>
+      <div style={{
+        background: '#1a1a1a',
+        border: '1px solid #333',
+        borderRadius: 12,
+        padding: '24px 32px',
+        maxWidth: 360,
+        fontFamily: "'Inter', sans-serif",
+      }} onClick={e => e.stopPropagation()}>
+        <div style={{
+          fontSize: 14, fontWeight: 400, color: '#e5e5e5',
+          lineHeight: 1.5, marginBottom: 20,
+        }}>
+          {message}
+        </div>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <button
+            onClick={onCancel}
+            style={{
+              fontFamily: "'Inter', sans-serif",
+              fontSize: 10, fontWeight: 500,
+              color: 'rgba(255,255,255,0.5)',
+              background: 'transparent',
+              border: '1px solid rgba(255,255,255,0.15)',
+              borderRadius: 9999,
+              padding: '8px 20px',
+              cursor: 'pointer',
+              letterSpacing: '0.15em',
+              textTransform: 'uppercase',
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            style={{
+              fontFamily: "'Inter', sans-serif",
+              fontSize: 10, fontWeight: 600,
+              color: '#fff',
+              background: '#ff4444',
+              border: '1px solid #ff4444',
+              borderRadius: 9999,
+              padding: '8px 20px',
+              cursor: 'pointer',
+              letterSpacing: '0.15em',
+              textTransform: 'uppercase',
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+window.ConfirmModal = ConfirmModal;
+
 function JobCard({ job, onClick }) {
   const isFilled = job.status === 'filled';
   return (
@@ -2235,6 +2314,20 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
   const [helping, setHelping] = useState(false);
   const [suggestions, setSuggestions] = useState(null);
 
+  // Refs for current form values — keeps useUIAction handler stable
+  const nameRef = useRef(name);
+  const descriptionRef = useRef(description);
+  const contextDocsRef = useRef(contextDocs);
+  const skillsRef = useRef(skills);
+  const filesRef = useRef(files);
+  const aboutYouRef = useRef(aboutYou);
+  nameRef.current = name;
+  descriptionRef.current = description;
+  contextDocsRef.current = contextDocs;
+  skillsRef.current = skills;
+  filesRef.current = files;
+  aboutYouRef.current = aboutYou;
+
   const inputStyle = {
     width: '100%',
     backgroundColor: 'rgba(255,255,255,0.03)',
@@ -2262,25 +2355,21 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
     display: 'block',
   };
 
-  // Listen for structured extraction results via ui_action SSE events
-  React.useEffect(() => {
-    const handler = (e) => {
-      if (e.detail?.target === 'job-form' && e.detail?.action === 'fill') {
-        const data = e.detail.data || {};
-        console.log('[JobForm] ui_action fill received, fields:', Object.keys(data));
-        setSuggestions(data);
-        if (data.name && !name) setName(data.name);
-        if (data.description && !description) setDescription(data.description);
-        if (data.contextDocs && !contextDocs) setContextDocs(data.contextDocs);
-        if (data.skills && !skills) setSkills(data.skills);
-        if (data.files && !files) setFiles(data.files);
-        if (data.aboutYou && !aboutYou) setAboutYou(data.aboutYou);
-        setHelping(false);
-      }
-    };
-    window.addEventListener('julian:ui-action', handler);
-    return () => window.removeEventListener('julian:ui-action', handler);
-  }, [name, description, contextDocs, skills, files, aboutYou]);
+  // Listen for structured extraction results via unified [ACTION] events
+  useUIAction('job-form', (detail) => {
+    if (detail.action === 'fill') {
+      const data = detail.data || {};
+      console.log('[JobForm] ui_action fill received, fields:', Object.keys(data));
+      setSuggestions(data);
+      if (data.name && !nameRef.current) setName(data.name);
+      if (data.description && !descriptionRef.current) setDescription(data.description);
+      if (data.contextDocs && !contextDocsRef.current) setContextDocs(data.contextDocs);
+      if (data.skills && !skillsRef.current) setSkills(data.skills);
+      if (data.files && !filesRef.current) setFiles(data.files);
+      if (data.aboutYou && !aboutYouRef.current) setAboutYou(data.aboutYou);
+      setHelping(false);
+    }
+  });
 
   const handleHelp = useCallback(async () => {
     setHelping(true);
@@ -2490,8 +2579,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
   );
 }
 
-function JobsPanel({ database, getAuthHeaders, jobView: view, setJobView: setView, selectedJob, setSelectedJob, jobDraft, setJobDraft, jobDocs, agentDocs }) {
-
+function useJobs(database, jobDocs, agentDocs) {
   const jobs = useMemo(() => {
     return [...(jobDocs || [])].sort((a, b) => {
       if (a.status === 'open' && b.status !== 'open') return -1;
@@ -2499,6 +2587,48 @@ function JobsPanel({ database, getAuthHeaders, jobView: view, setJobView: setVie
       return (b.createdAt || '').localeCompare(a.createdAt || '');
     });
   }, [jobDocs]);
+
+  const deleteJob = useCallback(async (jobId) => {
+    window.SFX?.play('delete');
+    try {
+      await database.del(jobId);
+    } catch (err) {
+      console.error('[Jobs] Delete failed:', err);
+    }
+  }, [database]);
+
+  const assignAgent = useCallback(async (job, agentName) => {
+    try {
+      const latestJob = await database.get(job._id);
+      await window.resilientPut(database, {
+        ...latestJob,
+        assignedAgent: agentName,
+        status: 'filled',
+        updatedAt: new Date().toISOString(),
+      });
+      const agent = (agentDocs || []).find(a => a.name === agentName);
+      if (agent) {
+        const latestAgent = await database.get(agent._id);
+        await window.resilientPut(database, {
+          ...latestAgent,
+          jobId: job._id,
+        });
+      }
+      return await database.get(job._id);
+    } catch (err) {
+      console.error('[Jobs] Assign failed:', err);
+      return null;
+    }
+  }, [database, agentDocs]);
+
+  return { jobs, deleteJob, assignAgent };
+}
+window.useJobs = useJobs;
+
+function JobsPanel({ database, getAuthHeaders, jobView: view, setJobView: setView, selectedJob, setSelectedJob, jobDraft, setJobDraft, jobDocs, agentDocs }) {
+
+  const { jobs, deleteJob, assignAgent } = useJobs(database, jobDocs, agentDocs);
+  const [confirmingDelete, setConfirmingDelete] = useState(null);
 
   const handleJobClick = useCallback((job) => {
     setSelectedJob(job);
@@ -2524,44 +2654,22 @@ function JobsPanel({ database, getAuthHeaders, jobView: view, setJobView: setVie
     setView('list');
   }, []);
 
-  const handleDelete = useCallback(async (job) => {
-    if (!confirm('Delete this job?')) return;
-    window.SFX?.play('delete');
-    try {
-      await database.del(job._id);
-      setSelectedJob(null);
-      setView('list');
-    } catch (err) {
-      console.error('[Jobs] Delete failed:', err);
-    }
-  }, [database]);
+  const handleDelete = useCallback((job) => {
+    setConfirmingDelete(job);
+  }, []);
+
+  const confirmDelete = useCallback(async () => {
+    if (!confirmingDelete) return;
+    await deleteJob(confirmingDelete._id);
+    setConfirmingDelete(null);
+    setSelectedJob(null);
+    setView('list');
+  }, [confirmingDelete, deleteJob]);
 
   const handleAssign = useCallback(async (job, agentName) => {
-    try {
-      // Fetch latest revision to avoid conflicts
-      const latestJob = await database.get(job._id);
-      await window.resilientPut(database, {
-        ...latestJob,
-        assignedAgent: agentName,
-        status: 'filled',
-        updatedAt: new Date().toISOString(),
-      });
-      // Update agent identity with jobId
-      const agent = (agentDocs || []).find(a => a.name === agentName);
-      if (agent) {
-        const latestAgent = await database.get(agent._id);
-        await window.resilientPut(database, {
-          ...latestAgent,
-          jobId: job._id,
-        });
-      }
-      // Re-fetch the updated job so selectedJob has the correct _rev
-      const updatedJob = await database.get(job._id);
-      setSelectedJob(updatedJob);
-    } catch (err) {
-      console.error('[Jobs] Assign failed:', err);
-    }
-  }, [database, agentDocs]);
+    const updatedJob = await assignAgent(job, agentName);
+    if (updatedJob) setSelectedJob(updatedJob);
+  }, [assignAgent]);
 
   if (view === 'form') {
     return (
@@ -2584,6 +2692,14 @@ function JobsPanel({ database, getAuthHeaders, jobView: view, setJobView: setVie
     const isFilled = selectedJob.status === 'filled';
     const availableAgents = (agentDocs || []).filter(a => !a.dormant && !a.jobId);
     return (
+      <React.Fragment>
+      {confirmingDelete && (
+        <ConfirmModal
+          message={`Delete "${confirmingDelete.name || 'Untitled Job'}"?`}
+          onConfirm={confirmDelete}
+          onCancel={() => setConfirmingDelete(null)}
+        />
+      )}
       <div className="screen-panel-scroll" style={{
         padding: '16px 24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 16,
         background: '#0c0c0c',
@@ -2786,6 +2902,7 @@ function JobsPanel({ database, getAuthHeaders, jobView: view, setJobView: setVie
           </div>
         )}
       </div>
+      </React.Fragment>
     );
   }
 

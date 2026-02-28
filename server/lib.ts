@@ -85,46 +85,85 @@ function tryParseMarkerJSON(line: string, pending: string | null): { parsed: any
   }
 }
 
+// Target-based handler map for unified [ACTION] markers
+type AppendFn = (partial: Omit<ServerEvent, 'id' | 'ts'>) => ServerEvent;
+
+const markerHandlers = new Map<string, (data: any, append: AppendFn, sid: string | null) => void>([
+  ['agents', (data, append, sid) => {
+    if (data.action === 'register') {
+      const d = data.data || {};
+      if (!d.name || d.gridPosition == null) {
+        console.warn('[Marker] agents.register missing required fields (name, gridPosition):', JSON.stringify(d).slice(0, 200));
+        return;
+      }
+      if (!d.color) console.warn(`[Marker] agents.register "${d.name}" missing color`);
+      if (!d.colorName) console.warn(`[Marker] agents.register "${d.name}" missing colorName`);
+      if (!d.faceVariant) console.warn(`[Marker] agents.register "${d.name}" missing faceVariant, using defaults`);
+      append({
+        sessionId: sid,
+        type: 'ui_action',
+        target: 'agents',
+        action: 'register',
+        data: {
+          name: d.name,
+          color: d.color,
+          colorName: d.colorName,
+          gender: d.gender || 'man',
+          gridPosition: d.gridPosition,
+          faceVariant: d.faceVariant || { eyes: 'default', mouth: 'default' },
+          individuationArtifact: d.individuationArtifact || '',
+          createdAt: d.createdAt || new Date().toISOString(),
+        },
+      });
+    } else if (data.action === 'status') {
+      const d = data.data || {};
+      if (!d.agents) {
+        console.warn('[Marker] agents.status missing agents array:', JSON.stringify(d).slice(0, 200));
+        return;
+      }
+      append({ sessionId: sid, type: 'ui_action', target: 'agents', action: 'status', data: d });
+    }
+  }],
+  ['job-form', (data, append, sid) => {
+    append({ sessionId: sid, type: 'ui_action', target: 'job-form', action: data.action, data: data.data });
+  }],
+]);
+
 function emitMarker(
   type: string,
   parsed: any,
-  appendFn: (partial: Omit<ServerEvent, 'id' | 'ts'>) => ServerEvent,
+  appendFn: AppendFn,
   sessionId: string | null,
 ): void {
-  if (type === 'agent_registered') {
+  if (type === 'ui_action') {
+    // Unified [ACTION] path — route by target
+    if (!parsed.target || !parsed.action) {
+      console.warn('[Marker] ACTION missing target or action:', JSON.stringify(parsed).slice(0, 200));
+      return;
+    }
+    const handler = markerHandlers.get(parsed.target);
+    if (handler) {
+      handler(parsed, appendFn, sessionId);
+    } else {
+      // Unknown target — pass through as generic ui_action
+      appendFn({ sessionId, type: 'ui_action', target: parsed.target, action: parsed.action, data: parsed.data });
+    }
+  } else if (type === 'agent_registered') {
+    // Backward compat: translate to unified format
     if (!parsed.name || parsed.gridPosition == null) {
       console.warn('[Marker] AGENT_REGISTERED missing required fields (name, gridPosition):', JSON.stringify(parsed).slice(0, 200));
       return;
     }
-    if (!parsed.color) console.warn(`[Marker] AGENT_REGISTERED "${parsed.name}" missing color`);
-    if (!parsed.colorName) console.warn(`[Marker] AGENT_REGISTERED "${parsed.name}" missing colorName`);
-    if (!parsed.faceVariant) console.warn(`[Marker] AGENT_REGISTERED "${parsed.name}" missing faceVariant, using defaults`);
-    appendFn({
-      sessionId,
-      type: 'agent_registered',
-      agent: {
-        name: parsed.name,
-        color: parsed.color,
-        colorName: parsed.colorName,
-        gender: parsed.gender || 'man',
-        gridPosition: parsed.gridPosition,
-        faceVariant: parsed.faceVariant || { eyes: 'default', mouth: 'default' },
-        individuationArtifact: parsed.individuationArtifact || '',
-        createdAt: parsed.createdAt || new Date().toISOString(),
-      },
-    });
+    const handler = markerHandlers.get('agents')!;
+    handler({ action: 'register', data: parsed }, appendFn, sessionId);
   } else if (type === 'agent_status') {
+    // Backward compat: translate to unified format
     if (!parsed.agents) {
       console.warn('[Marker] AGENT_STATUS missing agents array:', JSON.stringify(parsed).slice(0, 200));
       return;
     }
-    appendFn({ sessionId, type: 'agent_status', agents: parsed.agents });
-  } else if (type === 'ui_action') {
-    if (!parsed.target || !parsed.action) {
-      console.warn('[Marker] UI_ACTION missing target or action:', JSON.stringify(parsed).slice(0, 200));
-      return;
-    }
-    appendFn({ sessionId, type: 'ui_action', target: parsed.target, action: parsed.action, data: parsed.data });
+    const handler = markerHandlers.get('agents')!;
+    handler({ action: 'status', data: parsed }, appendFn, sessionId);
   }
 }
 
@@ -153,7 +192,18 @@ export function parseMarkersFromContent(
           pendingMarker = null;
         }
 
-        // [AGENT_REGISTERED] marker
+        // [ACTION] marker (primary unified format)
+        if (line.includes('[ACTION]')) {
+          const result = tryParseMarkerJSON(line, null);
+          if (result) {
+            emitMarker('ui_action', result.parsed, appendFn, sessionId);
+          } else {
+            pendingMarker = { type: 'ui_action', text: line };
+          }
+          continue;
+        }
+
+        // [AGENT_REGISTERED] marker (backward compat — deprecated)
         if (line.includes('[AGENT_REGISTERED]')) {
           const result = tryParseMarkerJSON(line, null);
           if (result) {
@@ -164,7 +214,7 @@ export function parseMarkersFromContent(
           continue;
         }
 
-        // [AGENT_STATUS] marker
+        // [AGENT_STATUS] marker (backward compat — deprecated)
         if (line.includes('[AGENT_STATUS]')) {
           const result = tryParseMarkerJSON(line, null);
           if (result) {
@@ -175,7 +225,7 @@ export function parseMarkersFromContent(
           continue;
         }
 
-        // [UI_ACTION] marker
+        // [UI_ACTION] marker (backward compat — deprecated, use [ACTION])
         if (line.includes('[UI_ACTION]')) {
           const result = tryParseMarkerJSON(line, null);
           if (result) {

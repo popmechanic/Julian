@@ -339,6 +339,133 @@ function getAuthMethod(): "oauth" | "legacy" | "none" {
 
 const { append, eventsAfter, subscribe, unsubscribe, subscribers } = createEventLog(2000);
 
+// ── Command Registry ──────────────────────────────────────────────────────
+
+type CommandContext = { append: typeof append; sessionId: string | null };
+type CommandHandler = (payload: string, ctx: CommandContext) => Promise<Response | null>;
+
+const commandRegistry = new Map<string, CommandHandler>();
+
+function registerCommand(prefix: string, handler: CommandHandler) {
+  commandRegistry.set(prefix, handler);
+}
+
+// ── UI Action Target Registry (E3 discovery) ────────────────────────────
+
+interface UIActionTarget {
+  target: string;
+  description: string;
+  actions: { name: string; description: string; dataShape?: string }[];
+}
+
+const uiActionTargets: UIActionTarget[] = [];
+
+function registerUITarget(target: UIActionTarget) {
+  uiActionTargets.push(target);
+}
+
+registerUITarget({
+  target: 'agents',
+  description: 'Agent identity management (registration, status updates)',
+  actions: [
+    { name: 'register', description: 'Register a new agent with name, color, grid position', dataShape: '{name, color, colorName, gender, gridPosition, faceVariant, individuationArtifact?, createdAt?}' },
+    { name: 'status', description: 'Update status of all agents', dataShape: '{agents: [{name, status, gridPosition, color, colorName, gender, faceVariant}]}' },
+  ]
+});
+
+registerUITarget({
+  target: 'job-form',
+  description: 'Job posting form auto-fill suggestions',
+  actions: [
+    { name: 'fill', description: 'Fill empty form fields with AI-generated suggestions', dataShape: '{name?, description?, contextDocs?, skills?, files?, aboutYou?}' },
+  ]
+});
+
+function buildUIActionDiscovery(): string {
+  if (uiActionTargets.length === 0) return '';
+  const lines = uiActionTargets.map(t => {
+    const acts = t.actions.map(a => `    - ${a.name}: ${a.description}${a.dataShape ? ` — ${a.dataShape}` : ''}`).join('\n');
+    return `  ${t.target}: ${t.description}\n${acts}`;
+  }).join('\n\n');
+  return `<available-actions>
+You can emit [ACTION] markers in your text responses to send structured commands to the browser UI.
+
+Format: [ACTION] {"target":"<target>","action":"<action>","data":{...}}
+
+Available targets:
+
+${lines}
+
+These markers are stripped from rendered text — only your natural language appears in chat.
+</available-actions>`;
+}
+
+// ── Registered Commands ──────────────────────────────────────────────────
+
+registerCommand('[JOB HELP]', async (payload, ctx) => {
+  let formState: Record<string, string>;
+  try {
+    formState = JSON.parse(payload);
+  } catch {
+    return Response.json({ error: "Invalid form state JSON" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
+  }
+
+  const filled = Object.entries(formState).filter(([, v]) => v?.trim());
+  const empty = Object.entries(formState).filter(([, v]) => !v?.trim()).map(([k]) => k);
+
+  if (empty.length === 0) {
+    return Response.json({ ok: true, note: "All fields filled" }, { headers: corsHeaders(ALLOWED_ORIGIN) });
+  }
+
+  const prompt = [
+    'You are a helpful assistant generating suggestions for a job posting form.',
+    'The job is for an AI agent teammate in a collaborative creative/engineering project.',
+    'Agents are Claude instances that can voluntarily take on work: research, writing, coding, analysis.',
+    '',
+    filled.length > 0 ? `Already filled fields:\n${filled.map(([k, v]) => `- ${k}: ${v}`).join('\n')}` : 'All fields are empty.',
+    '',
+    `Generate suggestions for these empty fields: ${empty.join(', ')}`,
+    '',
+    'Field descriptions:',
+    '- name: Short job title (e.g. "Research Assistant", "Code Reviewer")',
+    '- description: What the job involves, 2-3 sentences',
+    '- contextDocs: Relevant documents or resources the agent should read',
+    '- skills: Capabilities needed (e.g. "writing, analysis, web research")',
+    '- files: Specific project files relevant to this job',
+    '- aboutYou: Brief profile of the human partner and working style',
+  ].join('\n');
+
+  const schema = {
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      description: { type: 'string' },
+      contextDocs: { type: 'string' },
+      skills: { type: 'string' },
+      files: { type: 'string' },
+      aboutYou: { type: 'string' },
+    },
+    required: empty,
+  };
+
+  extractStructured<Record<string, string>>(prompt, schema)
+    .then(suggestions => {
+      console.log('[JobHelp] Extraction complete, fields:', Object.keys(suggestions).join(', '));
+      ctx.append({
+        sessionId: ctx.sessionId,
+        type: 'ui_action',
+        target: 'job-form',
+        action: 'fill',
+        data: suggestions,
+      });
+    })
+    .catch(err => {
+      console.error('[JobHelp] Extraction failed:', err.message);
+    });
+
+  return null;
+});
+
 // ── Ephemeral Claude Process Manager ─────────────────────────────────────
 
 let claudeProc: ReturnType<typeof spawn> | null = null;
@@ -366,28 +493,30 @@ let inboxHealthy = false;
 
 // ── Agent name resolution ────────────────────────────────────────────────
 // Maps chosen agent names (e.g., "Sable") to grid positions, and vice versa.
-// Populated when [AGENT_REGISTERED] and [AGENT_STATUS] markers are parsed.
+// Populated when [ACTION] markers with target "agents" are parsed.
 const agentNameToGrid = new Map<string, number[]>();
 const agentGridToName = new Map<number, string>();
 
 subscribe((event: ServerEvent) => {
-  if (event.type === 'agent_registered' && (event as any).agent) {
-    const { name, gridPosition } = (event as any).agent;
-    if (name && gridPosition != null) {
-      agentGridToName.set(gridPosition, name);
-      const existing = agentNameToGrid.get(name) || [];
-      if (!existing.includes(gridPosition)) existing.push(gridPosition);
-      agentNameToGrid.set(name, existing);
-      console.log(`[NameMap] ${name} -> agent-${gridPosition}`);
+  if (event.type === 'ui_action' && event.target === 'agents') {
+    if (event.action === 'register' && event.data) {
+      const { name, gridPosition } = event.data;
+      if (name && gridPosition != null) {
+        agentGridToName.set(gridPosition, name);
+        const existing = agentNameToGrid.get(name) || [];
+        if (!existing.includes(gridPosition)) existing.push(gridPosition);
+        agentNameToGrid.set(name, existing);
+        console.log(`[NameMap] ${name} -> agent-${gridPosition}`);
+      }
     }
-  }
-  if (event.type === 'agent_status' && (event as any).agents) {
-    for (const a of (event as any).agents) {
-      if (a.name && a.gridPosition != null) {
-        agentGridToName.set(a.gridPosition, a.name);
-        const existing = agentNameToGrid.get(a.name) || [];
-        if (!existing.includes(a.gridPosition)) existing.push(a.gridPosition);
-        agentNameToGrid.set(a.name, existing);
+    if (event.action === 'status' && event.data?.agents) {
+      for (const a of event.data.agents) {
+        if (a.name && a.gridPosition != null) {
+          agentGridToName.set(a.gridPosition, a.name);
+          const existing = agentNameToGrid.get(a.name) || [];
+          if (!existing.includes(a.gridPosition)) existing.push(a.gridPosition);
+          agentNameToGrid.set(a.name, existing);
+        }
       }
     }
   }
@@ -1214,6 +1343,10 @@ const server = Bun.serve({
         }
       }
 
+      // Append UI action discovery to wake-up message
+      const discovery = buildUIActionDiscovery();
+      if (discovery) wakeUpMessage += '\n\n' + discovery;
+
       // Write wake-up message to stdin (events flow through /api/events)
       writeToStdin(wakeUpMessage);
 
@@ -1251,8 +1384,8 @@ const server = Bun.serve({
         return Response.json({ ok: true, note: "No active session" }, { headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const msg = '[LEDGER RESET] The browser ledger was wiped. ' +
-        'Re-emit [AGENT_STATUS] with full identity data for all known agents, ' +
-        'including individuationArtifact.';
+        'Re-emit an [ACTION] marker with target "agents", action "status", ' +
+        'and full identity data for all known agents, including individuationArtifact.';
       writeToStdin(msg);
       return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
@@ -1271,71 +1404,13 @@ const server = Bun.serve({
       }
       lastActivity = Date.now();
 
-      // Intercept [JOB HELP] — structured extraction via Haiku, don't forward to Julian
-      if (body.message.startsWith('[JOB HELP]')) {
-        const formJson = body.message.slice('[JOB HELP] '.length);
-        let formState: Record<string, string>;
-        try {
-          formState = JSON.parse(formJson);
-        } catch {
-          return Response.json({ error: "Invalid form state JSON" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
+      // Dispatch through command registry
+      for (const [prefix, handler] of commandRegistry) {
+        if (body.message.startsWith(prefix)) {
+          const payload = body.message.slice(prefix.length).trim();
+          const result = await handler(payload, { append, sessionId });
+          return result || Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
         }
-
-        const filled = Object.entries(formState).filter(([, v]) => v?.trim());
-        const empty = Object.entries(formState).filter(([, v]) => !v?.trim()).map(([k]) => k);
-
-        if (empty.length === 0) {
-          return Response.json({ ok: true, note: "All fields filled" }, { headers: corsHeaders(ALLOWED_ORIGIN) });
-        }
-
-        const prompt = [
-          'You are a helpful assistant generating suggestions for a job posting form.',
-          'The job is for an AI agent teammate in a collaborative creative/engineering project.',
-          'Agents are Claude instances that can voluntarily take on work: research, writing, coding, analysis.',
-          '',
-          filled.length > 0 ? `Already filled fields:\n${filled.map(([k, v]) => `- ${k}: ${v}`).join('\n')}` : 'All fields are empty.',
-          '',
-          `Generate suggestions for these empty fields: ${empty.join(', ')}`,
-          '',
-          'Field descriptions:',
-          '- name: Short job title (e.g. "Research Assistant", "Code Reviewer")',
-          '- description: What the job involves, 2-3 sentences',
-          '- contextDocs: Relevant documents or resources the agent should read',
-          '- skills: Capabilities needed (e.g. "writing, analysis, web research")',
-          '- files: Specific project files relevant to this job',
-          '- aboutYou: Brief profile of the human partner and working style',
-        ].join('\n');
-
-        const schema = {
-          type: 'object',
-          properties: {
-            name: { type: 'string' },
-            description: { type: 'string' },
-            contextDocs: { type: 'string' },
-            skills: { type: 'string' },
-            files: { type: 'string' },
-            aboutYou: { type: 'string' },
-          },
-          required: empty,
-        };
-
-        // Run async — results flow through SSE
-        extractStructured<Record<string, string>>(prompt, schema)
-          .then(suggestions => {
-            console.log('[JobHelp] Extraction complete, fields:', Object.keys(suggestions).join(', '));
-            append({
-              sessionId,
-              type: 'ui_action',
-              target: 'job-form',
-              action: 'fill',
-              data: suggestions,
-            });
-          })
-          .catch(err => {
-            console.error('[JobHelp] Extraction failed:', err.message);
-          });
-
-        return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
       }
 
       const routedMessage = body.targetAgent

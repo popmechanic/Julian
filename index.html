@@ -578,9 +578,11 @@ function dispatchEvent(event) {
       if (h.onSessionEnd) h.onSessionEnd(event);
       break;
     case 'agent_registered':
+      // Backward compat — old server events still arrive with this type
       if (h.onAgentRegistered) h.onAgentRegistered(event);
       break;
     case 'agent_status':
+      // Backward compat — old server events still arrive with this type
       if (h.onAgentStatus) h.onAgentStatus(event);
       break;
     case 'agent_message':
@@ -591,7 +593,7 @@ function dispatchEvent(event) {
       break;
     case 'ui_action':
       window.dispatchEvent(new CustomEvent('julian:ui-action', {
-        detail: { target: event.target, action: event.action, data: event.data }
+        detail: { target: event.target, action: event.action, data: event.data, ts: event.ts, sessionId: event.sessionId }
       }));
       break;
     case 'server_error':
@@ -720,6 +722,90 @@ function App({ bootData }) {
     return stable;
   }, [agentDocs]);
 
+  // Unified [ACTION] handler for agents target — handles both register and status
+  // Closes over `database` (stable Fireproof ref) and `resilientPut` (window global)
+  window.useUIAction('agents', async (detail) => {
+    const eventTs = detail.ts ? new Date(detail.ts).toISOString() : new Date().toISOString();
+    if (detail.action === 'register') {
+      const a = detail.data;
+      if (!a?.name || a.gridPosition == null) return;
+      try {
+        const _id = `agent-identity:${a.gridPosition}`;
+        const existing = await database.get(_id).catch(() => null);
+        await resilientPut(database, {
+          ...(existing || {}),
+          _id,
+          type: 'agent-identity',
+          category: 'identity',
+          status: 'alive',
+          name: a.name,
+          color: a.color,
+          colorName: a.colorName,
+          gender: a.gender,
+          gridPosition: a.gridPosition,
+          faceVariant: a.faceVariant,
+          individuationArtifact: a.individuationArtifact,
+          lastAliveAt: eventTs,
+          lastSessionId: detail.sessionId || null,
+          createdAt: existing?.createdAt || a.createdAt,
+        });
+        window.SFX?.play('select');
+        console.log('[UIAction] Agent registered:', a.name, 'at seat', a.gridPosition);
+      } catch (e) {
+        console.warn('[UIAction] Failed to save agent:', e);
+      }
+    } else if (detail.action === 'status') {
+      try {
+        const d = detail.data || {};
+        const agentMap = {};
+        for (const a of (d.agents || [])) {
+          if (a.gridPosition != null) agentMap[a.gridPosition] = a;
+        }
+        for (const [pos, agent] of Object.entries(agentMap)) {
+          const _id = `agent-identity:${pos}`;
+          const existing = await database.get(_id).catch(() => null);
+          if (existing) {
+            if (!existing.name && agent.status === 'alive') continue;
+            if (getAgentStatus(existing) !== agent.status) {
+              await resilientPut(database, {
+                ...existing,
+                status: agent.status,
+                lastAliveAt: eventTs,
+                lastSessionId: detail.sessionId || null,
+              });
+            }
+          } else if (agent.name) {
+            await resilientPut(database, {
+              _id,
+              type: 'agent-identity',
+              category: 'identity',
+              status: agent.status,
+              name: agent.name,
+              color: agent.color,
+              colorName: agent.colorName,
+              gender: agent.gender,
+              faceVariant: agent.faceVariant,
+              gridPosition: parseInt(pos),
+              lastAliveAt: eventTs,
+              lastSessionId: detail.sessionId || null,
+              createdAt: new Date().toISOString(),
+            });
+            console.log('[UIAction] Self-healed agent doc at seat', pos, agent.name);
+          }
+        }
+        const { rows } = await database.query('type', { key: 'agent-identity' });
+        for (const row of rows) {
+          const doc = row.doc || row.value;
+          if (!agentMap[doc.gridPosition] && getAgentStatus(doc) === 'alive') {
+            await resilientPut(database, { ...doc, status: 'sleeping' });
+          }
+        }
+      } catch (e) {
+        console.warn('[UIAction] Failed to handle agent status:', e);
+      }
+    }
+  });
+
   const activeAgentObj = useMemo(() => {
     if (!activeAgent) return null;
     return agents.find(a => a.name === activeAgent) || null;
@@ -797,7 +883,7 @@ function App({ bootData }) {
     _eventHandlers.onClaudeText = (event) => {
       const blocks = (event.content || []).map(block => {
         if (block.type === 'text') {
-          const cleaned = block.text.split('\n').filter(l => !l.startsWith('[UI_ACTION]')).join('\n');
+          const cleaned = block.text.split('\n').filter(l => !l.startsWith('[ACTION]') && !l.startsWith('[UI_ACTION]') && !l.startsWith('[AGENT_REGISTERED]') && !l.startsWith('[AGENT_STATUS]')).join('\n');
           return { type: 'text', text: cleaned };
         }
         if (block.type === 'tool_use') return { type: 'tool_use', name: block.name, input: block.input };
@@ -847,7 +933,7 @@ function App({ bootData }) {
       }
       const finalBlocks = liveBlocksRef.current.length > 0
         ? liveBlocksRef.current
-        : (event.resultText ? [{ type: 'text', text: event.resultText.split('\n').filter(l => !l.startsWith('[UI_ACTION]')).join('\n') }] : []);
+        : (event.resultText ? [{ type: 'text', text: event.resultText.split('\n').filter(l => !l.startsWith('[ACTION]') && !l.startsWith('[UI_ACTION]') && !l.startsWith('[AGENT_REGISTERED]') && !l.startsWith('[AGENT_STATUS]')).join('\n') }] : []);
       window.SFX?.play('success');
       setLiveAssistant(prev => prev ? { ...prev, blocks: finalBlocks, thinking: false, streaming: false } : null);
 
@@ -955,6 +1041,9 @@ function App({ bootData }) {
       setConnected(true);
     };
 
+    // DEPRECATED: These handlers are superseded by useUIAction('agents', ...) above.
+    // Kept for safety during transition — the unified parser routes all markers
+    // (including old [AGENT_REGISTERED]/[AGENT_STATUS]) through ui_action events now.
     _eventHandlers.onAgentRegistered = async (event) => {
       const a = event.agent;
       if (!a?.name || a.gridPosition == null) return;
