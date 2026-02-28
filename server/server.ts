@@ -504,6 +504,7 @@ let actualModel: string = 'claude-opus-4-6';
 let sessionCostUsd = 0;
 const AGENT_NAME = process.env.AGENT_NAME || "Julian";
 const FORCE_DEMO_MODE = process.env.DEMO_MODE === "1";
+const REMOTE_SESSION = process.env.REMOTE_SESSION || "";
 
 // ── Agent inbox constants ────────────────────────────────────────────────
 const TEAM_NAME = 'julian-agents';
@@ -661,22 +662,35 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
   sessionCostUsd = 0;
   actualModel = 'claude-opus-4-6'; // default until system event arrives
   const authEnv = loadAuthEnv();
-  console.log("[Claude] Spawning process...", Object.keys(authEnv).length ? `(with ${Object.keys(authEnv).join(", ")})` : "(no auth env)");
+  console.log("[Claude] Spawning process...",
+    REMOTE_SESSION ? `(remote: ${REMOTE_SESSION})` : "(local)",
+    Object.keys(authEnv).length ? `(with ${Object.keys(authEnv).join(", ")})` : "(no auth env)");
 
   const appendPrompt = mode === 'demo' ? DEMO_SYSTEM_PROMPT : NORMAL_SYSTEM_PROMPT;
 
-  const cmd = [
-    "claude",
-    "--print",
-    "--model", "opus",
-    "--fallback-model", "sonnet",
-    "--input-format", "stream-json",
-    "--output-format", "stream-json",
-    "--verbose",
-    "--permission-mode", "acceptEdits",
-    "--allowedTools", "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch",
-    "--append-system-prompt", appendPrompt,
-  ];
+  // Remote mode: resume an existing Remote Control session on another machine
+  // Local mode: spawn a fresh Claude process with full flags
+  const cmd = REMOTE_SESSION
+    ? [
+        "claude",
+        "--print",
+        "--resume", REMOTE_SESSION,
+        "--input-format", "stream-json",
+        "--output-format", "stream-json",
+        "--verbose",
+      ]
+    : [
+        "claude",
+        "--print",
+        "--model", "opus",
+        "--fallback-model", "sonnet",
+        "--input-format", "stream-json",
+        "--output-format", "stream-json",
+        "--verbose",
+        "--permission-mode", "acceptEdits",
+        "--allowedTools", "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch",
+        "--append-system-prompt", appendPrompt,
+      ];
 
   const proc = spawn({
     cmd,
@@ -685,6 +699,8 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
       ...process.env,
       ...authEnv,
       CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+      CLAUDECODE: '',           // allow spawning Claude from within Claude
+      CLAUDE_CODE_ENTRYPOINT: '', // clear nesting guard
     },
     stdin: "pipe",
     stdout: "pipe",
@@ -1298,12 +1314,14 @@ const server = Bun.serve({
       if (processAlive && claudeProc) {
         return Response.json({ error: "Session already active", sessionId }, { status: 409, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      if (await needsSetup()) {
-        return Response.json({ error: "Setup required — sign in with Anthropic first" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
+      // Remote mode uses the Mac's credentials — skip local auth checks
+      if (!REMOTE_SESSION) {
+        if (await needsSetup()) {
+          return Response.json({ error: "Setup required — sign in with Anthropic first" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
+        }
+        // Proactively refresh token before spawning Claude
+        await refreshTokenIfNeeded();
       }
-
-      // Proactively refresh token before spawning Claude
-      await refreshTokenIfNeeded();
 
       // Parse previousTranscript, artifactCatalog, and demoMode from POST body (if any)
       let previousTranscript: Array<{ role: string; speakerType: string; speakerName: string; text: string }> = [];
@@ -1366,12 +1384,16 @@ const server = Bun.serve({
         }
       }
 
-      // Append UI action discovery to wake-up message
-      const discovery = buildUIActionDiscovery();
-      if (discovery) wakeUpMessage += '\n\n' + discovery;
+      // Remote mode: the RC session already has Julian's identity — just send the user's message
+      // Local mode: send full wake-up context (catalog, transcript, UI actions)
+      if (!REMOTE_SESSION) {
+        // Append UI action discovery to wake-up message
+        const discovery = buildUIActionDiscovery();
+        if (discovery) wakeUpMessage += '\n\n' + discovery;
 
-      // Write wake-up message to stdin (events flow through /api/events)
-      writeToStdin(wakeUpMessage);
+        // Write wake-up message to stdin (events flow through /api/events)
+        writeToStdin(wakeUpMessage);
+      }
 
       const allEvents = eventsAfter(-1);
       const lastEventId = allEvents.length > 0 ? allEvents[allEvents.length - 1].id : 0;
