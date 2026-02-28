@@ -449,8 +449,14 @@ registerCommand('[JOB HELP]', async (payload, ctx) => {
   };
 
   extractStructured<Record<string, string>>(prompt, schema)
-    .then(suggestions => {
-      console.log('[JobHelp] Extraction complete, fields:', Object.keys(suggestions).join(', '));
+    .then(raw => {
+      // Filter to only expected job form fields — Haiku may return extra keys
+      const expectedFields = ['name', 'description', 'contextDocs', 'skills', 'files', 'aboutYou'];
+      const suggestions: Record<string, string> = {};
+      for (const field of expectedFields) {
+        if (raw[field]) suggestions[field] = raw[field];
+      }
+      console.log('[JobHelp] Extraction complete, raw keys:', Object.keys(raw).join(', '), 'filtered:', Object.keys(suggestions).join(', '));
       ctx.append({
         sessionId: ctx.sessionId,
         type: 'ui_action',

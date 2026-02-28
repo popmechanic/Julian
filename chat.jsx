@@ -2359,7 +2359,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
   useUIAction('job-form', (detail) => {
     if (detail.action === 'fill') {
       const data = detail.data || {};
-      console.log('[JobForm] ui_action fill received, fields:', Object.keys(data));
+      console.log('[JobForm] ui_action fill received, keys:', Object.keys(data), 'values:', data);
       setSuggestions(data);
       if (data.name && !nameRef.current) setName(data.name);
       if (data.description && !descriptionRef.current) setDescription(data.description);
