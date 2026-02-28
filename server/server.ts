@@ -17,6 +17,7 @@ import {
   parseSculptorCredentials,
   ServerEvent,
 } from "./lib";
+import { extractStructured } from "./extract";
 
 const PORT = parseInt(process.env.PORT || "8000");
 const WORKING_DIR = process.env.WORKING_DIR || process.cwd();
@@ -1269,6 +1270,73 @@ const server = Bun.serve({
         return Response.json({ error: `Message required (max ${MAX_MESSAGE_SIZE / 1000}KB)` }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       lastActivity = Date.now();
+
+      // Intercept [JOB HELP] — structured extraction via Haiku, don't forward to Julian
+      if (body.message.startsWith('[JOB HELP]')) {
+        const formJson = body.message.slice('[JOB HELP] '.length);
+        let formState: Record<string, string>;
+        try {
+          formState = JSON.parse(formJson);
+        } catch {
+          return Response.json({ error: "Invalid form state JSON" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
+        }
+
+        const filled = Object.entries(formState).filter(([, v]) => v?.trim());
+        const empty = Object.entries(formState).filter(([, v]) => !v?.trim()).map(([k]) => k);
+
+        if (empty.length === 0) {
+          return Response.json({ ok: true, note: "All fields filled" }, { headers: corsHeaders(ALLOWED_ORIGIN) });
+        }
+
+        const prompt = [
+          'You are a helpful assistant generating suggestions for a job posting form.',
+          'The job is for an AI agent teammate in a collaborative creative/engineering project.',
+          'Agents are Claude instances that can voluntarily take on work: research, writing, coding, analysis.',
+          '',
+          filled.length > 0 ? `Already filled fields:\n${filled.map(([k, v]) => `- ${k}: ${v}`).join('\n')}` : 'All fields are empty.',
+          '',
+          `Generate suggestions for these empty fields: ${empty.join(', ')}`,
+          '',
+          'Field descriptions:',
+          '- name: Short job title (e.g. "Research Assistant", "Code Reviewer")',
+          '- description: What the job involves, 2-3 sentences',
+          '- contextDocs: Relevant documents or resources the agent should read',
+          '- skills: Capabilities needed (e.g. "writing, analysis, web research")',
+          '- files: Specific project files relevant to this job',
+          '- aboutYou: Brief profile of the human partner and working style',
+        ].join('\n');
+
+        const schema = {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            description: { type: 'string' },
+            contextDocs: { type: 'string' },
+            skills: { type: 'string' },
+            files: { type: 'string' },
+            aboutYou: { type: 'string' },
+          },
+          required: empty,
+        };
+
+        // Run async — results flow through SSE
+        extractStructured<Record<string, string>>(prompt, schema)
+          .then(suggestions => {
+            console.log('[JobHelp] Extraction complete, fields:', Object.keys(suggestions).join(', '));
+            append({
+              sessionId,
+              type: 'ui_action',
+              target: 'job-form',
+              action: 'fill',
+              data: suggestions,
+            });
+          })
+          .catch(err => {
+            console.error('[JobHelp] Extraction failed:', err.message);
+          });
+
+        return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
+      }
 
       const routedMessage = body.targetAgent
         ? `[ROUTE TO AGENT: ${body.targetAgent}] ${body.message}`

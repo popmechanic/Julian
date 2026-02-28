@@ -2262,6 +2262,26 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
     display: 'block',
   };
 
+  // Listen for structured extraction results via ui_action SSE events
+  React.useEffect(() => {
+    const handler = (e) => {
+      if (e.detail?.target === 'job-form' && e.detail?.action === 'fill') {
+        const data = e.detail.data || {};
+        console.log('[JobForm] ui_action fill received, fields:', Object.keys(data));
+        setSuggestions(data);
+        if (data.name && !name) setName(data.name);
+        if (data.description && !description) setDescription(data.description);
+        if (data.contextDocs && !contextDocs) setContextDocs(data.contextDocs);
+        if (data.skills && !skills) setSkills(data.skills);
+        if (data.files && !files) setFiles(data.files);
+        if (data.aboutYou && !aboutYou) setAboutYou(data.aboutYou);
+        setHelping(false);
+      }
+    };
+    window.addEventListener('julian:ui-action', handler);
+    return () => window.removeEventListener('julian:ui-action', handler);
+  }, [name, description, contextDocs, skills, files, aboutYou]);
+
   const handleHelp = useCallback(async () => {
     setHelping(true);
     setSuggestions(null);
@@ -2269,72 +2289,20 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
       const headers = await getAuthHeaders();
       if (!headers) { setHelping(false); return; }
       const formState = { name, description, contextDocs, skills, files, aboutYou };
-
-      // Collect text from the shared EventSource via CustomEvents
-      let resultText = '';
-      const onText = (e) => {
-        const blocks = e.detail?.content || [];
-        for (const block of blocks) {
-          if (block.type === 'text') resultText = block.text;
-        }
-        console.log('[JobForm] claude_text received, length:', resultText.length);
-      };
-      const cleanup = () => {
-        window.removeEventListener('julian:claude_text', onText);
-        window.removeEventListener('julian:claude_result', onResult);
-        clearTimeout(timeout);
-      };
-      const applyResults = () => {
-        console.log('[JobForm] Applying results, resultText length:', resultText.length);
-        const jsonMatch = resultText.match(/```json\s*([\s\S]*?)```/);
-        if (jsonMatch) {
-          try {
-            const parsed = JSON.parse(jsonMatch[1]);
-            console.log('[JobForm] Parsed suggestions:', Object.keys(parsed));
-            setSuggestions(parsed);
-            // Always apply suggestions to empty fields
-            if (parsed.name && !name) setName(parsed.name);
-            if (parsed.description && !description) setDescription(parsed.description);
-            if (parsed.contextDocs && !contextDocs) setContextDocs(parsed.contextDocs);
-            if (parsed.skills && !skills) setSkills(parsed.skills);
-            if (parsed.files && !files) setFiles(parsed.files);
-            if (parsed.aboutYou && !aboutYou) setAboutYou(parsed.aboutYou);
-          } catch (jsonErr) {
-            console.warn('[JobForm] JSON parse error:', jsonErr);
-          }
-        } else {
-          console.warn('[JobForm] No ```json block found in response');
-        }
-        setHelping(false);
-      };
-      const onResult = (e) => {
-        console.log('[JobForm] claude_result received');
-        if (e.detail?.resultText) resultText = e.detail.resultText;
-        cleanup();
-        applyResults();
-      };
-      // Safety timeout in case claude_result never fires
-      const timeout = setTimeout(() => {
-        console.warn('[JobForm] Timeout — applying whatever we have');
-        cleanup();
-        if (resultText) applyResults();
-        else setHelping(false);
-      }, 60000);
-      window.addEventListener('julian:claude_text', onText);
-      window.addEventListener('julian:claude_result', onResult);
-
-      // Fire-and-forget — response arrives through the shared event stream
-      await fetch('/api/chat', {
+      const res = await fetch('/api/chat', {
         method: 'POST',
         headers,
         body: JSON.stringify({ message: '[JOB HELP] ' + JSON.stringify(formState) }),
       });
-      console.log('[JobForm] Help request sent, waiting for events...');
+      if (!res.ok) {
+        console.error('[JobForm] Help request failed:', res.status);
+        setHelping(false);
+      }
+      // Results arrive via julian:ui-action event above
     } catch (err) {
       console.error('[JobForm] Help request failed:', err);
       setHelping(false);
     }
-    // setHelping(false) is called inside the onResult listener when response arrives
   }, [name, description, contextDocs, skills, files, aboutYou, getAuthHeaders]);
 
   const handleSave = useCallback(async () => {
@@ -2408,7 +2376,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
           border: '1px solid rgba(0,175,209,0.15)',
           borderRadius: 8,
         }}>
-          Julian's suggestions applied to empty fields
+          Suggestions applied to empty fields
         </div>
       )}
 
