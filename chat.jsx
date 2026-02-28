@@ -2304,7 +2304,7 @@ function JobCard({ job, onClick }) {
   );
 }
 
-function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
+function JobForm({ job, onCancel, onSave, saveJob, requestHelp }) {
   const [name, setName] = useState(job?.name || '');
   const [description, setDescription] = useState(job?.description || '');
   const [contextDocs, setContextDocs] = useState(job?.contextDocs || '');
@@ -2380,16 +2380,10 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
     setHelping(true);
     setSuggestions(null);
     try {
-      const headers = await getAuthHeaders();
-      if (!headers) { setHelping(false); return; }
       const formState = { name, description, contextDocs, skills, files, aboutYou };
-      const res = await fetch('/api/job-help', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ formState }),
-      });
-      if (!res.ok) {
-        console.error('[JobForm] Help request failed:', res.status);
+      const ok = await requestHelp(formState);
+      if (!ok) {
+        console.error('[JobForm] Help request failed');
         setHelping(false);
       }
       // Results arrive via julian:ui-action event above
@@ -2397,32 +2391,17 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
       console.error('[JobForm] Help request failed:', err);
       setHelping(false);
     }
-  }, [name, description, contextDocs, skills, files, aboutYou, getAuthHeaders]);
+  }, [name, description, contextDocs, skills, files, aboutYou, requestHelp]);
 
   const handleSave = useCallback(async () => {
-    const jobDoc = {
-      type: 'job',
-      name: name.trim() || 'Untitled Job',
-      description,
-      contextDocs,
-      skills,
-      files,
-      aboutYou,
-      status: job?.status || 'open',
-      assignedAgent: job?.assignedAgent || null,
-      applicants: job?.applicants || [],
-      createdAt: job?.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    if (job?._id) jobDoc._id = job._id;
-    if (job?._rev) jobDoc._rev = job._rev;
     try {
-      await window.resilientPut(database, jobDoc);
+      const formData = { name, description, contextDocs, skills, files, aboutYou };
+      await saveJob(formData, job);
       if (onSave) onSave();
     } catch (err) {
       console.error('[JobForm] Save failed:', err);
     }
-  }, [name, description, contextDocs, skills, files, aboutYou, job, database, onSave]);
+  }, [name, description, contextDocs, skills, files, aboutYou, job, saveJob, onSave]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '16px 0' }}>
@@ -2584,7 +2563,7 @@ function JobForm({ job, database, onCancel, onSave, getAuthHeaders }) {
   );
 }
 
-function useJobs(database, jobDocs, agentDocs) {
+function useJobs(database, jobDocs, agentDocs, getAuthHeaders) {
   const jobs = useMemo(() => {
     return [...(jobDocs || [])].sort((a, b) => {
       if (a.status === 'open' && b.status !== 'open') return -1;
@@ -2592,6 +2571,11 @@ function useJobs(database, jobDocs, agentDocs) {
       return (b.createdAt || '').localeCompare(a.createdAt || '');
     });
   }, [jobDocs]);
+
+  const openJobs = useMemo(() =>
+    (jobDocs || []).filter(j => j.status === 'open'),
+    [jobDocs]
+  );
 
   const deleteJob = useCallback(async (jobId) => {
     window.SFX?.play('delete');
@@ -2626,13 +2610,40 @@ function useJobs(database, jobDocs, agentDocs) {
     }
   }, [database, agentDocs]);
 
-  return { jobs, deleteJob, assignAgent };
+  const saveJob = useCallback(async (formData, existingJob) => {
+    const jobDoc = {
+      type: 'job',
+      ...formData,
+      name: (formData.name || '').trim() || 'Untitled Job',
+      status: existingJob?.status || 'open',
+      assignedAgent: existingJob?.assignedAgent || null,
+      applicants: existingJob?.applicants || [],
+      createdAt: existingJob?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    if (existingJob?._id) jobDoc._id = existingJob._id;
+    if (existingJob?._rev) jobDoc._rev = existingJob._rev;
+    await window.resilientPut(database, jobDoc);
+  }, [database]);
+
+  const requestHelp = useCallback(async (formState) => {
+    const headers = await getAuthHeaders();
+    if (!headers) return false;
+    const res = await fetch('/api/job-help', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ formState }),
+    });
+    return res.ok;
+  }, [getAuthHeaders]);
+
+  return { jobs, openJobs, deleteJob, assignAgent, saveJob, requestHelp };
 }
 window.useJobs = useJobs;
 
 function JobsPanel({ database, getAuthHeaders, jobView: view, setJobView: setView, selectedJob, setSelectedJob, jobDraft, setJobDraft, jobDocs, agentDocs }) {
 
-  const { jobs, deleteJob, assignAgent } = useJobs(database, jobDocs, agentDocs);
+  const { jobs, deleteJob, assignAgent, saveJob, requestHelp } = useJobs(database, jobDocs, agentDocs, getAuthHeaders);
   const [confirmingDelete, setConfirmingDelete] = useState(null);
 
   const handleJobClick = useCallback((job) => {
@@ -2684,10 +2695,10 @@ function JobsPanel({ database, getAuthHeaders, jobView: view, setJobView: setVie
         }}>
         <JobForm
           job={selectedJob}
-          database={database}
           onCancel={handleCancel}
           onSave={handleSave}
-          getAuthHeaders={getAuthHeaders}
+          saveJob={saveJob}
+          requestHelp={requestHelp}
         />
       </div>
     );
