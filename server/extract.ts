@@ -21,6 +21,7 @@ export async function extractStructured<T>(
     "--print",
     "--model", "haiku",
     "--no-session-persistence",
+    "--output-format", "json",
     "--json-schema", schemaStr,
     "--tools", "",
   ], {
@@ -42,7 +43,20 @@ export async function extractStructured<T>(
       const stderr = await new Response(proc.stderr).text();
       throw new Error(`extract exited ${exitCode}: ${stderr.slice(0, 200)}`);
     }
-    return JSON.parse(stdout) as T;
+    const wrapper = JSON.parse(stdout);
+    // --output-format json wraps the response in CLI metadata.
+    // The schema-conforming result is in structured_output or result.
+    if (wrapper.structured_output && typeof wrapper.structured_output === 'object') {
+      return wrapper.structured_output as T;
+    }
+    if (typeof wrapper.result === 'string') {
+      return JSON.parse(wrapper.result) as T;
+    }
+    // Fallback: if it doesn't look like a wrapper, return as-is
+    if (!('type' in wrapper && 'subtype' in wrapper)) {
+      return wrapper as T;
+    }
+    throw new Error(`Unexpected CLI output shape: keys=${Object.keys(wrapper).join(',')}`);
   } finally {
     clearTimeout(timer);
   }
