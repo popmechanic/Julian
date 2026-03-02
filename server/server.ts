@@ -489,7 +489,85 @@ registerCommand('[JOB HELP]', async (payload, ctx) => {
   return null;
 });
 
-// ── Ephemeral Claude Process Manager ─────────────────────────────────────
+// ── Per-User Session Model ────────────────────────────────────────────────
+
+interface UserSession {
+  // Identity (from Clerk JWT)
+  clerkUserId: string;
+  clerkEmail: string;
+
+  // Anthropic OAuth (in-memory only — never written to disk)
+  anthropicToken: string;
+  anthropicRefreshToken: string;
+  anthropicTokenExpiresAt: number;
+
+  // Claude subprocess
+  proc: ReturnType<typeof spawn> | null;
+  processAlive: boolean;
+  sessionId: string | null;
+  sessionCounter: number;
+  actualModel: string;
+  sessionCostUsd: number;
+  lastActivity: number;
+
+  // Per-user event log (SSE stream)
+  eventLog: ReturnType<typeof createEventLog>;
+
+  // Agent system (per-user isolation)
+  teamName: string;
+  agentNameToGrid: Map<string, number[]>;
+  agentGridToName: Map<number, string>;
+  inboxHealthy: boolean;
+  inboxWatcher: ReturnType<typeof fsWatch> | null;
+  lastReadIndex: number;
+
+  // JulianScreen port (dynamic, per-user)
+  screenPort: number | null;
+}
+
+const sessions = new Map<string, UserSession>();
+const MAX_CONCURRENT_USERS = 10;
+let nextScreenPort = 13849; // JulianScreen instances start at 13849
+
+function createUserSession(userId: string, email: string, token: string, refreshToken: string, expiresAt: number): UserSession {
+  return {
+    clerkUserId: userId,
+    clerkEmail: email,
+    anthropicToken: token,
+    anthropicRefreshToken: refreshToken,
+    anthropicTokenExpiresAt: expiresAt,
+    proc: null,
+    processAlive: false,
+    sessionId: null,
+    sessionCounter: 0,
+    actualModel: 'claude-opus-4-6',
+    sessionCostUsd: 0,
+    lastActivity: Date.now(),
+    eventLog: createEventLog(2000),
+    teamName: `julian-agents-${userId.slice(0, 8)}`,
+    agentNameToGrid: new Map(),
+    agentGridToName: new Map(),
+    inboxHealthy: false,
+    inboxWatcher: null,
+    lastReadIndex: 0,
+    screenPort: null,
+  };
+}
+
+function killSession(session: UserSession) {
+  if (session.proc && session.processAlive) {
+    session.proc.kill();
+  }
+  if (session.inboxWatcher) {
+    session.inboxWatcher.close();
+    session.inboxWatcher = null;
+  }
+  session.proc = null;
+  session.processAlive = false;
+  session.sessionId = null;
+}
+
+// ── Ephemeral Claude Process Manager (legacy globals — being migrated) ───
 
 let claudeProc: ReturnType<typeof spawn> | null = null;
 let processAlive = false;
