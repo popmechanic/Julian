@@ -153,7 +153,7 @@ const OAUTH_REDIRECT_URI = "https://platform.claude.com/oauth/code/callback";
 const OAUTH_SCOPES = "user:profile user:inference user:sessions:claude_code user:mcp_servers";
 
 // In-memory tracking of pending PKCE flows (10-min TTL)
-const pendingPKCE = new Map<string, { verifier: string; createdAt: number }>();
+const pendingPKCE = new Map<string, { verifier: string; createdAt: number; userId: string }>();
 const PKCE_TTL_MS = 10 * 60 * 1000;
 
 // Cleanup expired PKCE flows every 60s
@@ -304,6 +304,49 @@ function writeCredentials(accessToken: string, refreshToken: string, expiresIn: 
     },
   };
   writeFileSync(CLAUDE_CREDS_PATH, JSON.stringify(creds, null, 2) + "\n", { mode: 0o600 });
+}
+
+// ── Per-user token refresh ────────────────────────────────────────────────
+
+async function refreshUserTokenIfNeeded(session: UserSession): Promise<boolean> {
+  if (!session.anthropicRefreshToken) return false;
+  const thirtyMinutes = 30 * 60 * 1000;
+  if (session.anthropicTokenExpiresAt > Date.now() + thirtyMinutes) return false;
+
+  console.log(`[Auth] Token expiring for ${session.clerkEmail}, refreshing...`);
+  try {
+    const resp = await fetch(OAUTH_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        refresh_token: session.anthropicRefreshToken,
+        client_id: OAUTH_CLIENT_ID,
+        scope: OAUTH_SCOPES,
+      }),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error(`[Auth] Refresh failed for ${session.clerkEmail} (${resp.status}):`, errText);
+      return false;
+    }
+
+    const tokens = await resp.json() as {
+      access_token: string;
+      refresh_token: string;
+      expires_in: number;
+    };
+
+    session.anthropicToken = tokens.access_token;
+    session.anthropicRefreshToken = tokens.refresh_token;
+    session.anthropicTokenExpiresAt = Date.now() + tokens.expires_in * 1000;
+    console.log(`[Auth] Token refreshed for ${session.clerkEmail} (expires in ${Math.round(tokens.expires_in / 60)} min)`);
+    return true;
+  } catch (err) {
+    console.error(`[Auth] Refresh error for ${session.clerkEmail}:`, err);
+    return false;
+  }
 }
 
 // ── Auth env file ──────────────────────────────────────────────────────────
@@ -1297,7 +1340,8 @@ const server = Bun.serve({
 
     // OAuth start: generate PKCE auth URL directly (no subprocess)
     if (url.pathname === "/api/oauth/start" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
+      const user = await resolveUser(req);
+      if (!user) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const state = randomBytes(32).toString("hex");
@@ -1314,15 +1358,16 @@ const server = Bun.serve({
         response_type: "code",
       }).toString();
 
-      pendingPKCE.set(state, { verifier, createdAt: Date.now() });
+      pendingPKCE.set(state, { verifier, createdAt: Date.now(), userId: user.userId });
 
-      console.log(`[OAuth] PKCE flow started (state=${state.slice(0, 8)}...)`);
+      console.log(`[OAuth] PKCE flow started for ${user.email} (state=${state.slice(0, 8)}...)`);
       return Response.json({ authUrl, state }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
     // OAuth exchange: POST authorization code to token endpoint directly
     if (url.pathname === "/api/oauth/exchange" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      const user = await resolveUser(req);
+      if (!user) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const body = (await req.json()) as { code?: string; state?: string };
@@ -1330,25 +1375,22 @@ const server = Bun.serve({
         return Response.json({ error: "code and state required" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const pending = pendingPKCE.get(body.state);
-      if (!pending) {
+      if (!pending || pending.userId !== user.userId) {
         return Response.json({ error: "Invalid or expired state parameter" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       pendingPKCE.delete(body.state);
 
       try {
-        // Strip #state suffix if the frontend passed the full callback fragment
         const code = body.code.split("#")[0];
-
         const exchangeBody = {
-            grant_type: "authorization_code",
-            code,
-            redirect_uri: OAUTH_REDIRECT_URI,
-            client_id: OAUTH_CLIENT_ID,
-            code_verifier: pending.verifier,
-            state: body.state,
-          };
-        console.log("[OAuth] Exchanging authorization code for tokens...");
-        console.log("[OAuth] Request body:", JSON.stringify({ ...exchangeBody, code: code.slice(0, 10) + '...', code_verifier: exchangeBody.code_verifier.slice(0, 10) + '...' }));
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: OAUTH_REDIRECT_URI,
+          client_id: OAUTH_CLIENT_ID,
+          code_verifier: pending.verifier,
+          state: body.state,
+        };
+        console.log(`[OAuth] Exchanging code for ${user.email}...`);
         const resp = await fetch(OAUTH_TOKEN_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1370,13 +1412,37 @@ const server = Bun.serve({
           expires_in: number;
         };
 
-        writeCredentials(tokens.access_token, tokens.refresh_token, tokens.expires_in);
-        console.log(`[OAuth] Credentials saved (expires in ${Math.round(tokens.expires_in / 60)} min)`);
+        // Store tokens in a UserSession (in-memory, not on disk)
+        const session = createUserSession(
+          user.userId,
+          user.email,
+          tokens.access_token,
+          tokens.refresh_token,
+          Date.now() + tokens.expires_in * 1000,
+        );
+        sessions.set(user.userId, session);
+
+        console.log(`[OAuth] Session created for ${user.email} (expires in ${Math.round(tokens.expires_in / 60)} min)`);
         return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
       } catch (err) {
         console.error("[OAuth] Exchange error:", err);
         return Response.json({ error: "Token exchange failed" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
+    }
+
+    // Per-user auth status
+    if (url.pathname === "/api/auth/status" && req.method === "GET") {
+      const user = await resolveUser(req);
+      if (!user) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
+      }
+      const session = sessions.get(user.userId);
+      return Response.json({
+        hasAnthropicAuth: !!session?.anthropicToken,
+        sessionActive: !!session?.processAlive,
+        sessionId: session?.sessionId || null,
+        email: user.email,
+      }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
     // ── Event stream endpoint (replaces per-request SSE) ─────────────────────
