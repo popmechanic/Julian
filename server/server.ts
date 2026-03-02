@@ -9,12 +9,9 @@ import {
   base64url,
   generateCodeVerifier,
   generateCodeChallenge,
-  parseEnvContent,
   corsHeaders,
   parseMarkersFromContent,
   createEventLog,
-  parseClaudeCredentials,
-  parseSculptorCredentials,
   ServerEvent,
 } from "./lib";
 import { extractStructured } from "./extract";
@@ -139,7 +136,6 @@ try {
   GIT_VERSION = result.stdout.toString().trim() || "unknown";
 } catch {}
 console.log(`[Server] Git version: ${GIT_VERSION}`);
-const AUTH_ENV_PATH = join(import.meta.dir, "..", "claude-auth.env");
 
 // ── Credential paths ────────────────────────────────────────────────────
 const CLAUDE_CREDS_PATH = join(homedir(), ".claude", ".credentials.json");
@@ -166,30 +162,7 @@ setInterval(() => {
   }
 }, 60_000);
 
-// ── Credential readers ───────────────────────────────────────────────────
-
-function loadClaudeCredentials(): { accessToken: string; expiresAt: number } | null {
-  if (!existsSync(CLAUDE_CREDS_PATH)) return null;
-  try {
-    const data = JSON.parse(readFileSync(CLAUDE_CREDS_PATH, "utf-8"));
-    return parseClaudeCredentials(data);
-  } catch {
-    return null;
-  }
-}
-
-function loadSculptorCredentials(): { access_token: string; expires_at_unix_ms: number } | null {
-  if (!existsSync(SCULPTOR_CREDS_PATH)) return null;
-  try {
-    const data = JSON.parse(readFileSync(SCULPTOR_CREDS_PATH, "utf-8"));
-    return parseSculptorCredentials(data);
-  } catch {
-    return null;
-  }
-}
-
 // ── Clerk JWT verification ──────────────────────────────────────────────────
-// Decode frontend API domain from the publishable key
 const CLERK_PK = process.env.VITE_CLERK_PUBLISHABLE_KEY || "";
 const CLERK_FRONTEND_API = CLERK_PK
   ? atob(CLERK_PK.replace(/^pk_(test|live)_/, "")).replace(/\$$/, "")
@@ -198,27 +171,10 @@ const JWKS = CLERK_FRONTEND_API
   ? createRemoteJWKSet(new URL(`https://${CLERK_FRONTEND_API}/.well-known/jwks.json`))
   : null;
 
-async function verifyClerkToken(req: Request): Promise<boolean> {
-  if (!JWKS) return true; // No Clerk config = skip auth (local dev)
-  // Check Authorization header, fall back to X-Authorization (exe.dev edge proxy strips Authorization)
-  const auth = req.headers.get("Authorization") || req.headers.get("X-Authorization");
-  if (!auth?.startsWith("Bearer ")) {
-    console.warn("[Clerk] No Authorization header in request");
-    return false;
-  }
-  try {
-    await jwtVerify(auth.slice(7), JWKS, { clockTolerance: 60 });
-    return true;
-  } catch (err) {
-    console.error("[Clerk] JWT verification failed:", (err as Error).message);
-    return false;
-  }
-}
-
 // ── Per-user auth resolution ─────────────────────────────────────────────
 
 async function resolveUser(req: Request): Promise<{ userId: string; email: string } | null> {
-  if (!JWKS) return { userId: "local-dev", email: "dev@localhost" }; // No Clerk config = local dev
+  if (!JWKS) return { userId: "local-dev", email: "dev@localhost" };
   const auth = req.headers.get("Authorization") || req.headers.get("X-Authorization");
   if (!auth?.startsWith("Bearer ")) return null;
   try {
@@ -228,82 +184,6 @@ async function resolveUser(req: Request): Promise<{ userId: string; email: strin
     console.error("[Auth] JWT verification failed:", (err as Error).message);
     return null;
   }
-}
-
-function getSession(userId: string): UserSession | null {
-  return sessions.get(userId) || null;
-}
-
-// ── Token refresh ───────────────────────────────────────────────────────
-
-async function refreshTokenIfNeeded(): Promise<boolean> {
-  const claudeCreds = loadClaudeCredentials();
-  if (!claudeCreds?.accessToken) return false;
-
-  // Read full credentials to get refresh token
-  let data: any;
-  try {
-    data = JSON.parse(readFileSync(CLAUDE_CREDS_PATH, "utf-8"));
-  } catch { return false; }
-
-  const refreshToken = data?.claudeAiOauth?.refreshToken;
-  if (!refreshToken) return false;
-
-  const expiresAt = data?.claudeAiOauth?.expiresAt ?? 0;
-  const thirtyMinutes = 30 * 60 * 1000;
-
-  // Token still valid for 30+ minutes — no refresh needed
-  if (expiresAt > Date.now() + thirtyMinutes) return false;
-
-  console.log("[Auth] Token expires soon, refreshing...");
-  try {
-    const resp = await fetch(OAUTH_TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-        client_id: OAUTH_CLIENT_ID,
-        scope: OAUTH_SCOPES,
-      }),
-    });
-
-    if (!resp.ok) {
-      const errText = await resp.text();
-      console.error(`[Auth] Refresh failed (${resp.status}):`, errText);
-      return false;
-    }
-
-    const tokens = await resp.json() as {
-      access_token: string;
-      refresh_token: string;
-      expires_in: number;
-    };
-
-    // Write new credentials (refresh token rotates!)
-    writeCredentials(tokens.access_token, tokens.refresh_token, tokens.expires_in);
-    console.log(`[Auth] Token refreshed (expires in ${Math.round(tokens.expires_in / 60)} min)`);
-    return true;
-  } catch (err) {
-    console.error("[Auth] Refresh error:", err);
-    return false;
-  }
-}
-
-function writeCredentials(accessToken: string, refreshToken: string, expiresIn: number) {
-  const dir = join(homedir(), ".claude");
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const creds = {
-    claudeAiOauth: {
-      accessToken,
-      refreshToken,
-      expiresAt: Date.now() + expiresIn * 1000,
-      scopes: ["user:inference", "user:mcp_servers", "user:profile", "user:sessions:claude_code"],
-      subscriptionType: "max",
-      rateLimitTier: "default_claude_max_20x",
-    },
-  };
-  writeFileSync(CLAUDE_CREDS_PATH, JSON.stringify(creds, null, 2) + "\n", { mode: 0o600 });
 }
 
 // ── Per-user token refresh ────────────────────────────────────────────────
@@ -349,61 +229,9 @@ async function refreshUserTokenIfNeeded(session: UserSession): Promise<boolean> 
   }
 }
 
-// ── Auth env file ──────────────────────────────────────────────────────────
-
-function loadAuthEnv(): Record<string, string> {
-  // Check Claude Code creds first — CLI auto-discovers these
-  const claudeCreds = loadClaudeCredentials();
-  if (claudeCreds?.accessToken && claudeCreds.expiresAt > Date.now()) {
-    return {}; // Claude CLI auto-discovers ~/.claude/.credentials.json
-  }
-  // Check sculptor creds
-  const sculptorCreds = loadSculptorCredentials();
-  if (sculptorCreds?.access_token && sculptorCreds.expires_at_unix_ms > Date.now()) {
-    return {}; // Claude CLI auto-discovers ~/.sculptor/credentials.json
-  }
-  // Fall back to legacy .env file
-  if (!existsSync(AUTH_ENV_PATH)) return {};
-  try {
-    const content = readFileSync(AUTH_ENV_PATH, "utf-8");
-    return parseEnvContent(content);
-  } catch (err) {
-    console.error("[Auth] Failed to read claude-auth.env:", err);
-    return {};
-  }
-}
-
-async function needsSetup(): Promise<boolean> {
-  // Check if creds are currently valid
-  const claudeCreds = loadClaudeCredentials();
-  if (claudeCreds?.accessToken && claudeCreds.expiresAt > Date.now()) return false;
-  const sculptorCreds = loadSculptorCredentials();
-  if (sculptorCreds?.access_token && sculptorCreds.expires_at_unix_ms > Date.now()) return false;
-  if (existsSync(AUTH_ENV_PATH)) return false;
-
-  // Creds exist but expired — try refresh before giving up
-  if (claudeCreds?.accessToken) {
-    const refreshed = await refreshTokenIfNeeded();
-    if (refreshed) return false;
-  }
-
-  return true;
-}
-
-function getAuthMethod(): "oauth" | "legacy" | "none" {
-  if (loadClaudeCredentials()?.accessToken) return "oauth";
-  if (loadSculptorCredentials()?.access_token) return "oauth";
-  if (existsSync(AUTH_ENV_PATH)) return "legacy";
-  return "none";
-}
-
-// ── Event Log ────────────────────────────────────────────────────────────
-
-const { append, eventsAfter, subscribe, unsubscribe, subscribers } = createEventLog(2000);
-
 // ── Command Registry ──────────────────────────────────────────────────────
 
-type CommandContext = { append: typeof append; sessionId: string | null };
+type CommandContext = { append: (partial: Omit<ServerEvent, 'id' | 'ts'>) => ServerEvent; sessionId: string | null };
 type CommandHandler = (payload: string, ctx: CommandContext) => Promise<Response | null>;
 
 const commandRegistry = new Map<string, CommandHandler>();
@@ -629,62 +457,12 @@ function killSession(session: UserSession) {
   session.sessionId = null;
 }
 
-// ── Ephemeral Claude Process Manager (legacy globals — being migrated) ───
-
-let claudeProc: ReturnType<typeof spawn> | null = null;
-let processAlive = false;
-let lastActivity = 0;
+// ── Constants ────────────────────────────────────────────────────────────
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 5_000;
-const PROCESS_KILL_WAIT_MS = 300;
 const MAX_MESSAGE_SIZE = 100_000;
-let sessionId: string | null = null;
-let sessionCounter = 0;
-let actualModel: string = 'claude-opus-4-6';
-let sessionCostUsd = 0;
-const AGENT_NAME = process.env.AGENT_NAME || "Julian";
 const FORCE_DEMO_MODE = process.env.DEMO_MODE === "1";
-const REMOTE_SESSION = process.env.REMOTE_SESSION || "";
-
-// ── Agent inbox constants ────────────────────────────────────────────────
-const TEAM_NAME = 'julian-agents';
 const TEAMS_DIR = join(homedir(), '.claude', 'teams');
-const INBOX_DIR = join(TEAMS_DIR, TEAM_NAME, 'inboxes');
-const SERVER_INBOX = join(INBOX_DIR, 'marcus.json');
-let lastReadIndex = 0;
-let inboxWatcher: ReturnType<typeof fsWatch> | null = null;
-let inboxHealthy = false;
-
-// ── Agent name resolution ────────────────────────────────────────────────
-// Maps chosen agent names (e.g., "Sable") to grid positions, and vice versa.
-// Populated when [ACTION] markers with target "agents" are parsed.
-const agentNameToGrid = new Map<string, number[]>();
-const agentGridToName = new Map<number, string>();
-
-subscribe((event: ServerEvent) => {
-  if (event.type === 'ui_action' && event.target === 'agents') {
-    if (event.action === 'register' && event.data) {
-      const { name, gridPosition } = event.data;
-      if (name && gridPosition != null) {
-        agentGridToName.set(gridPosition, name);
-        const existing = agentNameToGrid.get(name) || [];
-        if (!existing.includes(gridPosition)) existing.push(gridPosition);
-        agentNameToGrid.set(name, existing);
-        console.log(`[NameMap] ${name} -> agent-${gridPosition}`);
-      }
-    }
-    if (event.action === 'status' && event.data?.agents) {
-      for (const a of event.data.agents) {
-        if (a.name && a.gridPosition != null) {
-          agentGridToName.set(a.gridPosition, a.name);
-          const existing = agentNameToGrid.get(a.name) || [];
-          if (!existing.includes(a.gridPosition)) existing.push(a.gridPosition);
-          agentNameToGrid.set(a.name, existing);
-        }
-      }
-    }
-  }
-});
 
 function resolveAgentSpawnName(targetAgent?: string, targetGridPosition?: number, session?: UserSession): string | null {
   const nameToGrid = session?.agentNameToGrid || new Map();
@@ -797,92 +575,6 @@ Be yourself. Be honest. Be warm but not performative. If the visitor asks you ha
 
 Do not mention Marcus's physical state or the hackathon. This is about you and what we built, not about the circumstances of this demo.
 </demo-instructions>`;
-
-// ── Remote mode: one-shot per message ─────────────────────────────────────
-let remoteMessageQueue: string[] = [];
-let remoteProcessing = false;
-
-async function sendRemoteMessage(message: string) {
-  remoteMessageQueue.push(message);
-  if (remoteProcessing) return;
-  remoteProcessing = true;
-  const authEnv = loadAuthEnv();
-  const remoteUrl = REMOTE_SESSION.startsWith('https://') ? REMOTE_SESSION : `https://claude.ai/code/${REMOTE_SESSION}`;
-
-  while (remoteMessageQueue.length > 0) {
-    const msg = remoteMessageQueue.shift()!;
-    console.log(`[Remote] Sending message (${msg.length} chars)`);
-    try {
-      const proc = spawn({
-        cmd: [
-          "claude", "--print",
-          "--resume", remoteUrl,
-          "--output-format", "stream-json",
-          "--verbose",
-          msg,
-        ],
-        cwd: WORKING_DIR,
-        env: { ...process.env, ...authEnv, CLAUDECODE: '', CLAUDE_CODE_ENTRYPOINT: '' },
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      // Close stdin immediately — message is passed as CLI arg
-      try { (proc.stdin as any).end(); } catch {}
-
-      const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let gotResult = false;
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const parsed = JSON.parse(line);
-              lastActivity = Date.now();
-              if (parsed.type === 'system') {
-                if (parsed.model) { actualModel = parsed.model; console.log(`[Remote] Model: ${actualModel}`); }
-                append({ sessionId, type: 'claude_system', claudeSessionId: parsed.session_id || '', model: parsed.model || null, availableTools: parsed.tools || [] });
-              } else if (parsed.type === 'assistant' && parsed.message?.content) {
-                append({ sessionId, type: 'claude_text', messageId: parsed.message?.id || '', content: parsed.message.content });
-                parseMarkersFromContent(parsed.message.content, append, sessionId!);
-              } else if (parsed.type === 'result') {
-                gotResult = true;
-                const usage = parsed.usage || {};
-                if (parsed.total_cost_usd) sessionCostUsd += parsed.total_cost_usd;
-                append({ sessionId, type: 'claude_result', subtype: parsed.subtype || 'success', numTurns: parsed.num_turns || 0, costUsd: parsed.total_cost_usd || null, sessionCostUsd, usage: { inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0, cacheReadTokens: usage.cache_read_input_tokens || 0, cacheCreationTokens: usage.cache_creation_input_tokens || 0 }, resultText: parsed.result || '' });
-              } else if (parsed.type === 'tool_result') {
-                append({ sessionId, type: 'claude_tool_result', toolUseId: parsed.tool_use_id || '', toolName: parsed.tool_name || '', content: typeof parsed.content === 'string' ? parsed.content.slice(0, 10000) : JSON.stringify(parsed.content || '').slice(0, 10000), isError: parsed.is_error || false });
-              }
-            } catch (e) { console.warn("[Remote stdout] Parse error:", (e as Error).message, line.slice(0, 200)); }
-          }
-        }
-      } finally { reader.releaseLock(); }
-
-      // Drain stderr
-      const errReader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
-      try { while (!(await errReader.read()).done) {} } catch {} finally { errReader.releaseLock(); }
-
-      const code = await proc.exited;
-      console.log(`[Remote] Message done (exit ${code}, gotResult=${gotResult})`);
-      // Exit code 1 is a known quirk of --resume with remote URLs — suppress it
-      if (code > 1 && !gotResult) {
-        append({ sessionId, type: 'server_error', message: `Remote claude exited with code ${code}`, code: 'remote_exit_error' });
-      }
-    } catch (err) {
-      console.error(`[Remote] Error sending message:`, err);
-      append({ sessionId, type: 'server_error', message: `Remote send failed: ${err}`, code: 'remote_send_failed' });
-    }
-  }
-  remoteProcessing = false;
-}
 
 function spawnClaude(session: UserSession, mode: 'normal' | 'demo' = 'normal') {
   session.sessionId = `julian-${new Date().toISOString().slice(0, 10)}-${++session.sessionCounter}`;
@@ -1046,6 +738,32 @@ function spawnClaude(session: UserSession, mode: 'normal' | 'demo' = 'normal') {
     demoMode: FORCE_DEMO_MODE || mode === 'demo',
   });
 
+  // Track agent name registrations for this session
+  session.eventLog.subscribe((event: ServerEvent) => {
+    if (event.type === 'ui_action' && (event as any).target === 'agents') {
+      const data = (event as any).data;
+      if ((event as any).action === 'register' && data) {
+        const { name, gridPosition } = data;
+        if (name && gridPosition != null) {
+          session.agentGridToName.set(gridPosition, name);
+          const existing = session.agentNameToGrid.get(name) || [];
+          if (!existing.includes(gridPosition)) existing.push(gridPosition);
+          session.agentNameToGrid.set(name, existing);
+        }
+      }
+      if ((event as any).action === 'status' && data?.agents) {
+        for (const a of data.agents) {
+          if (a.name && a.gridPosition != null) {
+            session.agentGridToName.set(a.gridPosition, a.name);
+            const existing = session.agentNameToGrid.get(a.name) || [];
+            if (!existing.includes(a.gridPosition)) existing.push(a.gridPosition);
+            session.agentNameToGrid.set(a.name, existing);
+          }
+        }
+      }
+    }
+  });
+
   return proc;
 }
 
@@ -1074,31 +792,6 @@ function writeToStdin(session: UserSession, message: string): boolean {
   }
 }
 
-// ── Send message directly to agent inbox ─────────────────────────────────
-
-async function sendToAgent(agentName: string, text: string, speakerName: string): Promise<boolean> {
-  const inboxPath = join(INBOX_DIR, agentName.toLowerCase() + '.json');
-  try {
-    let inbox: any[] = [];
-    try {
-      inbox = JSON.parse(await Bun.file(inboxPath).text());
-    } catch { inbox = []; }
-    inbox.push({
-      from: speakerName,
-      text,
-      summary: text.slice(0, 80),
-      timestamp: new Date().toISOString(),
-      read: false,
-    });
-    await Bun.write(inboxPath, JSON.stringify(inbox, null, 2));
-    console.log(`[Inbox] Wrote to ${agentName}'s inbox (${text.length} chars from ${speakerName})`);
-    return true;
-  } catch (err) {
-    console.error(`[Inbox] Failed to write to ${agentName}'s inbox:`, err);
-    return false;
-  }
-}
-
 // ── Per-user inbox send ──────────────────────────────────────────────────
 
 async function sendToAgentInDir(inboxDir: string, agentName: string, text: string, speakerName: string): Promise<boolean> {
@@ -1118,83 +811,6 @@ async function sendToAgentInDir(inboxDir: string, agentName: string, text: strin
     return true;
   } catch (err) {
     console.error(`[Inbox] Failed to write to ${agentName}'s inbox:`, err);
-    return false;
-  }
-}
-
-// ── Inbox watcher — captures agent responses from marcus.json ────────────
-
-function setupInboxWatcher() {
-  if (inboxWatcher) return;
-  if (!existsSync(INBOX_DIR)) {
-    console.log('[Inbox] Team inbox directory does not exist yet, skipping watcher');
-    return;
-  }
-  if (!existsSync(SERVER_INBOX)) {
-    try {
-      writeFileSync(SERVER_INBOX, '[]');
-    } catch (err) {
-      console.error('[Inbox] Failed to create server inbox:', err);
-      return;
-    }
-  }
-
-  // Read current state to set baseline
-  try {
-    const current = JSON.parse(readFileSync(SERVER_INBOX, 'utf-8'));
-    lastReadIndex = current.length;
-  } catch { lastReadIndex = 0; }
-
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-  inboxWatcher = fsWatch(SERVER_INBOX, () => {
-    // Debounce rapid writes
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(async () => {
-      try {
-        const messages = JSON.parse(await Bun.file(SERVER_INBOX).text());
-        for (let i = lastReadIndex; i < messages.length; i++) {
-          const msg = messages[i];
-          if (msg.from === '_healthcheck') continue;
-          // Resolve spawn name (e.g., "agent-6") to chosen name (e.g., "Sable")
-          const gridNum = parseInt((msg.from || '').replace('agent-', ''));
-          const chosenName = !isNaN(gridNum) ? (agentGridToName.get(gridNum) || msg.from) : msg.from;
-          append({
-            sessionId,
-            type: 'agent_message',
-            agentName: chosenName,
-            content: [{ type: 'text', text: msg.text }],
-          });
-          console.log(`[Inbox] Agent response from ${msg.from} (${msg.text.length} chars)`);
-        }
-        lastReadIndex = messages.length;
-      } catch (err) {
-        console.error('[Inbox] Failed to read server inbox:', err);
-      }
-    }, 100);
-  });
-  console.log('[Inbox] Watching', SERVER_INBOX, 'for agent responses');
-}
-
-async function verifyInboxHealth(): Promise<boolean> {
-  if (!existsSync(INBOX_DIR)) return false;
-  try {
-    if (!existsSync(SERVER_INBOX)) {
-      writeFileSync(SERVER_INBOX, '[]');
-    }
-    const testMsg = { from: '_healthcheck', text: '_ping', timestamp: new Date().toISOString(), read: false };
-    let inbox: any[] = [];
-    try { inbox = JSON.parse(readFileSync(SERVER_INBOX, 'utf-8')); } catch {}
-    inbox.push(testMsg);
-    writeFileSync(SERVER_INBOX, JSON.stringify(inbox));
-    await Bun.sleep(100);
-    const readBack = JSON.parse(readFileSync(SERVER_INBOX, 'utf-8'));
-    const found = readBack.some((m: any) => m.from === '_healthcheck');
-    // Clean up
-    writeFileSync(SERVER_INBOX, JSON.stringify(readBack.filter((m: any) => m.from !== '_healthcheck')));
-    return found;
-  } catch (err) {
-    console.error('[Inbox] Health check failed:', err);
     return false;
   }
 }
@@ -1315,11 +931,13 @@ function walkSkillDirs(baseDir: string): Array<{name: string, type: string, chil
   return results;
 }
 
-// ── Kill Claude session after 15 minutes of inactivity ───────────────────
+// ── Per-user inactivity sweep — kill idle sessions every 60s ──────────────
 setInterval(() => {
-  if (processAlive && claudeProc && Date.now() - lastActivity > INACTIVITY_TIMEOUT_MS) {
-    console.log("[Session] Inactivity timeout — ending session");
-    claudeProc.kill();
+  for (const [userId, session] of sessions) {
+    if (session.processAlive && session.proc && Date.now() - session.lastActivity > INACTIVITY_TIMEOUT_MS) {
+      console.log(`[Session] Inactivity timeout for ${session.clerkEmail} — ending session`);
+      killSession(session);
+    }
   }
 }, 60_000);
 
@@ -2048,32 +1666,10 @@ const server = Bun.serve({
 
 // ── Startup ────────────────────────────────────────────────────────────────
 
-(async () => {
-  // Try refreshing token at startup if it's expiring soon
-  await refreshTokenIfNeeded();
-
-  const startupClaudeCreds = loadClaudeCredentials();
-  const startupSculptorCreds = loadSculptorCredentials();
-  if (startupClaudeCreds?.accessToken) {
-    const expiresIn = startupClaudeCreds.expiresAt
-      ? Math.round((startupClaudeCreds.expiresAt - Date.now()) / 60_000)
-      : "unknown";
-    console.log(`[Auth] Claude Code credentials found (expires in ~${expiresIn} min)`);
-  } else if (startupSculptorCreds?.access_token) {
-    const expiresIn = startupSculptorCreds.expires_at_unix_ms
-      ? Math.round((startupSculptorCreds.expires_at_unix_ms - Date.now()) / 60_000)
-      : "unknown";
-    console.log(`[Auth] Sculptor credentials found (expires in ~${expiresIn} min)`);
-  } else if (existsSync(AUTH_ENV_PATH)) {
-    console.log("[Auth] Legacy claude-auth.env found");
-  } else {
-    console.log("[Auth] No credentials — setup required");
-  }
-
-  console.log(`
-  Julian — Ephemeral Session Bridge
+console.log(`
+  Julian — Per-User Session Bridge
   Server:  http://localhost:${PORT}
   CWD:     ${WORKING_DIR}
-  Claude:  On-demand (start session to spawn)
+  Auth:    Per-user Anthropic OAuth (visitors bring their own token)
+  Claude:  On-demand per user (start session to spawn)
 `);
-})();
