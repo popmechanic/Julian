@@ -1114,7 +1114,10 @@ const server = Bun.serve({
       }
       const session = sessions.get(user.userId);
       if (!session) {
-        return Response.json({ error: "No session — connect your Anthropic account first" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
+        // No session yet — return an empty SSE stream so the frontend doesn't error
+        return new Response("", {
+          headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", ...corsHeaders(ALLOWED_ORIGIN) },
+        });
       }
 
       const afterParam = url.searchParams.get("after") ?? req.headers.get("Last-Event-ID") ?? "-1";
