@@ -933,10 +933,17 @@ function walkSkillDirs(baseDir: string): Array<{name: string, type: string, chil
 
 // ── Per-user inactivity sweep — kill idle sessions every 60s ──────────────
 setInterval(() => {
+  const now = Date.now();
   for (const [userId, session] of sessions) {
-    if (session.processAlive && session.proc && Date.now() - session.lastActivity > INACTIVITY_TIMEOUT_MS) {
+    // Kill inactive processes
+    if (session.processAlive && session.proc && now - session.lastActivity > INACTIVITY_TIMEOUT_MS) {
       console.log(`[Session] Inactivity timeout for ${session.clerkEmail} — ending session`);
       killSession(session);
+    }
+    // Remove sessions with expired tokens (and no active process)
+    if (!session.processAlive && session.anthropicTokenExpiresAt < now && !session.anthropicRefreshToken) {
+      console.log(`[Session] Removing expired session for ${session.clerkEmail}`);
+      sessions.delete(userId);
     }
   }
 }, 60_000);
@@ -978,6 +985,21 @@ const server = Bun.serve({
     // Setup endpoint: store auth token (requires Clerk auth)
     if (url.pathname === "/api/setup" && req.method === "POST") {
       return Response.json({ error: "Deprecated — use /api/oauth/start and /api/oauth/exchange" }, { status: 410, headers: corsHeaders(ALLOWED_ORIGIN) });
+    }
+
+    // Logout: kill session and remove user state
+    if (url.pathname === "/api/logout" && req.method === "POST") {
+      const user = await resolveUser(req);
+      if (!user) {
+        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
+      }
+      const session = sessions.get(user.userId);
+      if (session) {
+        killSession(session);
+        sessions.delete(user.userId);
+        console.log(`[Auth] Session removed for ${user.email}`);
+      }
+      return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
     // OAuth start: generate PKCE auth URL directly (no subprocess)
