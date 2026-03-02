@@ -2,6 +2,7 @@ import { spawn } from "bun";
 
 export interface ExtractOptions {
   timeoutMs?: number;
+  oauthToken?: string;
 }
 
 /**
@@ -16,6 +17,13 @@ export async function extractStructured<T>(
   const timeoutMs = options?.timeoutMs ?? 30_000;
   const schemaStr = JSON.stringify(schema);
 
+  const env: Record<string, string | undefined> = { ...process.env };
+  delete env.CLAUDECODE;
+  delete env.CLAUDE_CODE_ENTRYPOINT;
+  if (options?.oauthToken) {
+    env.CLAUDE_CODE_OAUTH_TOKEN = options.oauthToken;
+  }
+
   const proc = spawn([
     "claude",
     "--print",
@@ -28,6 +36,7 @@ export async function extractStructured<T>(
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
+    env: env as any,
   });
 
   // Write prompt to stdin and close

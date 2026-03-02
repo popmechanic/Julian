@@ -231,7 +231,7 @@ async function refreshUserTokenIfNeeded(session: UserSession): Promise<boolean> 
 
 // ── Command Registry ──────────────────────────────────────────────────────
 
-type CommandContext = { append: (partial: Omit<ServerEvent, 'id' | 'ts'>) => ServerEvent; sessionId: string | null };
+type CommandContext = { append: (partial: Omit<ServerEvent, 'id' | 'ts'>) => ServerEvent; sessionId: string | null; oauthToken?: string };
 type CommandHandler = (payload: string, ctx: CommandContext) => Promise<Response | null>;
 
 const commandRegistry = new Map<string, CommandHandler>();
@@ -338,7 +338,7 @@ registerCommand('[JOB HELP]', async (payload, ctx) => {
     required: empty,
   };
 
-  extractStructured<Record<string, string>>(prompt, schema)
+  extractStructured<Record<string, string>>(prompt, schema, { oauthToken: ctx.oauthToken })
     .then(raw => {
       // Filter to only expected job form fields — Haiku may return extra keys
       const expectedFields = ['name', 'description', 'contextDocs', 'skills', 'files', 'aboutYou'];
@@ -1314,7 +1314,7 @@ const server = Bun.serve({
       if (!handler) {
         return Response.json({ error: "Handler not registered" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      const ctx = { append: session ? session.eventLog.append : (() => ({} as any)), sessionId: session?.sessionId || null };
+      const ctx = { append: session ? session.eventLog.append : (() => ({} as any)), sessionId: session?.sessionId || null, oauthToken: session?.anthropicToken };
       const result = await handler(JSON.stringify(body.formState), ctx);
       return result || Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
