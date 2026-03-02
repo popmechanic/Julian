@@ -50,11 +50,13 @@ describe("HTTP integration tests", () => {
     expect(resp.status).toBe(200);
     const body = await resp.json() as any;
     expect(body).toHaveProperty("status");
+    expect(body).toHaveProperty("hasAnthropicAuth");
     expect(body).toHaveProperty("sessionActive");
-    expect(body).toHaveProperty("needsSetup");
+    expect(body).toHaveProperty("activeSessions");
     expect(body.status).toBe("ok");
+    expect(typeof body.hasAnthropicAuth).toBe("boolean");
     expect(typeof body.sessionActive).toBe("boolean");
-    expect(typeof body.needsSetup).toBe("boolean");
+    expect(typeof body.activeSessions).toBe("number");
   });
 
   test("OPTIONS /api/events returns CORS preflight headers", async () => {
