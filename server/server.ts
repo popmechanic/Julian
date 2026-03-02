@@ -1050,29 +1050,21 @@ function spawnClaude(session: UserSession, mode: 'normal' | 'demo' = 'normal') {
 
 // ── Write to Claude stdin (fire-and-forget) ─────────────────────────────────
 
-function writeToStdin(message: string): boolean {
-  if (!processAlive) return false;
-
-  // Remote mode: queue a one-shot claude call
-  if (REMOTE_SESSION) {
-    sendRemoteMessage(message);
-    lastActivity = Date.now();
-    return true;
-  }
-
-  if (!claudeProc) return false;
+function writeToStdin(session: UserSession, message: string): boolean {
+  if (!session.processAlive) return false;
+  if (!session.proc) return false;
   const jsonl = JSON.stringify({
     type: "user",
     message: { role: "user", content: [{ type: "text", text: message }] },
   }) + "\n";
   try {
-    (claudeProc.stdin as any).write(jsonl);
-    (claudeProc.stdin as any).flush();
-    lastActivity = Date.now();
+    (session.proc.stdin as any).write(jsonl);
+    (session.proc.stdin as any).flush();
+    session.lastActivity = Date.now();
     return true;
   } catch (err) {
-    append({
-      sessionId,
+    session.eventLog.append({
+      sessionId: session.sessionId,
       type: 'server_error',
       message: `stdin write failed: ${err}`,
       code: 'stdin_write_failed',
