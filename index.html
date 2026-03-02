@@ -1316,7 +1316,7 @@ function App({ bootData }) {
         if (!cancelled) {
           setSessionActive(data.sessionActive ?? false);
           setConnected(data.sessionActive ?? false);
-          setSetupNeeded(data.needsSetup ?? false);
+          setSetupNeeded(!data.hasAnthropicAuth);
           if (data.sessionId) setServerSessionId(data.sessionId);
           if (data.version) window.__julianVersion = data.version;
         }

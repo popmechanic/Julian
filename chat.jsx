@@ -1235,7 +1235,7 @@ function SetupScreen({ onComplete, getAuthHeaders }) {
         const hr = await fetch('/api/health', { headers: h });
         if (!hr.ok) continue;
         const hd = await hr.json();
-        if (!hd.needsSetup) {
+        if (hd.hasAnthropicAuth) {
           onComplete();
           return true;
         }
