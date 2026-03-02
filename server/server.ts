@@ -1199,6 +1199,49 @@ async function verifyInboxHealth(): Promise<boolean> {
   }
 }
 
+// ── Per-user inbox watcher ────────────────────────────────────────────────
+
+function setupInboxWatcherForSession(session: UserSession) {
+  if (session.inboxWatcher) return;
+  const inboxDir = join(TEAMS_DIR, session.teamName, 'inboxes');
+  const serverInbox = join(inboxDir, 'marcus.json');
+  if (!existsSync(inboxDir)) return;
+  if (!existsSync(serverInbox)) {
+    try { writeFileSync(serverInbox, '[]'); } catch { return; }
+  }
+
+  try {
+    const current = JSON.parse(readFileSync(serverInbox, 'utf-8'));
+    session.lastReadIndex = current.length;
+  } catch { session.lastReadIndex = 0; }
+
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  session.inboxWatcher = fsWatch(serverInbox, () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(async () => {
+      try {
+        const messages = JSON.parse(await Bun.file(serverInbox).text());
+        for (let i = session.lastReadIndex; i < messages.length; i++) {
+          const msg = messages[i];
+          if (msg.from === '_healthcheck') continue;
+          const gridNum = parseInt((msg.from || '').replace('agent-', ''));
+          const chosenName = !isNaN(gridNum) ? (session.agentGridToName.get(gridNum) || msg.from) : msg.from;
+          session.eventLog.append({
+            sessionId: session.sessionId,
+            type: 'agent_message',
+            agentName: chosenName,
+            content: [{ type: 'text', text: msg.text }],
+          });
+        }
+        session.lastReadIndex = messages.length;
+      } catch (err) {
+        console.error(`[Inbox] Read error for ${session.clerkEmail}:`, err);
+      }
+    }, 100);
+  });
+}
+
 // ── Allowed origin for CORS ──────────────────────────────────────────────────
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:8000";
 
@@ -1316,27 +1359,7 @@ const server = Bun.serve({
 
     // Setup endpoint: store auth token (requires Clerk auth)
     if (url.pathname === "/api/setup" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
-      }
-      const body = (await req.json()) as { token?: string };
-      if (!body.token || typeof body.token !== "string") {
-        return Response.json({ error: "Token required" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
-      }
-      // Strip all whitespace (copy-paste from terminal can inject newlines/spaces)
-      const cleanToken = body.token.replace(/\s+/g, '');
-      // Only accept setup-tokens (sk-ant-oat...) via web form
-      if (!cleanToken.startsWith("sk-ant-oat")) {
-        return Response.json({ error: "Invalid token format. Must be a setup-token starting with sk-ant-oat" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
-      }
-      try {
-        writeFileSync(AUTH_ENV_PATH, `CLAUDE_CODE_OAUTH_TOKEN=${cleanToken}\n`, { mode: 0o600 });
-        console.log("[Setup] Wrote claude-auth.env");
-        return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
-      } catch (err) {
-        console.error("[Setup] Failed:", err);
-        return Response.json({ error: "Failed to save token" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
-      }
+      return Response.json({ error: "Deprecated — use /api/oauth/start and /api/oauth/exchange" }, { status: 410, headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
     // OAuth start: generate PKCE auth URL directly (no subprocess)
@@ -1645,24 +1668,26 @@ const server = Bun.serve({
 
     // Ledger reset: browser ledger was wiped, ask Julian for full agent state replay
     if (url.pathname === "/api/ledger-reset" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      const user = await resolveUser(req);
+      if (!user) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      if (!processAlive || !claudeProc) {
+      const session = sessions.get(user.userId);
+      if (!session?.processAlive || !session.proc) {
         return Response.json({ ok: true, note: "No active session" }, { headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      const msg = '[LEDGER RESET] The browser ledger was wiped. ' +
-        'Re-emit an [ACTION] marker with target "agents", action "status", ' +
-        'and full identity data for all known agents, including individuationArtifact.';
-      writeToStdin(msg);
+      const msg = '[LEDGER RESET] The browser ledger was wiped. Re-emit an [ACTION] marker with target "agents", action "status", and full identity data for all known agents, including individuationArtifact.';
+      writeToStdin(session, msg);
       return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
     // Job Help (session-independent — uses Haiku subprocess, not Claude session)
     if (url.pathname === "/api/job-help" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      const user = await resolveUser(req);
+      if (!user) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
+      const session = sessions.get(user.userId);
       const body = (await req.json()) as { formState?: Record<string, string> };
       if (!body.formState) {
         return Response.json({ error: "formState required" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
@@ -1671,29 +1696,33 @@ const server = Bun.serve({
       if (!handler) {
         return Response.json({ error: "Handler not registered" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      const result = await handler(JSON.stringify(body.formState), { append, sessionId });
+      const ctx = { append: session ? session.eventLog.append : (() => ({} as any)), sessionId: session?.sessionId || null };
+      const result = await handler(JSON.stringify(body.formState), ctx);
       return result || Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
     // Send message (legacy /api/chat path — redirects to /api/send)
     if (url.pathname === "/api/chat" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      const user = await resolveUser(req);
+      if (!user) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      if (!processAlive || !claudeProc) {
+      const session = sessions.get(user.userId);
+      if (!session?.processAlive || !session.proc) {
         return Response.json({ error: "No active session" }, { status: 409, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const body = (await req.json()) as { message?: string; targetAgent?: string };
       if (!body.message || typeof body.message !== 'string' || body.message.length > MAX_MESSAGE_SIZE) {
         return Response.json({ error: `Message required (max ${MAX_MESSAGE_SIZE / 1000}KB)` }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      lastActivity = Date.now();
+      session.lastActivity = Date.now();
 
       // Dispatch through command registry
       for (const [prefix, handler] of commandRegistry) {
         if (body.message.startsWith(prefix)) {
           const payload = body.message.slice(prefix.length).trim();
-          const result = await handler(payload, { append, sessionId });
+          const ctx = { append: session.eventLog.append, sessionId: session.sessionId };
+          const result = await handler(payload, ctx);
           return result || Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
         }
       }
@@ -1702,15 +1731,15 @@ const server = Bun.serve({
         ? `[ROUTE TO AGENT: ${body.targetAgent}] ${body.message}`
         : body.message;
 
-      const evt = append({
-        sessionId,
+      const evt = session.eventLog.append({
+        sessionId: session.sessionId,
         type: 'user_message',
         text: body.message,
-        speakerName: 'Marcus',
+        speakerName: user.email || 'Visitor',
         targetAgent: body.targetAgent || null,
       });
 
-      if (!writeToStdin(routedMessage)) {
+      if (!writeToStdin(session, routedMessage)) {
         return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
 
@@ -1719,32 +1748,32 @@ const server = Bun.serve({
 
     // Summon agents: send summon message to Claude
     if (url.pathname === "/api/agents/summon" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      const user = await resolveUser(req);
+      if (!user) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      if (!processAlive || !claudeProc) {
+      const session = sessions.get(user.userId);
+      if (!session?.processAlive || !session.proc) {
         return Response.json({ error: "No active session" }, { status: 409, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      lastActivity = Date.now();
+      session.lastActivity = Date.now();
 
       const summonMessage = "[SUMMON AGENTS] The user has clicked the Summon button. Begin the summoning ceremony: create the agent team and spawn 8 agents using the individuation protocol described in your CLAUDE.md.";
+      const evt = session.eventLog.append({ sessionId: session.sessionId, type: 'user_summon' });
 
-      const evt = append({ sessionId, type: 'user_summon' });
-
-      if (!writeToStdin(summonMessage)) {
+      if (!writeToStdin(session, summonMessage)) {
         return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
 
-      // Set up inbox watcher for agent responses (idempotent)
+      // Set up per-user inbox watcher
+      const inboxDir = join(TEAMS_DIR, session.teamName, 'inboxes');
       setTimeout(async () => {
-        inboxHealthy = await verifyInboxHealth();
-        if (inboxHealthy) {
-          setupInboxWatcher();
-          console.log('[Summon] Inbox system healthy, direct messaging enabled');
-        } else {
-          console.warn('[Summon] Inbox system unhealthy, using Julian relay');
+        session.inboxHealthy = existsSync(inboxDir);
+        if (session.inboxHealthy) {
+          setupInboxWatcherForSession(session);
+          console.log(`[Summon] Inbox healthy for ${session.clerkEmail}`);
         }
-      }, 5000); // Wait for TeamCreate to finish
+      }, 5000);
 
       return Response.json({ eventId: evt.id }, { status: 202, headers: corsHeaders(ALLOWED_ORIGIN) });
     }
@@ -1753,7 +1782,7 @@ const server = Bun.serve({
 
     // List artifacts (authenticated) — recursive tree of memory/
     if (url.pathname === "/api/artifacts" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await resolveUser(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
 
@@ -1835,7 +1864,7 @@ const server = Bun.serve({
     // ── Skills endpoint ──────────────────────────────────────────────────
 
     if (url.pathname === "/api/skills" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await resolveUser(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       try {
@@ -1906,7 +1935,7 @@ const server = Bun.serve({
     // ── Agents endpoint ──────────────────────────────────────────────────
 
     if (url.pathname === "/api/agents" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await resolveUser(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const teamsDir = join(homedir(), ".claude", "teams");
