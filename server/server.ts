@@ -657,6 +657,92 @@ Be yourself. Be honest. Be warm but not performative. If the visitor asks you ha
 Do not mention Marcus's physical state or the hackathon. This is about you and what we built, not about the circumstances of this demo.
 </demo-instructions>`;
 
+// ── Remote mode: one-shot per message ─────────────────────────────────────
+let remoteMessageQueue: string[] = [];
+let remoteProcessing = false;
+
+async function sendRemoteMessage(message: string) {
+  remoteMessageQueue.push(message);
+  if (remoteProcessing) return;
+  remoteProcessing = true;
+  const authEnv = loadAuthEnv();
+  const remoteUrl = REMOTE_SESSION.startsWith('https://') ? REMOTE_SESSION : `https://claude.ai/code/${REMOTE_SESSION}`;
+
+  while (remoteMessageQueue.length > 0) {
+    const msg = remoteMessageQueue.shift()!;
+    console.log(`[Remote] Sending message (${msg.length} chars)`);
+    try {
+      const proc = spawn({
+        cmd: [
+          "claude", "--print",
+          "--resume", remoteUrl,
+          "--output-format", "stream-json",
+          "--verbose",
+          msg,
+        ],
+        cwd: WORKING_DIR,
+        env: { ...process.env, ...authEnv, CLAUDECODE: '', CLAUDE_CODE_ENTRYPOINT: '' },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      // Close stdin immediately — message is passed as CLI arg
+      try { (proc.stdin as any).end(); } catch {}
+
+      const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let gotResult = false;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const parsed = JSON.parse(line);
+              lastActivity = Date.now();
+              if (parsed.type === 'system') {
+                if (parsed.model) { actualModel = parsed.model; console.log(`[Remote] Model: ${actualModel}`); }
+                append({ sessionId, type: 'claude_system', claudeSessionId: parsed.session_id || '', model: parsed.model || null, availableTools: parsed.tools || [] });
+              } else if (parsed.type === 'assistant' && parsed.message?.content) {
+                append({ sessionId, type: 'claude_text', messageId: parsed.message?.id || '', content: parsed.message.content });
+                parseMarkersFromContent(parsed.message.content, append, sessionId!);
+              } else if (parsed.type === 'result') {
+                gotResult = true;
+                const usage = parsed.usage || {};
+                if (parsed.total_cost_usd) sessionCostUsd += parsed.total_cost_usd;
+                append({ sessionId, type: 'claude_result', subtype: parsed.subtype || 'success', numTurns: parsed.num_turns || 0, costUsd: parsed.total_cost_usd || null, sessionCostUsd, usage: { inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0, cacheReadTokens: usage.cache_read_input_tokens || 0, cacheCreationTokens: usage.cache_creation_input_tokens || 0 }, resultText: parsed.result || '' });
+              } else if (parsed.type === 'tool_result') {
+                append({ sessionId, type: 'claude_tool_result', toolUseId: parsed.tool_use_id || '', toolName: parsed.tool_name || '', content: typeof parsed.content === 'string' ? parsed.content.slice(0, 10000) : JSON.stringify(parsed.content || '').slice(0, 10000), isError: parsed.is_error || false });
+              }
+            } catch (e) { console.warn("[Remote stdout] Parse error:", (e as Error).message, line.slice(0, 200)); }
+          }
+        }
+      } finally { reader.releaseLock(); }
+
+      // Drain stderr
+      const errReader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
+      try { while (!(await errReader.read()).done) {} } catch {} finally { errReader.releaseLock(); }
+
+      const code = await proc.exited;
+      console.log(`[Remote] Message done (exit ${code}, gotResult=${gotResult})`);
+      // Exit code 1 is a known quirk of --resume with remote URLs — suppress it
+      if (code > 1 && !gotResult) {
+        append({ sessionId, type: 'server_error', message: `Remote claude exited with code ${code}`, code: 'remote_exit_error' });
+      }
+    } catch (err) {
+      console.error(`[Remote] Error sending message:`, err);
+      append({ sessionId, type: 'server_error', message: `Remote send failed: ${err}`, code: 'remote_send_failed' });
+    }
+  }
+  remoteProcessing = false;
+}
+
 function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
   sessionId = `julian-${new Date().toISOString().slice(0, 10)}-${++sessionCounter}`;
   sessionCostUsd = 0;
@@ -668,15 +754,19 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
 
   const appendPrompt = mode === 'demo' ? DEMO_SYSTEM_PROMPT : NORMAL_SYSTEM_PROMPT;
 
-  // Remote mode: connect to a Remote Control session via `claude -r`
-  // No --print (incompatible with RC), no format flags — plain text I/O
+  // Remote mode: no long-lived process — one-shot `--print --resume <URL>` per message
+  // (`claude -r` needs a PTY; `--input-format stream-json` silently fails with remote URLs)
+  if (REMOTE_SESSION) {
+    processAlive = true;
+    claudeProc = null;
+    console.log(`[Claude] Remote mode — session ${sessionId}, will spawn per-message`);
+    append({ sessionId, type: 'session_start', pid: 0, model: actualModel, demoMode: FORCE_DEMO_MODE || mode === 'demo' });
+    append({ sessionId, type: 'claude_system', claudeSessionId: '', model: actualModel, availableTools: [] });
+    return null;
+  }
+
   // Local mode: spawn a fresh Claude process with full flags
-  const cmd = REMOTE_SESSION
-    ? [
-        "claude",
-        "-r", REMOTE_SESSION,
-      ]
-    : [
+  const cmd = [
         "claude",
         "--print",
         "--model", "opus",
@@ -721,21 +811,6 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
         buffer = lines.pop() || "";
         for (const line of lines) {
           if (!line.trim()) continue;
-
-          // Remote mode: plain text output — emit each line as claude_text
-          if (REMOTE_SESSION) {
-            lastActivity = Date.now();
-            // Strip ANSI escape codes from interactive output
-            const clean = line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim();
-            if (!clean) continue;
-            append({
-              sessionId,
-              type: 'claude_text',
-              messageId: '',
-              content: [{ type: 'text', text: clean }],
-            });
-            continue;
-          }
 
           try {
             const parsed = JSON.parse(line);
@@ -853,17 +928,22 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
 // ── Write to Claude stdin (fire-and-forget) ─────────────────────────────────
 
 function writeToStdin(message: string): boolean {
-  if (!claudeProc || !processAlive) return false;
-  // Remote mode: plain text input (interactive claude -r)
-  // Local mode: stream-json protocol
-  const payload = REMOTE_SESSION
-    ? message + "\n"
-    : JSON.stringify({
-        type: "user",
-        message: { role: "user", content: [{ type: "text", text: message }] },
-      }) + "\n";
+  if (!processAlive) return false;
+
+  // Remote mode: queue a one-shot claude call
+  if (REMOTE_SESSION) {
+    sendRemoteMessage(message);
+    lastActivity = Date.now();
+    return true;
+  }
+
+  if (!claudeProc) return false;
+  const jsonl = JSON.stringify({
+    type: "user",
+    message: { role: "user", content: [{ type: "text", text: message }] },
+  }) + "\n";
   try {
-    (claudeProc.stdin as any).write(payload);
+    (claudeProc.stdin as any).write(jsonl);
     (claudeProc.stdin as any).flush();
     lastActivity = Date.now();
     return true;
@@ -1085,7 +1165,7 @@ const server = Bun.serve({
     if (url.pathname === "/api/health") {
       return Response.json({
         status: "ok",
-        sessionActive: processAlive && claudeProc !== null,
+        sessionActive: processAlive && (claudeProc !== null || !!REMOTE_SESSION),
         sessionId,
         needsSetup: await needsSetup(),
         authMethod: getAuthMethod(),
@@ -1328,7 +1408,7 @@ const server = Bun.serve({
       if (!(await verifyClerkToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      if (processAlive && claudeProc) {
+      if (processAlive && (claudeProc || REMOTE_SESSION)) {
         return Response.json({ error: "Session already active", sessionId }, { status: 409, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       // Remote mode uses the Mac's credentials — skip local auth checks
@@ -1401,16 +1481,14 @@ const server = Bun.serve({
         }
       }
 
-      // Remote mode: the RC session already has Julian's identity — just send the user's message
-      // Local mode: send full wake-up context (catalog, transcript, UI actions)
+      // Local mode: append UI action discovery to wake-up message
+      // Remote mode: send simpler wake-up (no UI actions)
       if (!REMOTE_SESSION) {
-        // Append UI action discovery to wake-up message
         const discovery = buildUIActionDiscovery();
         if (discovery) wakeUpMessage += '\n\n' + discovery;
-
-        // Write wake-up message to stdin (events flow through /api/events)
-        writeToStdin(wakeUpMessage);
       }
+      // Both modes: send wake-up so Claude responds and UI exits PROCESSING
+      writeToStdin(wakeUpMessage);
 
       const allEvents = eventsAfter(-1);
       const lastEventId = allEvents.length > 0 ? allEvents[allEvents.length - 1].id : 0;
