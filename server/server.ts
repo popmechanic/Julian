@@ -215,6 +215,25 @@ async function verifyClerkToken(req: Request): Promise<boolean> {
   }
 }
 
+// ── Per-user auth resolution ─────────────────────────────────────────────
+
+async function resolveUser(req: Request): Promise<{ userId: string; email: string } | null> {
+  if (!JWKS) return { userId: "local-dev", email: "dev@localhost" }; // No Clerk config = local dev
+  const auth = req.headers.get("Authorization") || req.headers.get("X-Authorization");
+  if (!auth?.startsWith("Bearer ")) return null;
+  try {
+    const { payload } = await jwtVerify(auth.slice(7), JWKS, { clockTolerance: 60 });
+    return { userId: payload.sub as string, email: (payload as any).email || "" };
+  } catch (err) {
+    console.error("[Auth] JWT verification failed:", (err as Error).message);
+    return null;
+  }
+}
+
+function getSession(userId: string): UserSession | null {
+  return sessions.get(userId) || null;
+}
+
 // ── Token refresh ───────────────────────────────────────────────────────
 
 async function refreshTokenIfNeeded(): Promise<boolean> {
