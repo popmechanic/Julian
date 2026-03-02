@@ -686,10 +686,11 @@ subscribe((event: ServerEvent) => {
   }
 });
 
-function resolveAgentSpawnName(targetAgent?: string, targetGridPosition?: number): string | null {
+function resolveAgentSpawnName(targetAgent?: string, targetGridPosition?: number, session?: UserSession): string | null {
+  const nameToGrid = session?.agentNameToGrid || new Map();
   if (targetGridPosition != null) return `agent-${targetGridPosition}`;
   if (targetAgent) {
-    const positions = agentNameToGrid.get(targetAgent);
+    const positions = nameToGrid.get(targetAgent);
     if (positions?.length) return `agent-${positions[0]}`;
   }
   return null;
@@ -1098,6 +1099,29 @@ async function sendToAgent(agentName: string, text: string, speakerName: string)
   }
 }
 
+// ── Per-user inbox send ──────────────────────────────────────────────────
+
+async function sendToAgentInDir(inboxDir: string, agentName: string, text: string, speakerName: string): Promise<boolean> {
+  const inboxPath = join(inboxDir, agentName.toLowerCase() + '.json');
+  try {
+    let inbox: any[] = [];
+    try { inbox = JSON.parse(await Bun.file(inboxPath).text()); } catch { inbox = []; }
+    inbox.push({
+      from: speakerName,
+      text,
+      summary: text.slice(0, 80),
+      timestamp: new Date().toISOString(),
+      read: false,
+    });
+    await Bun.write(inboxPath, JSON.stringify(inbox, null, 2));
+    console.log(`[Inbox] Wrote to ${agentName}'s inbox (${text.length} chars from ${speakerName})`);
+    return true;
+  } catch (err) {
+    console.error(`[Inbox] Failed to write to ${agentName}'s inbox:`, err);
+    return false;
+  }
+}
+
 // ── Inbox watcher — captures agent responses from marcus.json ────────────
 
 function setupInboxWatcher() {
@@ -1422,72 +1446,62 @@ const server = Bun.serve({
       }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
-    // ── Event stream endpoint (replaces per-request SSE) ─────────────────────
+    // ── Event stream endpoint (per-user SSE) ──────────────────────────────────
     if (url.pathname === "/api/events" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
+      const user = await resolveUser(req);
+      if (!user) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      const afterParam = url.searchParams.get("after")
-        ?? req.headers.get("Last-Event-ID")
-        ?? "-1";
+      const session = sessions.get(user.userId);
+      if (!session) {
+        return Response.json({ error: "No session — connect your Anthropic account first" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
+      }
+
+      const afterParam = url.searchParams.get("after") ?? req.headers.get("Last-Event-ID") ?? "-1";
       const afterId = parseInt(afterParam, 10);
 
+      const { eventsAfter: sessionEventsAfter, subscribe: subFn, unsubscribe: unsubFn } = session.eventLog;
       const enc = new TextEncoder();
       let closed = false;
       let heartbeatTimer: ReturnType<typeof setInterval>;
-
       let notifyRef: ((e: ServerEvent) => void) | null = null;
 
       const stream = new ReadableStream({
         start(controller) {
-          // Replay buffered events
-          for (const e of eventsAfter(afterId)) {
-            try {
-              controller.enqueue(enc.encode(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`));
-            } catch { closed = true; return; }
+          for (const e of sessionEventsAfter(afterId)) {
+            try { controller.enqueue(enc.encode(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`)); } catch { closed = true; return; }
           }
-
-          // Subscribe to new events
           const notify = (e: ServerEvent) => {
             if (closed) return;
-            try {
-              controller.enqueue(enc.encode(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`));
-            } catch { closed = true; unsubscribe(notify); }
+            try { controller.enqueue(enc.encode(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`)); } catch { closed = true; unsubFn(notify); }
           };
           notifyRef = notify;
-          subscribe(notify);
-
-          // Heartbeat every 5s
+          subFn(notify);
           heartbeatTimer = setInterval(() => {
             if (closed) { clearInterval(heartbeatTimer); return; }
-            try {
-              controller.enqueue(enc.encode(`:heartbeat\n\n`));
-            } catch { closed = true; clearInterval(heartbeatTimer); if (notifyRef) unsubscribe(notifyRef); }
+            try { controller.enqueue(enc.encode(`:heartbeat\n\n`)); } catch { closed = true; clearInterval(heartbeatTimer); if (notifyRef) unsubFn(notifyRef); }
           }, HEARTBEAT_INTERVAL_MS);
         },
         cancel() {
           closed = true;
           clearInterval(heartbeatTimer);
-          if (notifyRef) unsubscribe(notifyRef);
+          if (notifyRef) unsubFn(notifyRef);
         },
       });
 
       return new Response(stream, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          "Connection": "keep-alive",
-          ...corsHeaders(ALLOWED_ORIGIN),
-        },
+        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", ...corsHeaders(ALLOWED_ORIGIN) },
       });
     }
 
     // ── Send message to Claude (fire-and-forget) ──────────────────────────────
     if (url.pathname === "/api/send" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      const user = await resolveUser(req);
+      if (!user) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      if (!processAlive || !claudeProc) {
+      const session = sessions.get(user.userId);
+      if (!session?.processAlive) {
         return Response.json({ error: "No active session" }, { status: 409, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const body = (await req.json()) as { message?: string; targetAgent?: string; targetGridPosition?: number; speakerName?: string };
@@ -1495,47 +1509,42 @@ const server = Bun.serve({
         return Response.json({ error: `Message required (max ${MAX_MESSAGE_SIZE / 1000}KB)` }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
 
-      const speakerName = body.speakerName || 'Marcus';
+      const speakerName = body.speakerName || user.email || 'Visitor';
 
-      // Append user_message event to the log
-      const evt = append({
-        sessionId,
+      const evt = session.eventLog.append({
+        sessionId: session.sessionId,
         type: 'user_message',
         text: body.message,
         speakerName,
         targetAgent: body.targetAgent || null,
       });
 
-      if (body.targetAgent && inboxHealthy) {
-        // Direct inbox injection — resolve chosen name to spawn name
-        const spawnName = resolveAgentSpawnName(body.targetAgent, body.targetGridPosition);
+      // Agent routing uses session-scoped inbox and name maps
+      if (body.targetAgent && session.inboxHealthy) {
+        const spawnName = resolveAgentSpawnName(body.targetAgent, body.targetGridPosition, session);
         if (spawnName) {
-          const sent = await sendToAgent(spawnName, body.message, speakerName);
+          const inboxDir = join(TEAMS_DIR, session.teamName, 'inboxes');
+          const sent = await sendToAgentInDir(inboxDir, spawnName, body.message, speakerName);
           if (!sent) {
-            console.warn(`[Send] Inbox injection failed for ${spawnName}, falling back to Julian relay`);
             const routedMessage = `[ROUTE TO AGENT: ${spawnName}] ${body.message}`;
-            if (!writeToStdin(routedMessage)) {
+            if (!writeToStdin(session, routedMessage)) {
               return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
             }
           }
         } else {
-          // Name not yet registered — fall back to Julian relay with original name
-          console.warn(`[Send] No spawn name found for ${body.targetAgent}, using Julian relay`);
           const routedMessage = `[ROUTE TO AGENT: ${body.targetAgent}] ${body.message}`;
-          if (!writeToStdin(routedMessage)) {
+          if (!writeToStdin(session, routedMessage)) {
             return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
           }
         }
       } else if (body.targetAgent) {
-        // Inbox not healthy — use Julian relay with resolved spawn name if available
-        const spawnName = resolveAgentSpawnName(body.targetAgent, body.targetGridPosition);
+        const spawnName = resolveAgentSpawnName(body.targetAgent, body.targetGridPosition, session);
         const routedMessage = `[ROUTE TO AGENT: ${spawnName || body.targetAgent}] ${body.message}`;
-        if (!writeToStdin(routedMessage)) {
+        if (!writeToStdin(session, routedMessage)) {
           return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
         }
       } else {
-        // No target agent — write to Julian's stdin
-        if (!writeToStdin(body.message)) {
+        if (!writeToStdin(session, body.message)) {
           return Response.json({ error: "Failed to write to Claude" }, { status: 500, headers: corsHeaders(ALLOWED_ORIGIN) });
         }
       }
@@ -1622,18 +1631,15 @@ const server = Bun.serve({
 
     // Session end: kill Claude process
     if (url.pathname === "/api/session/end" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      const user = await resolveUser(req);
+      if (!user) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      append({ sessionId, type: 'user_session_end' });
-      if (claudeProc && processAlive) {
-        claudeProc.kill();
-        // Wait briefly for cleanup
-        await new Promise(r => setTimeout(r, PROCESS_KILL_WAIT_MS));
+      const session = sessions.get(user.userId);
+      if (session) {
+        session.eventLog.append({ sessionId: session.sessionId, type: 'user_session_end' });
+        killSession(session);
       }
-      claudeProc = null;
-      processAlive = false;
-      sessionId = null;
       return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
