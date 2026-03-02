@@ -1545,75 +1545,62 @@ const server = Bun.serve({
 
     // Session start: spawn Claude and send wake-up message (returns JSON, not SSE)
     if (url.pathname === "/api/session/start" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      const user = await resolveUser(req);
+      if (!user) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      if (processAlive && (claudeProc || REMOTE_SESSION)) {
-        return Response.json({ error: "Session already active", sessionId }, { status: 409, headers: corsHeaders(ALLOWED_ORIGIN) });
+      const session = sessions.get(user.userId);
+      if (!session?.anthropicToken) {
+        return Response.json({ error: "Anthropic auth required — connect your Anthropic account first" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      // Remote mode uses the Mac's credentials — skip local auth checks
-      if (!REMOTE_SESSION) {
-        if (await needsSetup()) {
-          return Response.json({ error: "Setup required — sign in with Anthropic first" }, { status: 400, headers: corsHeaders(ALLOWED_ORIGIN) });
-        }
-        // Proactively refresh token before spawning Claude
-        await refreshTokenIfNeeded();
+      if (session.processAlive && session.proc) {
+        return Response.json({ error: "Session already active", sessionId: session.sessionId }, { status: 409, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
 
-      // Parse previousTranscript, artifactCatalog, and demoMode from POST body (if any)
+      // Check concurrent user cap
+      const activeSessions = [...sessions.values()].filter(s => s.processAlive).length;
+      if (activeSessions >= MAX_CONCURRENT_USERS) {
+        return Response.json({ error: "Server at capacity. Try again later." }, { status: 503, headers: corsHeaders(ALLOWED_ORIGIN) });
+      }
+
+      // Refresh token before spawning
+      await refreshUserTokenIfNeeded(session);
+
+      // Parse body
       let previousTranscript: Array<{ role: string; speakerType: string; speakerName: string; text: string }> = [];
       let artifactCatalog: Array<{ filename: string; category: string; description: string; chapter?: string }> = [];
       let demoMode = false;
       try {
         const body = await req.json() as { previousTranscript?: any[], artifactCatalog?: any[], demoMode?: boolean };
-        if (Array.isArray(body.previousTranscript)) {
-          previousTranscript = body.previousTranscript;
-        }
-        if (Array.isArray(body.artifactCatalog)) {
-          artifactCatalog = body.artifactCatalog;
-        }
-        if (body.demoMode === true || FORCE_DEMO_MODE) {
-          demoMode = true;
-        }
-        console.log("[Session] Body parsed — demoMode:", body.demoMode, "force:", FORCE_DEMO_MODE, "→", demoMode);
-      } catch (e) {
-        console.error("[Session] Body parse failed:", e);
-      }
+        if (Array.isArray(body.previousTranscript)) previousTranscript = body.previousTranscript;
+        if (Array.isArray(body.artifactCatalog)) artifactCatalog = body.artifactCatalog;
+        if (body.demoMode === true || FORCE_DEMO_MODE) demoMode = true;
+      } catch {}
 
-      // Append user_session_start event
-      append({
-        sessionId: null, // no session yet
+      session.eventLog.append({
+        sessionId: null,
         type: 'user_session_start',
         demoMode,
         hasPreviousTranscript: previousTranscript.length > 0,
         hasArtifactCatalog: artifactCatalog.length > 0,
       });
 
-      spawnClaude(demoMode ? 'demo' : 'normal');
-      lastActivity = Date.now();
+      spawnClaude(session, demoMode ? 'demo' : 'normal');
+      session.lastActivity = Date.now();
 
+      // Build wake-up message
       let wakeUpMessage: string;
-
       if (demoMode) {
-        // ── Demo mode: dynamic content only (stable instructions are in system prompt) ──
         wakeUpMessage = "You are waking up in demo mode. A visitor is here.\n\n";
       } else {
-        // ── Normal mode: dynamic content only (stable instructions are in system prompt) ──
         wakeUpMessage = "";
-
-        // Artifact catalog from Fireproof
         if (artifactCatalog.length > 0) {
-          const lines = artifactCatalog
-            .map((a: any) => `- ${a.filename} [${a.category}] — ${a.description}`)
-            .join("\n");
+          const lines = artifactCatalog.map((a: any) => `- ${a.filename} [${a.category}] — ${a.description}`).join("\n");
           wakeUpMessage += `<memory category="catalog" document-count="${artifactCatalog.length}">\n${lines}\n</memory>\n\n`;
         }
-
         if (previousTranscript.length > 0) {
           const ended = new Date().toISOString();
-          const lines = previousTranscript.map(msg =>
-            `[${msg.speakerType || "human"} — ${msg.speakerName || "Unknown"}]: ${msg.text}`
-          ).join("\n");
+          const lines = previousTranscript.map(msg => `[${msg.speakerType || "human"} — ${msg.speakerName || "Unknown"}]: ${msg.text}`).join("\n");
           wakeUpMessage += `<previous-session category="transcript" session-id="rehydrated" message-count="${previousTranscript.length}" ended="${ended}">\n${lines}\n</previous-session>\n\n`;
           wakeUpMessage += "Greet Marcus briefly, acknowledging continuity with your previous conversation.";
         } else {
@@ -1621,20 +1608,15 @@ const server = Bun.serve({
         }
       }
 
-      // Local mode: append UI action discovery to wake-up message
-      // Remote mode: send simpler wake-up (no UI actions)
-      if (!REMOTE_SESSION) {
-        const discovery = buildUIActionDiscovery();
-        if (discovery) wakeUpMessage += '\n\n' + discovery;
-      }
-      // Both modes: send wake-up so Claude responds and UI exits PROCESSING
-      writeToStdin(wakeUpMessage);
+      const discovery = buildUIActionDiscovery();
+      if (discovery) wakeUpMessage += '\n\n' + discovery;
+      writeToStdin(session, wakeUpMessage);
 
-      const allEvents = eventsAfter(-1);
+      const allEvents = session.eventLog.eventsAfter(-1);
       const lastEventId = allEvents.length > 0 ? allEvents[allEvents.length - 1].id : 0;
       return Response.json(
-        { sessionId, eventId: lastEventId },
-        { headers: { "X-Session-Id": sessionId || "", ...corsHeaders(ALLOWED_ORIGIN) } },
+        { sessionId: session.sessionId, eventId: lastEventId },
+        { headers: { "X-Session-Id": session.sessionId || "", ...corsHeaders(ALLOWED_ORIGIN) } },
       );
     }
 
