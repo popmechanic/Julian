@@ -1114,8 +1114,21 @@ const server = Bun.serve({
       }
       const session = sessions.get(user.userId);
       if (!session) {
-        // No session yet — return an empty SSE stream so the frontend doesn't error
-        return new Response("", {
+        // No session yet — return a keep-alive SSE stream with heartbeats
+        // so the frontend doesn't spam reconnects
+        const enc = new TextEncoder();
+        let closed = false;
+        const stream = new ReadableStream({
+          start(controller) {
+            const timer = setInterval(() => {
+              if (closed) { clearInterval(timer); return; }
+              try { controller.enqueue(enc.encode(`:heartbeat\n\n`)); } catch { closed = true; clearInterval(timer); }
+            }, HEARTBEAT_INTERVAL_MS);
+            // Clean up when client disconnects
+            req.signal?.addEventListener('abort', () => { closed = true; clearInterval(timer); try { controller.close(); } catch {} });
+          },
+        });
+        return new Response(stream, {
           headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", ...corsHeaders(ALLOWED_ORIGIN) },
         });
       }
