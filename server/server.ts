@@ -6,7 +6,6 @@ import { marked, Renderer } from "marked";
 import { homedir } from "os";
 import { createHash, randomBytes } from "crypto";
 import {
-  base64url,
   generateCodeVerifier,
   generateCodeChallenge,
   corsHeaders,
@@ -138,8 +137,6 @@ try {
 console.log(`[Server] Git version: ${GIT_VERSION}`);
 
 // ── Credential paths ────────────────────────────────────────────────────
-const CLAUDE_CREDS_PATH = join(homedir(), ".claude", ".credentials.json");
-const SCULPTOR_CREDS_PATH = join(homedir(), ".sculptor", "credentials.json");
 
 // ── OAuth PKCE constants (extracted from Claude CLI binary) ─────────────
 const OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
