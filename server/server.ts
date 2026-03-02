@@ -1276,14 +1276,16 @@ const server = Bun.serve({
       return new Response(null, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
-    // Health check (no auth — only exposes non-sensitive status)
+    // Health check (no auth required for basic status, optional per-user info)
     if (url.pathname === "/api/health") {
+      const user = await resolveUser(req);
+      const session = user ? sessions.get(user.userId) : null;
       return Response.json({
         status: "ok",
-        sessionActive: processAlive && (claudeProc !== null || !!REMOTE_SESSION),
-        sessionId,
-        needsSetup: await needsSetup(),
-        authMethod: getAuthMethod(),
+        hasAnthropicAuth: !!session?.anthropicToken,
+        sessionActive: !!session?.processAlive,
+        sessionId: session?.sessionId || null,
+        activeSessions: sessions.size,
         version: GIT_VERSION,
       }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
