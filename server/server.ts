@@ -883,59 +883,44 @@ async function sendRemoteMessage(message: string) {
   remoteProcessing = false;
 }
 
-function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
-  sessionId = `julian-${new Date().toISOString().slice(0, 10)}-${++sessionCounter}`;
-  sessionCostUsd = 0;
-  actualModel = 'claude-opus-4-6'; // default until system event arrives
-  const authEnv = loadAuthEnv();
-  console.log("[Claude] Spawning process...",
-    REMOTE_SESSION ? `(remote: ${REMOTE_SESSION})` : "(local)",
-    Object.keys(authEnv).length ? `(with ${Object.keys(authEnv).join(", ")})` : "(no auth env)");
+function spawnClaude(session: UserSession, mode: 'normal' | 'demo' = 'normal') {
+  session.sessionId = `julian-${new Date().toISOString().slice(0, 10)}-${++session.sessionCounter}`;
+  session.sessionCostUsd = 0;
+  session.actualModel = 'claude-opus-4-6';
+  console.log(`[Claude] Spawning process for ${session.clerkEmail}...`);
 
   const appendPrompt = mode === 'demo' ? DEMO_SYSTEM_PROMPT : NORMAL_SYSTEM_PROMPT;
 
-  // Remote mode: no long-lived process — one-shot `--print --resume <URL>` per message
-  // (`claude -r` needs a PTY; `--input-format stream-json` silently fails with remote URLs)
-  if (REMOTE_SESSION) {
-    processAlive = true;
-    claudeProc = null;
-    console.log(`[Claude] Remote mode — session ${sessionId}, will spawn per-message`);
-    append({ sessionId, type: 'session_start', pid: 0, model: actualModel, demoMode: FORCE_DEMO_MODE || mode === 'demo' });
-    append({ sessionId, type: 'claude_system', claudeSessionId: '', model: actualModel, availableTools: [] });
-    return null;
-  }
-
-  // Local mode: spawn a fresh Claude process with full flags
   const cmd = [
-        "claude",
-        "--print",
-        "--model", "opus",
-        "--fallback-model", "sonnet",
-        "--input-format", "stream-json",
-        "--output-format", "stream-json",
-        "--verbose",
-        "--permission-mode", "acceptEdits",
-        "--allowedTools", "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch",
-        "--append-system-prompt", appendPrompt,
-      ];
+    "claude",
+    "--print",
+    "--model", "opus",
+    "--fallback-model", "sonnet",
+    "--input-format", "stream-json",
+    "--output-format", "stream-json",
+    "--verbose",
+    "--permission-mode", "acceptEdits",
+    "--allowedTools", "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch",
+    "--append-system-prompt", appendPrompt,
+  ];
 
   const proc = spawn({
     cmd,
     cwd: WORKING_DIR,
     env: {
       ...process.env,
-      ...authEnv,
+      CLAUDE_CODE_OAUTH_TOKEN: session.anthropicToken,
       CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-      CLAUDECODE: '',           // allow spawning Claude from within Claude
-      CLAUDE_CODE_ENTRYPOINT: '', // clear nesting guard
+      CLAUDECODE: '',
+      CLAUDE_CODE_ENTRYPOINT: '',
     },
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  claudeProc = proc;
-  processAlive = true;
+  session.proc = proc;
+  session.processAlive = true;
 
   // Background: read stdout line-by-line and append typed events to the log
   (async () => {
@@ -954,40 +939,38 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
 
           try {
             const parsed = JSON.parse(line);
-            lastActivity = Date.now();
+            session.lastActivity = Date.now();
 
-            // Map Claude's stream-json output to typed events
             if (parsed.type === 'system') {
               if (parsed.model) {
-                actualModel = parsed.model;
-                console.log(`[Claude] Model: ${actualModel}`);
+                session.actualModel = parsed.model;
+                console.log(`[Claude] Model: ${session.actualModel}`);
               }
-              append({
-                sessionId,
+              session.eventLog.append({
+                sessionId: session.sessionId,
                 type: 'claude_system',
                 claudeSessionId: parsed.session_id || '',
                 model: parsed.model || null,
                 availableTools: parsed.tools || [],
               });
             } else if (parsed.type === 'assistant' && parsed.message?.content) {
-              append({
-                sessionId,
+              session.eventLog.append({
+                sessionId: session.sessionId,
                 type: 'claude_text',
                 messageId: parsed.message?.id || '',
                 content: parsed.message.content,
               });
-              // Parse markers from the content blocks
-              parseMarkersFromContent(parsed.message.content, append, sessionId);
+              parseMarkersFromContent(parsed.message.content, session.eventLog.append, session.sessionId);
             } else if (parsed.type === 'result') {
               const usage = parsed.usage || {};
-              if (parsed.cost_usd) sessionCostUsd += parsed.cost_usd;
-              append({
-                sessionId,
+              if (parsed.cost_usd) session.sessionCostUsd += parsed.cost_usd;
+              session.eventLog.append({
+                sessionId: session.sessionId,
                 type: 'claude_result',
                 subtype: parsed.subtype || 'success',
                 numTurns: parsed.num_turns || 0,
                 costUsd: parsed.cost_usd || null,
-                sessionCostUsd,
+                sessionCostUsd: session.sessionCostUsd,
                 usage: {
                   inputTokens: usage.input_tokens || 0,
                   outputTokens: usage.output_tokens || 0,
@@ -997,8 +980,8 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
                 resultText: parsed.result || '',
               });
             } else if (parsed.type === 'tool_result') {
-              append({
-                sessionId,
+              session.eventLog.append({
+                sessionId: session.sessionId,
                 type: 'claude_tool_result',
                 toolUseId: parsed.tool_use_id || '',
                 toolName: parsed.tool_name || '',
@@ -1008,7 +991,7 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
                 isError: parsed.is_error || false,
               });
             } else if (parsed.type === 'compact') {
-              append({ sessionId, type: 'claude_compact' });
+              session.eventLog.append({ sessionId: session.sessionId, type: 'claude_compact' });
             }
           } catch (err) {
             console.warn("[Claude stdout] Failed to parse JSON line:", (err as Error).message, line.slice(0, 200));
@@ -1040,25 +1023,25 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
     }
   })();
 
-  // Detect process exit and clean up — no auto-restart
+  // Detect process exit and clean up
   proc.exited.then((code) => {
-    console.log(`[Claude] Process exited (code ${code})`);
+    console.log(`[Claude] Process exited for ${session.clerkEmail} (code ${code})`);
     const reason = code === 143 ? 'inactivity_timeout'
       : code === 0 ? 'user_ended'
       : 'process_crash';
-    append({ sessionId, type: 'session_end', exitCode: code, reason });
-    processAlive = false;
-    claudeProc = null;
-    sessionId = null;
+    session.eventLog.append({ sessionId: session.sessionId, type: 'session_end', exitCode: code, reason });
+    session.processAlive = false;
+    session.proc = null;
+    session.sessionId = null;
   });
 
-  console.log(`[Claude] PID ${proc.pid}, sessionId ${sessionId}`);
+  console.log(`[Claude] PID ${proc.pid}, sessionId ${session.sessionId}`);
 
-  append({
-    sessionId,
+  session.eventLog.append({
+    sessionId: session.sessionId,
     type: 'session_start',
     pid: proc.pid,
-    model: actualModel,
+    model: session.actualModel,
     demoMode: FORCE_DEMO_MODE || mode === 'demo',
   });
 
