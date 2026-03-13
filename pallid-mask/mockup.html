@@ -926,6 +926,62 @@ const _STUBS_UNUSED = [
   setTimeout(() => { doSmile(); schedule(); }, 30000 + Math.random() * 20000);
 })();
 
+// ─── SIGIL FRAME — fixed border with clockwise warp wave ─────
+(function() {
+  const NS    = 'http://www.w3.org/2000/svg';
+  const CELL  = 110;           // px — 1/4 of the 440px bottom banner
+  const POOL  = 12;            // filter pool size
+  const WAVE_W = 10;           // cells in the active displacement band
+  const SCALE  = 42;           // peak feDisplacementMap scale
+  const PERIOD = 20000;        // ms for one full clockwise lap
+  const GLOW   = 'drop-shadow(0 0 3px var(--c5)) drop-shadow(0 0 8px var(--c1))';
+
+  // ── Pool filters ───────────────────────────────────────────
+  // 12 filter pairs sharing the same noise character as the bottom sigil.
+  // Only `scale` on each feDisplacementMap changes at runtime.
+  const poolSvg = document.createElementNS(NS, 'svg');
+  poolSvg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none';
+  const defs = document.createElementNS(NS, 'defs');
+  const wdEls = []; // feDisplacementMap refs, indexed by filter slot
+
+  for (let n = 0; n < POOL; n++) {
+    const f = document.createElementNS(NS, 'filter');
+    f.setAttribute('id', `wf-${n}`);
+    f.setAttribute('x', '-60%');
+    f.setAttribute('y', '-150%');
+    f.setAttribute('width', '220%');
+    f.setAttribute('height', '400%');
+
+    const turb = document.createElementNS(NS, 'feTurbulence');
+    turb.setAttribute('type', 'fractalNoise');
+    turb.setAttribute('baseFrequency', '0.011 0.008'); // same as bottom sigil
+    turb.setAttribute('numOctaves', '4');
+    turb.setAttribute('seed', '17');                   // same noise field
+    turb.setAttribute('result', 'n');
+
+    const disp = document.createElementNS(NS, 'feDisplacementMap');
+    disp.setAttribute('in', 'SourceGraphic');
+    disp.setAttribute('in2', 'n');
+    disp.setAttribute('scale', '0');
+    disp.setAttribute('xChannelSelector', 'R');
+    disp.setAttribute('yChannelSelector', 'G');
+
+    f.appendChild(turb);
+    f.appendChild(disp);
+    defs.appendChild(f);
+    wdEls.push(disp);
+  }
+
+  poolSvg.appendChild(defs);
+  // Note: intentionally creating a separate poolSvg (not reusing the bottom banner's
+  // hidden SVG) to keep the frame IIFE self-contained. Filter IDs do not conflict.
+  document.body.insertBefore(poolSvg, document.body.firstChild);
+
+  // ── State, layout, wave, and resize added in Tasks 4–6 ────
+  // (Tasks 4–6 insert code here, before this closing bracket)
+})();
+// ─────────────────────────────────────────────────────────────
+
 // prefers-reduced-motion
 if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
   document.querySelectorAll('.sigil-slot').forEach(el => {
