@@ -977,8 +977,83 @@ const _STUBS_UNUSED = [
   // hidden SVG) to keep the frame IIFE self-contained. Filter IDs do not conflict.
   document.body.insertBefore(poolSvg, document.body.firstChild);
 
-  // ── State, layout, wave, and resize added in Tasks 4–6 ────
-  // (Tasks 4–6 insert code here, before this closing bracket)
+  // ── State ──────────────────────────────────────────────────
+  const frame   = document.getElementById('sigil-frame');
+  let cells     = [];  // [{el, sigilIdx, swapped}]
+  let N         = 0;
+  const avail   = [];  // pool indices ready to assign
+  const inUse   = new Map(); // cellIndex → filterIndex
+
+  // ── Layout builder ─────────────────────────────────────────
+  function buildLayout() {
+    frame.innerHTML = '';
+    cells = [];
+    avail.length = 0;
+    for (let i = 0; i < POOL; i++) avail.push(i);
+    inUse.clear();
+
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    // nCells and gap for a given strip length.
+    // Spacing is padding-inclusive: gap also appears before first and after last cell.
+    function slots(len) {
+      const n   = Math.floor(len / CELL);
+      const gap = (len - n * CELL) / (n + 1);
+      return { n, gap };
+    }
+
+    const h = slots(vw);               // horizontal (top/bottom)
+    const v = slots(vh - 2 * CELL);   // vertical (left/right, excluding corners)
+
+    // Distribute 200 sigils across N cells — no two adjacent start the same
+    N = 2 * h.n + 2 * v.n;
+    const step = Math.max(1, Math.floor(200 / N));
+
+    let seq = 0; // running cell index for sigil assignment
+
+    function addCell(styles, sigilIdx) {
+      const div = document.createElement('div');
+      div.className = 'sf-cell';
+      Object.assign(div.style, styles);
+      div.innerHTML = makeSVG(ALL_SIGILS[sigilIdx]);
+      frame.appendChild(div);
+      // Start all cells swapped=true — initial-state guard prevents burst swap on first wave pass
+      cells.push({ el: div, sigilIdx, swapped: true });
+      seq++;
+    }
+
+    // TOP — left → right (owns top corners)
+    for (let i = 0; i < h.n; i++) {
+      const cx = h.gap + i * (CELL + h.gap) + CELL / 2;
+      addCell({ top: '0', left: cx + 'px', transform: 'translateX(-50%)' },
+              (seq * step) % 200);
+    }
+
+    // RIGHT — top → bottom (excludes corners)
+    for (let i = 0; i < v.n; i++) {
+      const cy = CELL + v.gap + i * (CELL + v.gap) + CELL / 2;
+      addCell({ top: cy + 'px', right: '0', transform: 'translateY(-50%)' },
+              (seq * step) % 200);
+    }
+
+    // BOTTOM — right → left (clockwise; owns bottom corners)
+    for (let i = h.n - 1; i >= 0; i--) {
+      const cx = h.gap + i * (CELL + h.gap) + CELL / 2;
+      addCell({ bottom: '0', left: cx + 'px', transform: 'translateX(-50%)' },
+              (seq * step) % 200);
+    }
+
+    // LEFT — bottom → top (excludes corners)
+    for (let i = v.n - 1; i >= 0; i--) {
+      const cy = CELL + v.gap + i * (CELL + v.gap) + CELL / 2;
+      addCell({ top: cy + 'px', left: '0', transform: 'translateY(-50%)' },
+              (seq * step) % 200);
+    }
+  }
+
+  buildLayout();
+  // ← wave loop and resize handler go here in Tasks 5–6
 })();
 // ─────────────────────────────────────────────────────────────
 
