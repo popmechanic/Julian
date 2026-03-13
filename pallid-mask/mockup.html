@@ -445,8 +445,8 @@ body::after {
 
 .sf-cell {
   position: absolute;
-  width: 110px;    /* CELL — hard box keeps SVG width:100% from expanding to viewport */
-  height: 110px;   /* CELL */
+  width: 50px;     /* CELL — hard box keeps SVG width:100% from expanding to viewport */
+  height: 50px;    /* CELL */
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -935,7 +935,7 @@ const _STUBS_UNUSED = [
 // ─── SIGIL FRAME — fixed border with clockwise warp wave ─────
 (function() {
   const NS    = 'http://www.w3.org/2000/svg';
-  const CELL  = 110;           // px — 1/4 of the 440px bottom banner
+  const CELL  = 50;            // px — small enough to stay within screen padding
   const POOL  = 12;            // filter pool size
   const WAVE_W = 10;           // cells in the active displacement band
   const SCALE  = 42;           // peak feDisplacementMap scale
