@@ -26,7 +26,7 @@ describe("deploy/instances.json", () => {
     const raw = readFileSync(join(REPO_ROOT, "deploy/instances.json"), "utf-8");
     const instances = JSON.parse(raw);
     expect(instances["pallid-mask"]).toBeDefined();
-    expect(instances["pallid-mask"].url).toBe("https://pallid-mask.exe.xyz");
+    expect(instances["pallid-mask"].url).toBe("https://www.sigil.computer");
     expect(instances["pallid-mask"].branch).toBe("pallid-mask");
   });
 });

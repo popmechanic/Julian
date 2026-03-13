@@ -48,6 +48,10 @@ async function enterState(next: CeremonyState): Promise<void> {
     case "WELCOME": {
       await display.showWelcome();
       await waitForKey();
+      // Enter true fullscreen on first interaction (hides PWA title bar)
+      if (document.fullscreenEnabled && !document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
       await display.clear();
       return enterState("SUMMON");
     }

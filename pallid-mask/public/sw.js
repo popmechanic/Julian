@@ -1,11 +1,17 @@
-// v2 — sigil.computer domain migration
-// Minimal service worker — enables PWA install prompt.
-// No offline caching: the installation requires a live server for fortune generation.
+// v3 — auto-update on deploy
+// Minimal service worker — enables PWA install prompt and fullscreen.
+// No offline caching: the installation requires a live server.
 
-// Clear any caches from the old domain on activation
+// Skip waiting so new versions activate immediately
+self.addEventListener('install', () => self.skipWaiting());
+
+// Claim all clients and clear old caches on activation
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n))))
+    Promise.all([
+      self.clients.claim(),
+      caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n)))),
+    ])
   );
 });
 
