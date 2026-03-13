@@ -72,6 +72,11 @@ def generate_automation(cc_num: int, points: list[tuple[float, int]], tempo: int
     """Write MIDI CC automation as a MIDI file. points = [(beat, value), ...]"""
 ```
 
+Each module exposes its functions via a CLI entrypoint (e.g., `python -m fire` or argparse). Claude invokes them via Bash with JSON arguments on stdin:
+```bash
+echo '{"notes": [...], "tempo": 120, "time_sig": [4, 4], "output_path": "output/test/chords.mid"}' | python tools/midi.py generate_midi
+```
+
 **`tools/audio.py`**
 ```python
 def process_audio(input_path: str, operations: list[dict], output_path: str) -> str:
@@ -97,7 +102,7 @@ def slice_audio(input_path: str, slices: list[tuple[float, float]], output_dir: 
 
 ### Output
 
-Files written to `output/` in the repo. Naming convention: `output/<project>/<layer>-<description>.<ext>` (e.g., `output/pallid-mask/drone-breathing-pad.mid`). Formats: `.mid`, `.wav`.
+Files written to `output/` in the repo. Naming convention: `output/<project>/<description>.<ext>` (e.g., `output/pallid-mask/idle-drone-v2.wav`). Formats: `.mid`, `.wav`.
 
 ### Integration with Layer 2
 
@@ -252,9 +257,8 @@ ableton-claude/
 ├── requirements.txt           # Python dependencies (midiutil, pydub, etc.)
 ├── setup.sh                   # System dependency check (sox, ffmpeg, python)
 ├── tools/
-│   ├── midi.py                # MIDI generation utilities
-│   ├── audio.py               # Audio processing utilities (sox/ffmpeg/pydub wrappers)
-│   └── automation.py          # Automation curve generation
+│   ├── midi.py                # MIDI generation + automation curve utilities
+│   └── audio.py               # Audio processing utilities (sox/ffmpeg/pydub wrappers)
 ├── recipes/
 │   ├── tones/                 # Tone recipe markdown files
 │   ├── patterns/              # Pattern template markdown files
