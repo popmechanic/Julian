@@ -33,10 +33,10 @@ html, body {
   font-family: 'Orpheus', Georgia, serif;
 }
 
-/* CRT scanlines — animated, scrolling */
+/* CRT scanlines — GPU-composited via transform instead of background-position */
 @keyframes scanlines {
-  0%   { background-position: 0 0; }
-  100% { background-position: 0 4px; }
+  from { transform: translateY(0); }
+  to   { transform: translateY(4px); }
 }
 
 /* CRT flicker — authentic phosphor behavior */
@@ -68,14 +68,17 @@ body::before {
   content: '';
   position: fixed;
   inset: 0;
-  width: 100%; height: 100%;
-  background: linear-gradient(
+  /* Slightly taller than viewport so translateY(4px) never shows a gap */
+  width: 100%; height: calc(100% + 4px);
+  background: repeating-linear-gradient(
     to bottom,
-    rgba(0, 0, 0, 0) 50%,
-    rgba(0, 0, 0, 0.13) 50%
+    transparent          0px,
+    transparent          2px,
+    rgba(0,0,0,0.13)     2px,
+    rgba(0,0,0,0.13)     4px
   );
-  background-size: 100% 4px;
   animation: scanlines 0.25s linear infinite;
+  will-change: transform;
   pointer-events: none;
   z-index: 1000;
 }
@@ -91,21 +94,19 @@ body::after {
   z-index: 1001;
 }
 
-/* Mask glow pulse */
+/* Mask glow pulse — 3 shadows (down from 4) keeps the bloom, saves one filter pass */
 @keyframes glow-pulse {
   0%, 100% {
     filter:
-      drop-shadow(0 0 1px var(--c6))
-      drop-shadow(0 0 5px var(--c1))
-      drop-shadow(0 0 16px var(--c3))
-      drop-shadow(0 0 32px var(--c2));
+      drop-shadow(0 0 2px var(--c6))
+      drop-shadow(0 0 8px var(--c1))
+      drop-shadow(0 0 26px var(--c2));
   }
   50% {
     filter:
-      drop-shadow(0 0 2px var(--c6))
-      drop-shadow(0 0 8px var(--c1))
-      drop-shadow(0 0 22px var(--c3))
-      drop-shadow(0 0 44px var(--c2));
+      drop-shadow(0 0 3px var(--c6))
+      drop-shadow(0 0 13px var(--c1))
+      drop-shadow(0 0 38px var(--c2));
   }
 }
 
@@ -200,6 +201,7 @@ body::after {
 
 .mask-wrap {
   animation: glow-pulse 5s ease-in-out infinite;
+  will-change: opacity;
   flex: 0 0 auto;
 }
 
@@ -207,6 +209,7 @@ body::after {
 .eye-group {
   transform-box: fill-box;
   transform-origin: 50% 50%;
+  will-change: transform;
 }
 
 @keyframes blink-close {
@@ -220,19 +223,44 @@ body::after {
   animation: blink-close 220ms ease-in-out forwards;
 }
 
+/* ── KNOWING SMILE ──────────────────────────────────────────
+   Mouth morphs via CSS d-property; crinkle lines fade in.
+   Eye blink uses transform — no conflict. ── */
+
+@keyframes mouth-upper-smile {
+  0%, 100% { d: path('M 363 452 C 375 444 390 443 400 447 C 410 443 425 444 439 449'); }
+  30%, 70%  { d: path('M 363 446 C 376 440 390 438 400 442 C 410 438 426 440 439 443'); }
+}
+@keyframes mouth-lower-smile {
+  0%, 100% { d: path('M 363 452 Q 400 463 439 449'); }
+  30%, 70%  { d: path('M 363 446 Q 400 461 439 443'); }
+}
+@keyframes crinkle-appear {
+  0%, 100% { opacity: 0; }
+  30%, 70%  { opacity: 0.65; }
+}
+
+#mouth-upper.smiling { animation: mouth-upper-smile 9s ease-in-out forwards; }
+#mouth-lower.smiling { animation: mouth-lower-smile 9s ease-in-out forwards; }
+.eye-crinkle          { opacity: 0; }
+.eye-crinkle.smiling  { animation: crinkle-appear 9s ease-in-out forwards; }
+
 .mask-wrap svg {
   height: 85vh;
   width: auto;
+  /* Isolate SVG filter to its own GPU layer */
+  transform: translateZ(0);
+  will-change: opacity;
 }
 
-/* Glow line classes from mask.html — adapted to our palette */
+/* Glow line classes — bright gets two passes for richness; others single pass */
 .glow-line {
   fill: none;
   stroke: var(--c5);
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: miter;
-  filter: drop-shadow(0 0 2.5px rgba(210, 165, 190, 0.68)) drop-shadow(0 0 8px rgba(155, 110, 150, 0.34));
+  filter: drop-shadow(0 0 4px rgba(190, 145, 170, 0.6));
 }
 .glow-line-bright {
   fill: none;
@@ -240,7 +268,7 @@ body::after {
   stroke-width: 2.8;
   stroke-linecap: round;
   stroke-linejoin: miter;
-  filter: drop-shadow(0 0 4px rgba(235, 190, 215, 0.77)) drop-shadow(0 0 12px rgba(180, 130, 165, 0.43));
+  filter: drop-shadow(0 0 4px rgba(235, 190, 215, 0.8)) drop-shadow(0 0 12px rgba(180, 130, 165, 0.45));
 }
 .glow-line-faint {
   fill: none;
@@ -248,7 +276,7 @@ body::after {
   stroke-width: 1.2;
   stroke-linecap: round;
   stroke-linejoin: round;
-  filter: drop-shadow(0 0 1.5px rgba(170, 130, 175, 0.51));
+  filter: drop-shadow(0 0 2px rgba(165, 125, 170, 0.5));
 }
 
 /* ─── TEXT EXCHANGE ──────────────────────────────────────── */
@@ -354,11 +382,9 @@ body::after {
 /* Morph display */
 #sigil-morph-svg {
   display: block;
-  filter:
-    drop-shadow(0 0 1px var(--c6))
-    drop-shadow(0 0 5px var(--c5))
-    drop-shadow(0 0 14px var(--c1))
-    drop-shadow(0 0 28px var(--c3));
+  filter: drop-shadow(0 0 3px var(--c6)) drop-shadow(0 0 8px var(--c5)) drop-shadow(0 0 18px var(--c1));
+  transform: translateZ(0);
+  will-change: contents;
 }
 
 /* Drifting sigil — moves slowly across the screen */
@@ -461,9 +487,15 @@ body::after {
           <path class="glow-line"        d="M 380 235 L 388 385 L 400 405 L 412 385 L 420 235"/>
           <path class="glow-line"        d="M 375 375 L 400 395 L 425 375"/>
 
-          <!-- mouth — slightly open, two lines, the gap is the expression -->
-          <path class="glow-line-bright" d="M 363 457 L 400 462 L 437 457"/>
-          <path class="glow-line-bright" d="M 360 445 L 400 450 L 440 445"/>
+          <!-- mouth — da Vinci-inspired: Cupid's bow upper, full lower arc,
+               corners closed but asymmetric (right lifts 3 units higher),
+               opening only at the center. the secret is in the asymmetry. -->
+          <path id="mouth-upper" class="glow-line-bright" d="M 363 452 C 375 444 390 443 400 447 C 410 443 425 444 439 449"/>
+          <path id="mouth-lower" class="glow-line"        d="M 363 452 Q 400 463 439 449"/>
+
+          <!-- crinkle lines — outer eye corners, invisible until smile -->
+          <path class="eye-crinkle glow-line-faint" d="M 289 250 Q 275 258 268 268"/>
+          <path class="eye-crinkle glow-line-faint" d="M 511 247 Q 525 255 532 265"/>
 
           <!-- cheek structure lines -->
           <path class="glow-line"        d="M 345 390 L 325 450 L 340 510"/>
@@ -747,6 +779,31 @@ const _STUBS_UNUSED = [
 
   // First blink after a brief natural pause
   setTimeout(schedule, 1500 + Math.random() * 2000);
+})();
+
+// ─── KNOWING SMILE ───────────────────────────────────────────
+(function() {
+  const SMILE_DUR = 9000;
+
+  function doSmile() {
+    const els = [
+      document.getElementById('mouth-upper'),
+      document.getElementById('mouth-lower'),
+      ...document.querySelectorAll('.eye-crinkle')
+    ];
+    // Add class to trigger animation
+    els.forEach(el => el.classList.add('smiling'));
+    // Remove after known duration — don't rely on animationend
+    setTimeout(() => els.forEach(el => el.classList.remove('smiling')), SMILE_DUR + 100);
+  }
+
+  function schedule() {
+    const delay = 70000 + Math.random() * 60000; // 70–130s between smiles
+    setTimeout(() => { doSmile(); schedule(); }, delay);
+  }
+
+  // First smile after 30–50s, then start the recurring cycle
+  setTimeout(() => { doSmile(); schedule(); }, 30000 + Math.random() * 20000);
 })();
 
 // prefers-reduced-motion
