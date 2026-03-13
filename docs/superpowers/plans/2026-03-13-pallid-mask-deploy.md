@@ -4,7 +4,7 @@
 
 **Goal:** Make the Pallid Mask installation deployable to exe.xyz VMs with publicly accessible fortune pages, rename fortune files with visitor name + summary, and add PWA support for chromeless fullscreen projection.
 
-**Architecture:** The pallid-mask Bun server gains a build step for client TypeScript, a systemd service file for exe.xyz deployment, named fortune page URLs, and a web app manifest. The server already has `PUBLIC_URL` and `PORT` env vars. The exe.xyz deployment follows the established pattern in `deploy/` (systemd services, `instances.json`, git-pull updates, `.env` on the VM).
+**Architecture:** The pallid-mask Bun server gains a systemd service file for exe.xyz deployment, named fortune page URLs, and a web app manifest. The server already has `PUBLIC_URL` and `PORT` env vars. The exe.xyz deployment follows the established pattern in `deploy/` (systemd services, `instances.json`, git-pull updates, `.env` on the VM).
 
 **Tech Stack:** Bun (server + bundler), TypeScript, existing dependencies unchanged.
 
@@ -37,31 +37,44 @@
 
 **Justification:** This is simpler and more reliable than JSON parsing for a two-field response. The delimiter `---` on its own line is unambiguous. The word is constrained in the prompt to be a single lowercase English word (no punctuation, no spaces). If parsing fails (no delimiter found, word is invalid), fall back to a random 6-character hex string as the word portion, ensuring the system never fails to produce a filename.
 
+**Edge case: `---` in fortune text.** The fortune itself could contain `---` as a thematic break. The parser uses `lastIndexOf("\n---\n")` to find the *final* occurrence, which is always the one Claude appended as the delimiter. Fortune text containing `---` mid-body is preserved correctly.
+
+**Alternative considered:** Tool use / function calling for structured output. Rejected — adds schema definition overhead and changes the response structure (tool_use blocks vs text blocks) for a single-token extraction. The delimiter approach is lightweight, has a clean fallback, and doesn't alter the thinking-enabled generation flow.
+
 **Alternative considered:** A separate Claude call for the summary word. Rejected — adds latency, cost, and complexity for a single token of output that fits naturally into the existing call.
 
-### D3: systemd service file design
+### D3: Deployment path structure
 
-**Decision:** Create `deploy/pallid-mask.service` following the exact pattern of `deploy/julian.service`, with:
-- `WorkingDirectory=/opt/pallid-mask`
-- `EnvironmentFile=/opt/pallid-mask/.env`
-- `ExecStartPre=/home/exedev/.bun/bin/bun run /opt/pallid-mask/build` (client build step)
-- `ExecStart=/home/exedev/.bun/bin/bun run /opt/pallid-mask/server/index.ts`
+**Decision:** The exe.xyz VM clones the full Julian repo to `/opt/pallid-mask`. The pallid-mask application lives at `/opt/pallid-mask/pallid-mask/` within the clone. The systemd service sets `WorkingDirectory` to the application subdirectory.
 
-**Justification:** The existing Julian services all use the same pattern: `User=exedev`, Bun from `~/.bun/bin`, `.env` in the working directory. The `ExecStartPre` for the build step ensures the client bundle is always current after a `git pull` deploy. This mirrors how production Bun services should handle TypeScript client builds — the build is a fast Bun.build call (~100ms), not a heavy webpack build, so it's appropriate as a pre-start step.
+**Justification:** The existing exe.xyz pattern clones the entire repo to `/opt/<instance-name>`. For Julian instances, the server (`server/server.ts`) lives at the repo root, so `WorkingDirectory=/opt/julian` works directly. But the pallid-mask server and its `package.json` are in the `pallid-mask/` subdirectory of the repo. This means:
 
-The working directory is `/opt/pallid-mask` rather than `/opt/julian/pallid-mask` because this is an independently deployable server (per the spec: "standalone Bun server, separate from Julian's main server"). The VM will clone the repo and the deploy script will point to the pallid-mask subdirectory.
+- Repo root on VM: `/opt/pallid-mask/`
+- Application root: `/opt/pallid-mask/pallid-mask/`
+- Server entry point: `/opt/pallid-mask/pallid-mask/server/index.ts`
+- Package.json: `/opt/pallid-mask/pallid-mask/package.json`
 
-### D4: instances.json entry
+The `WorkingDirectory` must point to the application root (`/opt/pallid-mask/pallid-mask`) so that `bun install` and `bun run build` find the correct `package.json`. The `.env` file can live either at the repo root or the application root; we place it at the application root for locality with the server that reads it.
+
+This doubled path (`/opt/pallid-mask/pallid-mask`) is a cosmetic annoyance but structurally correct. The alternative — restructuring the repo to put pallid-mask at root — would break the branch-based workflow where `pallid-mask` branch is a diverged branch of the Julian repo.
+
+### D4: systemd service file design
+
+**Decision:** Create `deploy/pallid-mask.service` following the pattern of `deploy/julian.service`, with paths adjusted for the subdirectory structure:
+
+- `WorkingDirectory=/opt/pallid-mask/pallid-mask`
+- `EnvironmentFile=/opt/pallid-mask/pallid-mask/.env`
+- `ExecStartPre` for `bun install` (ensures deps are current after `git pull`)
+- `ExecStartPre` for `bun run build` (bundles client TypeScript)
+- `ExecStart` for `bun run server/index.ts`
+
+**Justification:** The existing Julian services use `User=exedev`, Bun from `~/.bun/bin`, `.env` in the working directory. The two `ExecStartPre` directives ensure the application is ready after a deploy: `bun install` handles dependency updates, `bun run build` bundles the client. Both are fast (~1-2s combined). Since `WorkingDirectory` is set to the application root, these commands find `package.json` automatically without needing `--cwd`.
+
+### D5: instances.json entry
 
 **Decision:** Add a `pallid-mask` entry to `deploy/instances.json` with `url: "https://pallid-mask.exe.xyz"` and `branch: "pallid-mask"`.
 
 **Justification:** Follows the existing convention. The URL becomes the `PUBLIC_URL` env var value on the VM, which is used to generate QR code URLs. The branch field tells the deploy tooling which branch to track.
-
-### D5: Build script in package.json
-
-**Decision:** The existing `"build": "bun build client/main.ts --outdir public/dist --target browser"` script in `pallid-mask/package.json` is already correct. The systemd service will run this via `bun run build` in the ExecStartPre step.
-
-**Justification:** No change needed — the build script already exists and produces the correct output. We just need to ensure it runs before the server starts on deployment.
 
 ### D6: PWA manifest approach
 
@@ -87,13 +100,14 @@ The working directory is `/opt/pallid-mask` rather than `/opt/julian/pallid-mask
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
 ```
 
-**Justification:** `"fullscreen"` hides all browser UI including the status bar, which is what you want on a 4K projector. The `orientation: "landscape"` hint matches the projector aspect ratio. The `apple-mobile-web-app-capable` meta tag provides Safari/iOS fallback for the same behavior. No service worker is needed — the installation requires a live server for fortune generation, so offline support is not useful. No icons are strictly required for the add-to-home-screen / fullscreen functionality; the browser will use a default. This keeps the implementation minimal.
+**Justification:** `"fullscreen"` hides all browser UI including the status bar, which is what you want on a 4K projector. The `orientation: "landscape"` hint matches the projector aspect ratio. The `apple-mobile-web-app-capable` and `mobile-web-app-capable` meta tags provide Safari/iOS and Chrome/Android fallbacks. No service worker is needed — the installation requires a live server for fortune generation, so offline support is not useful. No icons are strictly required for the fullscreen functionality; the browser will use a default. This keeps the implementation minimal.
 
 ### D7: PUBLIC_URL usage for fortune page URLs
 
-**Decision:** The server already reads `PUBLIC_URL` from the environment (line 32 of `server/index.ts`). Fortune pages already use it to construct their public URL. No change needed to this mechanism — it works correctly as-is for deployment. The exe.xyz VM `.env` file will set `PUBLIC_URL=https://pallid-mask.exe.xyz`.
+**Decision:** The server already reads `PUBLIC_URL` from the environment (line 32 of `server/index.ts`). Fortune pages already use it to construct their public URL. No change needed — it works correctly as-is for deployment. The exe.xyz VM `.env` file will set `PUBLIC_URL=https://pallid-mask.exe.xyz`.
 
 ### D8: Fortune page naming integration into fortune-page.ts
 
@@ -112,7 +126,7 @@ export interface FortunePageOptions {
 
 ### D9: Testing strategy
 
-**Decision:** Medium fidelity, 15-20 tests across three test files.
+**Decision:** Medium fidelity, 15-20 tests across two test files. No deploy configuration tests — the service file and instances.json are simple declarative files where structural tests add maintenance burden without catching real errors. They would just be re-asserting the file contents we wrote.
 
 **`server/fortune-page.test.ts`** (8-10 tests):
 - Generates HTML file with correct name-word filename
@@ -123,19 +137,14 @@ export interface FortunePageOptions {
 - Escapes HTML entities in fortune text
 - Inlines font and styles
 
-**`server/fortune.test.ts`** (3-4 tests):
+**`server/fortune.test.ts`** (4-5 tests):
 - Parses fortune text and summary word from delimited response
 - Falls back when delimiter is missing
 - Falls back when word after delimiter is invalid (multi-word, punctuation)
 - Preserves full fortune text without the delimiter/word line
+- Uses last delimiter when fortune text contains `---`
 
-**`deploy/pallid-mask.test.ts`** (3-4 tests):
-- Service file contains correct ExecStart path
-- Service file contains ExecStartPre build step
-- instances.json contains pallid-mask entry with correct URL
-- manifest.json is valid JSON with fullscreen display mode
-
-**Justification:** The fortune page naming is the highest-risk change (filesystem operations, string sanitization, collision handling), so it gets the most tests. The fortune parsing tests verify the delimiter protocol. The deploy tests are lightweight structural checks that prevent regressions in configuration files.
+**Justification:** The fortune page naming is the highest-risk change (filesystem operations, string sanitization, collision handling), so it gets the most tests. The fortune parsing tests verify the delimiter protocol. Both test files cover code with real logic and edge cases.
 
 ---
 
@@ -148,7 +157,7 @@ export interface FortunePageOptions {
 
 - [ ] **Step 1: Update the generateFortune function prompt and parsing**
 
-In `generateFortune`, modify the system prompt addition and user message to instruct Claude to append a delimiter and single summary word after the fortune text. Then parse the response to split the fortune text from the summary word.
+In `generateFortune`, modify the system prompt to instruct Claude to append a delimiter and single summary word after the fortune text. Then parse the response to split the fortune text from the summary word.
 
 Add after the existing `INTERPRETATION_RULES` constant:
 
@@ -163,9 +172,9 @@ Modify the system prompt concatenation in `generateFortune` to include `SUMMARY_
 system: soulPrompt + "\n\n" + INTERPRETATION_RULES + SUMMARY_INSTRUCTION,
 ```
 
-Add a parsing function:
+Add a parsing function (exported for testing):
 ```typescript
-function parseFortune(raw: string): { fortune: string; summaryWord: string } {
+export function parseFortune(raw: string): { fortune: string; summaryWord: string } {
   const delimiterIndex = raw.lastIndexOf("\n---\n");
   if (delimiterIndex === -1) {
     return { fortune: raw.trim(), summaryWord: "" };
@@ -193,6 +202,11 @@ return parseFortune(textBlock.text);
 - Modify: `pallid-mask/server/fortune-page.ts`
 
 - [ ] **Step 1: Add name sanitization and collision handling**
+
+Add `existsSync` to the fs import at the top:
+```typescript
+import { readFileSync, existsSync } from "fs";
+```
 
 Add a `sanitizeName` function:
 ```typescript
@@ -223,11 +237,6 @@ function resolveFilename(name: string, word: string): string {
   }
   return candidate;
 }
-```
-
-Add `existsSync` to the fs import at the top:
-```typescript
-import { readFileSync, existsSync } from "fs";
 ```
 
 - [ ] **Step 2: Update FortunePageOptions and generateFortunePage**
@@ -279,13 +288,20 @@ export async function generateFortunePage(
 
 - [ ] **Step 1: Update the fortune API handler**
 
-In the `/api/fortune` handler, update the `generateFortune` call to destructure the new return type and pass `name` and `summaryWord` to `generateFortunePage`:
+In the `/api/fortune` handler, update the `generateFortune` call to destructure the new return type and pass `name` and `summaryWord` to `generateFortunePage`. The `body.name` field is already available (typed as `FortuneRequest` which has `name: string`, and the client already sends it in `api.ts`).
 
+Replace the current line:
+```typescript
+const fortune = await generateFortune(soulPrompt, passages, body.name, body.question);
+```
+
+With:
 ```typescript
 const { fortune, summaryWord } = await generateFortune(soulPrompt, passages, body.name, body.question);
+```
 
-// ... sigilSvg computation unchanged ...
-
+And update the `generateFortunePage` call to include the two new fields:
+```typescript
 const [audioUrl, fortunePage] = await Promise.all([
   textToSpeech(fortune),
   generateFortunePage({
@@ -297,8 +313,6 @@ const [audioUrl, fortunePage] = await Promise.all([
   }),
 ]);
 ```
-
-This replaces the current `const fortune = await generateFortune(...)` line and updates the `generateFortunePage` call to include the two new fields.
 
 ### Task 4: Tests for fortune page naming
 
@@ -425,10 +439,7 @@ describe("generateFortunePage", () => {
 
 - [ ] **Step 1: Export and test parseFortune**
 
-First, export `parseFortune` from `fortune.ts` so it can be tested:
-```typescript
-export function parseFortune(raw: string): { fortune: string; summaryWord: string } {
-```
+First, export `parseFortune` from `fortune.ts` so it can be tested (already specified as `export` in Task 1).
 
 Then create the test file:
 
@@ -494,11 +505,11 @@ After=network.target
 Type=simple
 User=exedev
 Environment=PATH=/home/exedev/.bun/bin:/usr/local/bin:/usr/bin:/bin
-WorkingDirectory=/opt/pallid-mask
-EnvironmentFile=/opt/pallid-mask/.env
-ExecStartPre=/home/exedev/.bun/bin/bun install --cwd /opt/pallid-mask
-ExecStartPre=/home/exedev/.bun/bin/bun run --cwd /opt/pallid-mask build
-ExecStart=/home/exedev/.bun/bin/bun run /opt/pallid-mask/server/index.ts
+WorkingDirectory=/opt/pallid-mask/pallid-mask
+EnvironmentFile=/opt/pallid-mask/pallid-mask/.env
+ExecStartPre=/home/exedev/.bun/bin/bun install
+ExecStartPre=/home/exedev/.bun/bin/bun run build
+ExecStart=/home/exedev/.bun/bin/bun run server/index.ts
 Restart=always
 RestartSec=5
 
@@ -506,7 +517,11 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-**Note:** Two `ExecStartPre` directives: `bun install` ensures dependencies are current after a `git pull`, and `bun run build` bundles the client TypeScript. Both are fast operations (~1-2s combined). The `--cwd` flag ensures Bun resolves the `package.json` in the pallid-mask subdirectory.
+**Path rationale:** The exe.xyz deploy tooling clones the full Julian repo to `/opt/pallid-mask`. Since the pallid-mask application lives in the `pallid-mask/` subdirectory of the repo, the `WorkingDirectory` must be `/opt/pallid-mask/pallid-mask` so that `bun install`, `bun run build`, and `bun run server/index.ts` all resolve against the correct `package.json`. The `.env` file lives alongside the application at this same path.
+
+No `--cwd` flags are needed because `WorkingDirectory` already sets the working directory for all `Exec*` directives. This keeps the service file clean and follows the principle of least surprise.
+
+The two `ExecStartPre` directives ensure the application is ready after a `git pull` deploy: `bun install` handles dependency updates, `bun run build` bundles the client TypeScript. Both are fast (~1-2s combined).
 
 ### Task 7: Update instances.json
 
@@ -524,77 +539,11 @@ Add to the JSON object:
 }
 ```
 
-### Task 8: Add build script for deployment context
-
-**Files:**
-- Modify: `pallid-mask/package.json`
-
-- [ ] **Step 1: Add a start script for systemd**
-
-Add a `"start"` script to `package.json`:
-```json
-"scripts": {
-  "dev": "bun run server/index.ts",
-  "start": "bun run server/index.ts",
-  "build": "bun build client/main.ts --outdir public/dist --target browser",
-  "test": "bun test"
-}
-```
-
-The `start` script is an alias for `dev` — it exists for conventional clarity in the systemd context. The `ExecStart` in the service file calls `bun run server/index.ts` directly (not `bun start`), so this is optional but follows convention.
-
-### Task 9: Deployment tests
-
-**Files:**
-- Create: `pallid-mask/server/deploy.test.ts`
-
-- [ ] **Step 1: Write deployment configuration tests**
-
-```typescript
-import { describe, test, expect } from "bun:test";
-import { readFileSync } from "fs";
-import { join } from "path";
-
-const ROOT = join(import.meta.dir, "..", "..");
-
-describe("deployment configuration", () => {
-  test("pallid-mask.service contains correct ExecStart", () => {
-    const service = readFileSync(join(ROOT, "deploy", "pallid-mask.service"), "utf-8");
-    expect(service).toContain("ExecStart=/home/exedev/.bun/bin/bun run /opt/pallid-mask/server/index.ts");
-  });
-
-  test("pallid-mask.service contains ExecStartPre build step", () => {
-    const service = readFileSync(join(ROOT, "deploy", "pallid-mask.service"), "utf-8");
-    expect(service).toContain("ExecStartPre=/home/exedev/.bun/bin/bun run --cwd /opt/pallid-mask build");
-  });
-
-  test("pallid-mask.service contains ExecStartPre install step", () => {
-    const service = readFileSync(join(ROOT, "deploy", "pallid-mask.service"), "utf-8");
-    expect(service).toContain("ExecStartPre=/home/exedev/.bun/bin/bun install --cwd /opt/pallid-mask");
-  });
-
-  test("instances.json contains pallid-mask entry", () => {
-    const instances = JSON.parse(readFileSync(join(ROOT, "deploy", "instances.json"), "utf-8"));
-    expect(instances["pallid-mask"]).toBeDefined();
-    expect(instances["pallid-mask"].url).toBe("https://pallid-mask.exe.xyz");
-    expect(instances["pallid-mask"].branch).toBe("pallid-mask");
-  });
-
-  test("manifest.json has fullscreen display mode", () => {
-    const manifest = JSON.parse(
-      readFileSync(join(ROOT, "pallid-mask", "public", "manifest.json"), "utf-8")
-    );
-    expect(manifest.display).toBe("fullscreen");
-    expect(manifest.background_color).toBe("#000000");
-  });
-});
-```
-
 ---
 
 ## Chunk 3: PWA Support
 
-### Task 10: Create web app manifest
+### Task 8: Create web app manifest
 
 **Files:**
 - Create: `pallid-mask/public/manifest.json`
@@ -614,7 +563,7 @@ describe("deployment configuration", () => {
 }
 ```
 
-### Task 11: Add PWA meta tags to index.html
+### Task 9: Add PWA meta tags to index.html
 
 **Files:**
 - Modify: `pallid-mask/public/index.html`
@@ -642,18 +591,17 @@ The `mobile-web-app-capable` meta tag is the Chrome/Android equivalent of Apple'
 - `pallid-mask/public/manifest.json` — PWA web app manifest
 - `pallid-mask/server/fortune-page.test.ts` — fortune page naming tests
 - `pallid-mask/server/fortune.test.ts` — fortune parsing tests
-- `pallid-mask/server/deploy.test.ts` — deployment configuration tests
 
 ### Modified files:
-- `pallid-mask/server/fortune.ts` — add `SUMMARY_INSTRUCTION`, `parseFortune`, change return type
+- `pallid-mask/server/fortune.ts` — add `SUMMARY_INSTRUCTION`, export `parseFortune`, change `generateFortune` return type
 - `pallid-mask/server/fortune-page.ts` — add `sanitizeName`, `resolveFilename`, update `FortunePageOptions` interface and `generateFortunePage` function
 - `pallid-mask/server/index.ts` — destructure new `generateFortune` return type, pass `name`/`summaryWord` to `generateFortunePage`
 - `pallid-mask/public/index.html` — add PWA meta tags and manifest link
-- `pallid-mask/package.json` — add `start` script
 - `deploy/instances.json` — add `pallid-mask` entry
 
 ### Unchanged files (confirmed correct as-is):
 - `pallid-mask/server/types.ts` — `FortuneRequest` already has `name` field
 - `pallid-mask/client/api.ts` — already sends `name` in fortune request
+- `pallid-mask/package.json` — `build` script already exists and is correct; `dev` script already starts the server
 - `pallid-mask/tsconfig.json` — no changes needed
 - `pallid-mask/.gitignore` — already ignores `fortunes/`, `public/dist/`, `public/audio/`
