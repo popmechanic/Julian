@@ -75,15 +75,20 @@ body::after {
   text-align: center;
 }
 .fortune-break {
-  margin: 40px auto;
-  width: 36px;
-  height: 36px;
-  opacity: 0.35;
+  margin: 20px auto;
+  width: 28px;
+  height: 28px;
+  animation: sigil-glow 4s ease-in-out infinite;
 }
 .fortune-break svg {
   width: 100%;
   height: 100%;
-  fill: var(--c3);
+  fill: var(--c4);
+  filter: drop-shadow(0 0 3px var(--c5)) drop-shadow(0 0 8px var(--c1));
+}
+@keyframes sigil-glow {
+  0%, 100% { opacity: 0.25; transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(1.08); }
 }
 .fortune-sigil {
   width: 60px;
