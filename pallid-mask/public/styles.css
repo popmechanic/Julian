@@ -517,6 +517,14 @@ body::after {
   50% { opacity: 0; }
 }
 
+/* Small sigil spinner — filled sigil shown during short waits */
+.sigil-spinner {
+  width: 100px;
+  height: 100px;
+  fill: var(--c6);
+  animation: glow-pulse 5s ease-in-out infinite;
+}
+
 .qr-container {
   max-width: 280px;
   margin: 0 auto 24px;

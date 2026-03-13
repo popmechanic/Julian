@@ -120,6 +120,19 @@ export async function showError(message: string): Promise<void> {
   await fadeIn(overlay);
 }
 
+export function showSpinner(sigilSvg: string): void {
+  overlay.classList.add("overlay-low");
+  overlay.innerHTML = `<div class="sigil-spinner">${sigilSvg}</div>`;
+  overlay.style.opacity = "1";
+  overlay.style.display = "flex";
+}
+
+export function hideSpinner(): void {
+  overlay.style.display = "none";
+  overlay.innerHTML = "";
+  overlay.classList.remove("overlay-low");
+}
+
 export async function clear(): Promise<void> {
   await fadeOut(overlay);
   overlay.innerHTML = "";

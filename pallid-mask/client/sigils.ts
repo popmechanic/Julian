@@ -449,6 +449,12 @@ export function loadingMode(): void {
   }
 }
 
+/** Get SVG markup for a random filled sigil, self-contained with fill and sizing. */
+export function getRandomSigilSvg(): string {
+  const sigil = allSigils[Math.floor(Math.random() * allSigils.length)];
+  return `<svg viewBox="${sigil.vb}" xmlns="http://www.w3.org/2000/svg" style="display:block;width:100%;height:100%"><path d="${sigil.d}" fill="var(--c6)"/></svg>`;
+}
+
 /** Restore default sigil styling. */
 export function normalMode(): void {
   // Restore frame cell opacity

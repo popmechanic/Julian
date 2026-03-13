@@ -71,10 +71,13 @@ async function enterState(next: CeremonyState): Promise<void> {
       await display.showNamePrompt();
       visitorName = await captureName();
       await display.clear();
+      display.showSpinner(sigils.getRandomSigilSvg());
       try {
         const ack = await requestAcknowledge(visitorName);
+        display.hideSpinner();
         await playAudio(ack.audioUrl);
       } catch (err) {
+        display.hideSpinner();
         console.error("Acknowledge failed:", err);
         await handleError();
         return;
@@ -86,6 +89,7 @@ async function enterState(next: CeremonyState): Promise<void> {
       await display.showPrompt(visitorName);
       const input = await captureInput();
       await display.clear();
+      display.showSpinner(sigils.getRandomSigilSvg());
       return enterDivine(input.question, input.timings);
     }
 
@@ -105,6 +109,7 @@ async function enterDivine(question: string, timings: number[]): Promise<void> {
   state = "DIVINE";
   console.log(`[ceremony] → DIVINE`);
 
+  display.hideSpinner();
   mask.hide();
   sigils.loadingMode();
   sigils.showMorph();
@@ -161,10 +166,7 @@ async function enterDivine(question: string, timings: number[]): Promise<void> {
   mask.hide();
   mask.resetSize();
 
-  // QR_OFFER
-  await enterState("QR_OFFER");
-
-  // QR_DISPLAY
+  // QR_DISPLAY — skip QR_OFFER, transition directly
   state = "QR_DISPLAY";
   console.log(`[ceremony] → QR_DISPLAY`);
   await display.showQR(fortuneResult.qrSvg);
