@@ -434,6 +434,28 @@ body::after {
   will-change: filter;
 }
 
+/* ─── SIGIL FRAME ────────────────────────────────────────── */
+
+#sigil-frame {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 999; /* below scanlines (1000), above .screen content */
+}
+
+.sf-cell {
+  position: absolute;
+  will-change: filter;
+  filter: drop-shadow(0 0 3px var(--c5)) drop-shadow(0 0 8px var(--c1));
+}
+
+/* Override makeSVG's inline style="width:100%" for frame cells only.
+   !important is necessary here because the SVG has an inline style. */
+.sf-cell svg {
+  height: 110px !important; /* CELL — fixed, never varies */
+  width: auto !important;   /* natural aspect ratio, can be narrower */
+  fill: var(--c5);
+}
 
 </style>
 </head>
