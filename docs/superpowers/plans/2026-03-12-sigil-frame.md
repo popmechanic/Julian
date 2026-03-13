@@ -404,7 +404,7 @@ git commit -m "Sigil frame: wave rAF loop with pool filter assignment"
 
 - [ ] **Step 1: Add resize handler**
 
-Insert after the `tick` function definition (before the init block):
+Find `requestAnimationFrame(tick);` (the init line) and insert immediately before it:
 
 ```js
   // ── Resize handler ──────────────────────────────────────────
