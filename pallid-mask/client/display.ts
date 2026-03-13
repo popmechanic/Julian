@@ -30,6 +30,7 @@ export async function showWelcome(): Promise<void> {
 }
 
 export async function showNamePrompt(): Promise<void> {
+  overlay.classList.add("overlay-low");
   overlay.innerHTML = `
     <div class="ceremony-text">
       <div class="entity-speech">type your name and press enter.</div>
@@ -39,6 +40,7 @@ export async function showNamePrompt(): Promise<void> {
 }
 
 export async function showPrompt(name?: string): Promise<void> {
+  overlay.classList.add("overlay-low");
   const address = name ? `${name}, type` : "type";
   overlay.innerHTML = `
     <div class="ceremony-text">
@@ -121,4 +123,5 @@ export async function showError(message: string): Promise<void> {
 export async function clear(): Promise<void> {
   await fadeOut(overlay);
   overlay.innerHTML = "";
+  overlay.classList.remove("overlay-low");
 }

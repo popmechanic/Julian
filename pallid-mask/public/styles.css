@@ -136,18 +136,12 @@ body::after {
 }
 
 .band-top { flex-direction: column; }
-.band-bottom { flex-direction: column-reverse; }
-
 /* Sigil decorative banners */
 .sigil-banner {
   width: 440px;
   display: block;
   fill: var(--c5);
   animation: sigil-drift 7s ease-in-out infinite;
-}
-.band-bottom .sigil-banner {
-  transform: scaleY(-1);
-  animation-delay: -3.5s;
 }
 
 /* Vectrex-style border line with corner marks */
@@ -185,10 +179,10 @@ body::after {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 28px;
   flex: 1;
-  padding: 8px 0;
+  padding: 2vh 0 8px;
 }
 
 /* ─── MASK FACE ──────────────────────────────────────────── */
@@ -277,7 +271,7 @@ body::after {
 .eye-crinkle.smiling   { animation: crinkle-appear    9s ease-in-out forwards; }
 
 .mask-wrap svg {
-  height: 76.5vh;
+  height: 62vh;
   width: auto;
   /* Isolate SVG filter to its own GPU layer */
   transform: translateZ(0);
@@ -292,9 +286,8 @@ body::after {
   opacity: 0;
   pointer-events: none;
 }
-.mask-wrap.mask-receding {
-  opacity: 0.25;
-  transform: scale(0.72);
+.mask-wrap.mask-enlarged svg {
+  height: 84vh;
 }
 
 /* Glow line classes — bright gets two passes for richness; others single pass */
@@ -414,20 +407,6 @@ body::after {
   fill: var(--c5);
 }
 
-#sigil-bottom svg {
-  fill: var(--c6);
-  animation: glow-pulse 5s ease-in-out infinite;
-}
-
-/* Top/bottom banner slots */
-.sigil-banner-slot {
-  width: 440px;
-  animation: sigil-drift 7s ease-in-out infinite;
-}
-.band-bottom .sigil-banner-slot {
-  animation-delay: -3.5s;
-}
-
 /* Morph display — matches mask brightness and glow */
 #sigil-top {
   animation: none;
@@ -480,6 +459,11 @@ body::after {
   justify-content: center;
   z-index: 500; /* above content, below sigil frame (999) and scanlines (1000) */
   pointer-events: none;
+}
+
+#ceremony-overlay.overlay-low {
+  align-items: flex-end;
+  padding-bottom: 12vh;
 }
 
 .ceremony-text {

@@ -96,13 +96,12 @@ export function hide(): void {
   stopAnimations();
 }
 
-/** Mask shrinks/fades — used during DIVINE state. */
-export function recede(): void {
-  maskWrap.classList.add('mask-receding');
+/** Scale mask up to fill screen — used during FORTUNE state. */
+export function enlarge(): void {
+  maskWrap.classList.add('mask-enlarged');
 }
 
-/** Mask returns from recede — used during FORTUNE state. */
-export function restore(): void {
-  maskWrap.classList.remove('mask-receding');
-  if (!animationsActive) startAnimations();
+/** Reset mask to default size. */
+export function resetSize(): void {
+  maskWrap.classList.remove('mask-enlarged');
 }

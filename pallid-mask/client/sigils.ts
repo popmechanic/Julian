@@ -142,6 +142,7 @@ function initMorphDOM(): void {
   path.setAttribute('stroke-width', '1.5');
   path.setAttribute('stroke-linecap', 'round');
   path.setAttribute('stroke-linejoin', 'round');
+  svg.style.display = 'none';
   svg.appendChild(path);
   container.appendChild(svg);
   morphPath = path;
@@ -149,6 +150,8 @@ function initMorphDOM(): void {
 
 function startMorph(): void {
   if (morphRafId !== null) return;
+  const svg = document.getElementById('sigil-morph-svg');
+  if (svg) svg.style.display = 'block';
   morphFromIdx = 0;
   morphToIdx = 1;
   morphPtsFrom = sampleSigil(allSigils[morphFromIdx]);
@@ -169,175 +172,11 @@ function stopMorph(): void {
     clearTimeout(morphPrefetchTimeout);
     morphPrefetchTimeout = null;
   }
+  const svg = document.getElementById('sigil-morph-svg');
+  if (svg) svg.style.display = 'none';
 }
 
 
-// ═══════════════════════════════════════════════════════════════
-//  WARP — bottom sigil displacement crossfade
-// ═══════════════════════════════════════════════════════════════
-
-const WARP_SCALE_MAX = 52;
-const WARP_FREQ = '0.009 0.007';
-const WARP_OUT_DUR = 1600;
-const WARP_IN_DUR = 2800;
-const WARP_FADE_HALF = 450;
-
-let warpWtA: Element | null = null;
-let warpWdA: Element | null = null;
-let warpWtB: Element | null = null;
-let warpWdB: Element | null = null;
-let warpFront: HTMLDivElement | null = null;
-let warpEl: HTMLElement | null = null;
-let warpSeed = 17;
-let warpCur = -1;
-let warpScheduleTimeout: ReturnType<typeof setTimeout> | null = null;
-let warpInitialTimeout: ReturnType<typeof setTimeout> | null = null;
-let warpRafId: number | null = null;
-let warpActive = false;
-
-function warpESine(t: number): number {
-  return 0.5 - 0.5 * Math.cos(t * Math.PI);
-}
-
-function warpMakeLayer(): HTMLDivElement {
-  const d = document.createElement('div');
-  d.style.cssText = 'grid-area:1/1;pointer-events:none;will-change:filter;';
-  return d;
-}
-
-function initWarpDOM(): void {
-  const fSvg = document.createElementNS(NS, 'svg');
-  fSvg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none';
-  fSvg.innerHTML = `<defs>
-    <filter id="warp-out" x="-60%" y="-150%" width="220%" height="400%">
-      <feTurbulence id="wt-a" type="fractalNoise" baseFrequency="0.011 0.008" numOctaves="4" seed="17" result="n"/>
-      <feDisplacementMap id="wd-a" in="SourceGraphic" in2="n" scale="0" xChannelSelector="R" yChannelSelector="G"/>
-    </filter>
-    <filter id="warp-in" x="-60%" y="-150%" width="220%" height="400%">
-      <feTurbulence id="wt-b" type="fractalNoise" baseFrequency="0.011 0.008" numOctaves="4" seed="17" result="n"/>
-      <feDisplacementMap id="wd-b" in="SourceGraphic" in2="n" scale="0" xChannelSelector="R" yChannelSelector="G"/>
-    </filter>
-  </defs>`;
-  document.body.appendChild(fSvg);
-
-  warpWtA = document.getElementById('wt-a');
-  warpWdA = document.getElementById('wd-a');
-  warpWtB = document.getElementById('wt-b');
-  warpWdB = document.getElementById('wd-b');
-
-  warpEl = document.getElementById('sigil-bottom');
-  if (warpEl) {
-    warpEl.style.display = 'grid';
-    warpEl.style.animation = 'none';
-  }
-}
-
-function doWarp(next: number): void {
-  if (!warpEl || !warpWtA || !warpWdA || !warpWtB || !warpWdB) return;
-
-  warpSeed = (warpSeed + 7 + Math.floor(Math.random() * 17)) % 1021;
-  warpWtA.setAttribute('seed', String(warpSeed));
-  warpWtB.setAttribute('seed', String(warpSeed));
-  warpWtA.setAttribute('baseFrequency', WARP_FREQ);
-  warpWtB.setAttribute('baseFrequency', WARP_FREQ);
-
-  warpFront!.style.filter = 'url(#warp-out)';
-  warpWdA.setAttribute('scale', '0');
-
-  // Back exists from t=0 but hidden, already holding max displacement
-  const back = warpMakeLayer();
-  back.innerHTML = makeSVG(allSigils[next]);
-  back.style.opacity = '0';
-  back.style.filter = 'url(#warp-in)';
-  warpWdB.setAttribute('scale', String(WARP_SCALE_MAX));
-  warpEl.appendChild(back);
-
-  let t0: number | null = null;
-  const XOVER = WARP_OUT_DUR;
-  const TOTAL = WARP_OUT_DUR + WARP_IN_DUR;
-  const front = warpFront!;
-
-  function tick(ts: number): void {
-    if (!t0) t0 = ts;
-    const ms = ts - t0;
-
-    // Front displacement: 0 -> SCALE_MAX over OUT_DUR
-    warpWdA!.setAttribute('scale', (warpESine(Math.min(ms / XOVER, 1)) * WARP_SCALE_MAX).toFixed(2));
-
-    // Back displacement: SCALE_MAX -> 0 over IN_DUR (starting at XOVER)
-    const tB = Math.min(Math.max(ms - XOVER, 0) / WARP_IN_DUR, 1);
-    warpWdB!.setAttribute('scale', (WARP_SCALE_MAX * (1 - warpESine(tB))).toFixed(2));
-
-    // Opacity crossfade: smooth linear blend centred on XOVER +/- FADE_HALF
-    const fadeProgress = (ms - (XOVER - WARP_FADE_HALF)) / (WARP_FADE_HALF * 2);
-    front.style.opacity = Math.max(0, 1 - fadeProgress).toFixed(3);
-    back.style.opacity = Math.min(1, Math.max(0, fadeProgress)).toFixed(3);
-
-    if (ms < TOTAL) {
-      warpRafId = requestAnimationFrame(tick);
-    } else {
-      // Cleanup: front had faded to 0; promote back to new front
-      const dead = front;
-      warpFront = back;
-      warpFront.style.filter = '';
-      warpFront.style.opacity = '1';
-      warpWdA!.setAttribute('scale', '0');
-      warpWdB!.setAttribute('scale', '0');
-      setTimeout(() => dead.remove(), 50);
-      warpRafId = null;
-    }
-  }
-
-  warpRafId = requestAnimationFrame(tick);
-}
-
-function warpRandomDelay(): number {
-  return 9000 + Math.random() * 6000;
-}
-
-function warpSchedule(): void {
-  if (!warpActive) return;
-  warpScheduleTimeout = setTimeout(() => {
-    const next = pickRandom(warpCur);
-    doWarp(next);
-    warpCur = next;
-    warpSchedule();
-  }, warpRandomDelay());
-}
-
-function startWarp(): void {
-  if (warpActive) return;
-  warpActive = true;
-
-  warpCur = pickRandom(-1);
-  warpFront = warpMakeLayer();
-  warpFront.innerHTML = makeSVG(allSigils[warpCur]);
-  if (warpEl) warpEl.appendChild(warpFront);
-
-  // First warp after 9-15s, then recurring
-  warpInitialTimeout = setTimeout(() => {
-    const next = pickRandom(warpCur);
-    doWarp(next);
-    warpCur = next;
-    warpSchedule();
-  }, warpRandomDelay());
-}
-
-function stopWarp(): void {
-  warpActive = false;
-  if (warpScheduleTimeout !== null) {
-    clearTimeout(warpScheduleTimeout);
-    warpScheduleTimeout = null;
-  }
-  if (warpInitialTimeout !== null) {
-    clearTimeout(warpInitialTimeout);
-    warpInitialTimeout = null;
-  }
-  if (warpRafId !== null) {
-    cancelAnimationFrame(warpRafId);
-    warpRafId = null;
-  }
-}
 
 
 // ═══════════════════════════════════════════════════════════════
@@ -572,18 +411,15 @@ export async function init(): Promise<void> {
   allSigils = await resp.json();
 
   initMorphDOM();
-  initWarpDOM();
   initFrameDOM();
 }
 
 export function start(): void {
-  startWarp();
   startFrame();
 }
 
 export function stop(): void {
   stopMorph();
-  stopWarp();
   stopFrame();
 }
 

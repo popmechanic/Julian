@@ -146,24 +146,20 @@ async function enterDivine(question: string, timings: number[]): Promise<void> {
     return;
   }
 
-  // FORTUNE state — mask returns, reads fortune aloud
+  // FORTUNE state — mask returns enlarged, reads fortune aloud
   state = "FORTUNE";
   console.log(`[ceremony] → FORTUNE`);
+  mask.enlarge();
   mask.show();
 
   try {
     await playAudio(fortuneResult.audioUrl);
   } catch {
-    // If audio fails, proceed to text display anyway
+    // If audio fails, proceed anyway
   }
 
-  // REVEAL state — mask fades, text appears
-  state = "REVEAL";
-  console.log(`[ceremony] → REVEAL`);
   mask.hide();
-  await display.showFortune(fortuneResult.fortune);
-  await new Promise((r) => setTimeout(r, REVEAL_HOLD_MS));
-  await display.clear();
+  mask.resetSize();
 
   // QR_OFFER
   await enterState("QR_OFFER");
