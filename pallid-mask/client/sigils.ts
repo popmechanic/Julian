@@ -19,7 +19,7 @@ let allSigils: Sigil[] = [];
 // ── Helpers ────────────────────────────────────────────────────
 
 function makeSVG(sigil: Sigil): string {
-  return `<svg viewBox="${sigil.vb}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" style="display:block;width:100%;height:100%"><path d="${sigil.d}"/></svg>`;
+  return `<svg viewBox="${sigil.vb}" xmlns="http://www.w3.org/2000/svg" style="display:block;width:100%"><path d="${sigil.d}"/></svg>`;
 }
 
 function pickRandom(exclude: number): number {
@@ -261,9 +261,8 @@ function buildLayout(): void {
   frameInUse.clear();
 
   // Frame extends 15px past viewport on each side (CSS inset: -15px)
-  const BLEED = 20;
-  const fw = window.innerWidth + 2 * BLEED;
-  const fh = window.innerHeight + 2 * BLEED;
+  const fw = window.innerWidth;
+  const fh = window.innerHeight;
 
   // Pack cells edge-to-edge; ceil ensures full coverage (viewport clips overshoot)
   const hn = Math.ceil(fw / FRAME_CELL);
