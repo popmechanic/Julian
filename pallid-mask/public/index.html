@@ -1,2 +1,152 @@
 <!DOCTYPE html>
-<html><body><h1>pallid mask</h1></body></html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pallid Mask</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div id="sigil-frame"></div>
+<div class="screen">
+
+  <!-- ── TOP BAND ── -->
+  <div class="band band-top">
+    <div class="sigil-slot sigil-banner-slot" id="sigil-top"></div>
+
+  </div><!-- /band-top -->
+
+
+  <!-- ── CENTER ── -->
+  <div class="center">
+
+    <!-- THE MASK -->
+    <div class="mask-wrap">
+      <!-- Triple-layer Gaussian bloom from mask.html, adapted to our palette -->
+      <svg viewBox="230 75 350 505" width="230" height="332"
+           xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <filter id="vector-glow" x="-60%" y="-40%" width="220%" height="180%">
+            <feGaussianBlur stdDeviation="1.7"  result="blur1"/>
+            <feGaussianBlur stdDeviation="5"    result="blur2"/>
+            <feGaussianBlur stdDeviation="10"   result="blur3"/>
+            <feMerge>
+              <feMergeNode in="blur3"/>
+              <feMergeNode in="blur2"/>
+              <feMergeNode in="blur1"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+        </defs>
+
+        <g filter="url(#vector-glow)">
+          <!-- brow notch — the concave V that marks this as a wearable mask -->
+          <path class="glow-line-bright" d="M 330 110 Q 400 180 470 110"/>
+          <path class="glow-line"        d="M 342 128 Q 400 195 458 128"/>
+          <path class="glow-line"        d="M 330 110 L 342 128"/>
+          <path class="glow-line"        d="M 470 110 L 458 128"/>
+
+          <!-- face outline -->
+          <path id="face-left"  class="glow-line-bright" d="M 330 110 C 260 140 240 260 270 370 C 290 450 340 520 400 550"/>
+          <path id="face-right" class="glow-line-bright" d="M 470 110 C 540 140 560 260 530 370 C 510 450 460 520 400 550"/>
+
+          <!-- eyes — whole eye collapses to flat line on blink -->
+          <g class="eye-group" id="eye-left">
+            <path class="glow-line-bright" d="M 290 235 L 380 235"/>
+            <path class="glow-line"        d="M 290 235 L 305 270 Q 340 295 380 235"/>
+            <path class="glow-line-faint"  d="M 305 270 Q 330 280 355 260"/>
+          </g>
+          <g class="eye-group" id="eye-right">
+            <path class="glow-line-bright" d="M 420 235 L 510 235"/>
+            <path class="glow-line"        d="M 420 235 Q 465 275 495 260 L 510 235"/>
+            <path class="glow-line-faint"  d="M 445 260 Q 470 270 495 260"/>
+          </g>
+
+          <!-- nose — long vertical descending line -->
+          <path class="glow-line"        d="M 380 235 L 388 385 L 400 405 L 412 385 L 420 235"/>
+          <path class="glow-line"        d="M 375 375 L 400 395 L 425 375"/>
+
+          <!-- mouth — da Vinci-inspired: Cupid's bow upper, full lower arc,
+               corners closed but asymmetric (right lifts 3 units higher),
+               opening only at the center. the secret is in the asymmetry. -->
+          <path id="mouth-upper" class="glow-line-bright" d="M 363 452 C 375 444 390 443 400 447 C 410 443 425 444 439 449"/>
+          <path id="mouth-lower" class="glow-line"        d="M 363 452 Q 400 463 439 449"/>
+
+          <!-- crinkle lines — outer eye corners, invisible until smile -->
+          <path class="eye-crinkle glow-line-faint" d="M 289 250 Q 275 258 268 268"/>
+          <path class="eye-crinkle glow-line-faint" d="M 511 247 Q 525 255 532 265"/>
+
+          <!-- cheek structure lines -->
+          <path id="cheek-left"   class="glow-line" d="M 345 390 L 325 450 L 340 510"/>
+          <path id="cheek-right"  class="glow-line" d="M 455 390 L 475 450 L 460 510"/>
+          <path id="cheek-bottom" class="glow-line" d="M 375 510 L 400 520 L 425 510"/>
+
+          <!-- faint structural geometry -->
+          <path class="glow-line-faint"  d="M 270 370 L 315 415 L 340 480"/>
+          <path class="glow-line-faint"  d="M 530 370 L 485 415 L 460 480"/>
+
+          <!-- vertex nodes — electron beam dwell points -->
+          <circle cx="330" cy="110" r="1.5" fill="var(--c6)"/>
+          <circle cx="470" cy="110" r="1.5" fill="var(--c6)"/>
+          <circle cx="290" cy="235" r="1.5" fill="var(--c6)"/>
+          <circle cx="380" cy="235" r="1.5" fill="var(--c6)"/>
+          <circle cx="420" cy="235" r="1.5" fill="var(--c6)"/>
+          <circle cx="510" cy="235" r="1.5" fill="var(--c6)"/>
+          <circle cx="400" cy="550" r="1.5" fill="var(--c6)"/>
+        </g>
+      </svg>
+    </div>
+
+    <!-- TEXT EXCHANGE -->
+    <div class="exchange">
+
+      <div class="entity-speech">
+        i have drawn from two books.<br>
+        what was before. what cannot be named.
+      </div>
+
+      <div class="fortune-block">
+        <div class="fortune-verse">
+          in the beginning god created the heaven and the earth.<br>
+          and the earth was without form, and void;<br>
+          and darkness was upon the face of the deep.
+        </div>
+        <div class="fortune-verse">
+          along the shore the cloud waves break,<br>
+          the twin suns sink beneath the lake,<br>
+          the shadows lengthen in carcosa.
+        </div>
+      </div>
+
+      <div class="entity-interpret">
+        you arrive at a threshold before all thresholds.<br>
+        something was made in the dark before light had a name for it.<br>
+        the shadows you feel are not new.<br>
+        they are older than the shore.
+      </div>
+
+      <div class="visitor-name">— Elara —</div>
+
+    </div>
+
+  </div><!-- /center -->
+
+
+  <!-- ── BOTTOM BAND ── -->
+  <div class="band band-bottom">
+
+    <div class="sigil-slot sigil-banner-slot" id="sigil-bottom"></div>
+
+    <div class="border-line">
+      <div class="line"></div>
+    </div>
+
+  </div><!-- /band-bottom -->
+
+</div><!-- /screen -->
+
+<div id="ceremony-overlay"></div>
+
+<script type="module" src="/dist/main.js"></script>
+</body>
+</html>
