@@ -71,12 +71,15 @@ async function enterState(next: CeremonyState): Promise<void> {
       await display.showNamePrompt();
       visitorName = await captureName();
       await display.clear();
-      display.showSpinner(sigils.getRandomSigilSvg());
+      display.showSpinner();
+      sigils.startSpinnerWarp();
       try {
         const ack = await requestAcknowledge(visitorName);
+        sigils.stopSpinnerWarp();
         display.hideSpinner();
         await playAudio(ack.audioUrl);
       } catch (err) {
+        sigils.stopSpinnerWarp();
         display.hideSpinner();
         console.error("Acknowledge failed:", err);
         await handleError();
@@ -89,7 +92,8 @@ async function enterState(next: CeremonyState): Promise<void> {
       await display.showPrompt(visitorName);
       const input = await captureInput();
       await display.clear();
-      display.showSpinner(sigils.getRandomSigilSvg());
+      display.showSpinner();
+      sigils.startSpinnerWarp();
       return enterDivine(input.question, input.timings);
     }
 
@@ -109,6 +113,7 @@ async function enterDivine(question: string, timings: number[]): Promise<void> {
   state = "DIVINE";
   console.log(`[ceremony] → DIVINE`);
 
+  sigils.stopSpinnerWarp();
   display.hideSpinner();
   mask.hide();
   sigils.loadingMode();

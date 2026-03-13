@@ -411,6 +411,7 @@ export async function init(): Promise<void> {
   allSigils = await resp.json();
 
   initMorphDOM();
+  initSpinnerWarpDOM();
   initFrameDOM();
 }
 
@@ -420,6 +421,7 @@ export function start(): void {
 
 export function stop(): void {
   stopMorph();
+  stopSpinnerWarp();
   stopFrame();
 }
 
@@ -449,10 +451,190 @@ export function loadingMode(): void {
   }
 }
 
-/** Get SVG markup for a random filled sigil, self-contained with fill and sizing. */
-export function getRandomSigilSvg(): string {
-  const sigil = allSigils[Math.floor(Math.random() * allSigils.length)];
-  return `<svg viewBox="${sigil.vb}" xmlns="http://www.w3.org/2000/svg" style="display:block;width:100%;height:100%"><path d="${sigil.d}" fill="var(--c6)"/></svg>`;
+// ═══════════════════════════════════════════════════════════════
+//  SPINNER WARP — small filled-sigil displacement crossfade
+//  (loading indicator after name/question submission)
+// ═══════════════════════════════════════════════════════════════
+
+const SWARP_SCALE_MAX = 36;
+const SWARP_FREQ = '0.009 0.007';
+const SWARP_OUT_DUR = 1400;
+const SWARP_IN_DUR = 2400;
+const SWARP_FADE_HALF = 400;
+
+let swarpWtA: Element | null = null;
+let swarpWdA: Element | null = null;
+let swarpWtB: Element | null = null;
+let swarpWdB: Element | null = null;
+let swarpEl: HTMLElement | null = null;
+let swarpSeed = 17;
+let swarpRafId: number | null = null;
+let swarpActive = false;
+
+function swarpESine(t: number): number {
+  return 0.5 - 0.5 * Math.cos(t * Math.PI);
+}
+
+const SWARP_GLOW = 'drop-shadow(0 0 2px var(--c3))';
+
+function swarpMakeLayer(): HTMLDivElement {
+  const d = document.createElement('div');
+  d.style.cssText = `grid-area:1/1;pointer-events:none;will-change:filter;filter:${SWARP_GLOW};`;
+  return d;
+}
+
+function initSpinnerWarpDOM(): void {
+  // Build filter SVG with createElementNS (innerHTML on SVG can fail to
+  // parse children into the SVG namespace in some environments).
+  const fSvg = document.createElementNS(NS, 'svg') as SVGSVGElement;
+  fSvg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none';
+  const defs = document.createElementNS(NS, 'defs');
+
+  function makeFilter(id: string): { turb: Element; disp: Element } {
+    const f = document.createElementNS(NS, 'filter');
+    f.setAttribute('id', id);
+    f.setAttribute('x', '-60%');
+    f.setAttribute('y', '-150%');
+    f.setAttribute('width', '220%');
+    f.setAttribute('height', '400%');
+
+    const turb = document.createElementNS(NS, 'feTurbulence');
+    turb.setAttribute('type', 'fractalNoise');
+    turb.setAttribute('baseFrequency', '0.011 0.008');
+    turb.setAttribute('numOctaves', '4');
+    turb.setAttribute('seed', '17');
+    turb.setAttribute('result', 'n');
+
+    const disp = document.createElementNS(NS, 'feDisplacementMap');
+    disp.setAttribute('in', 'SourceGraphic');
+    disp.setAttribute('in2', 'n');
+    disp.setAttribute('scale', '0');
+    disp.setAttribute('xChannelSelector', 'R');
+    disp.setAttribute('yChannelSelector', 'G');
+
+    f.appendChild(turb);
+    f.appendChild(disp);
+    defs.appendChild(f);
+    return { turb, disp };
+  }
+
+  const filterOut = makeFilter('swarp-out');
+  const filterIn = makeFilter('swarp-in');
+
+  fSvg.appendChild(defs);
+  document.body.insertBefore(fSvg, document.body.firstChild);
+
+  swarpWtA = filterOut.turb;
+  swarpWdA = filterOut.disp;
+  swarpWtB = filterIn.turb;
+  swarpWdB = filterIn.disp;
+}
+
+// Ping-pong: two layers (A and B) with continuous back-and-forth displacement.
+// One warps out while the other warps in, then reverses. No jerky swaps.
+let swarpLayerA: HTMLDivElement | null = null;
+let swarpLayerB: HTMLDivElement | null = null;
+let swarpForward = true;  // true = A→B, false = B→A
+const SWARP_HOLD = 1200;  // ms hold at each end before reversing
+
+function swarpPingPong(ts: number): void {
+  if (!swarpActive || !swarpEl) return;
+  if (!swarpPhaseStart) swarpPhaseStart = ts;
+  const ms = ts - swarpPhaseStart;
+  const TOTAL = SWARP_OUT_DUR + SWARP_IN_DUR;
+
+  if (ms < TOTAL) {
+    // Animating
+    const outLayer = swarpForward ? swarpLayerA! : swarpLayerB!;
+    const inLayer = swarpForward ? swarpLayerB! : swarpLayerA!;
+    const dispOut = swarpForward ? swarpWdA! : swarpWdB!;
+    const dispIn = swarpForward ? swarpWdB! : swarpWdA!;
+
+    // Outgoing: displacement ramps up
+    const tOut = Math.min(ms / SWARP_OUT_DUR, 1);
+    dispOut.setAttribute('scale', (swarpESine(tOut) * SWARP_SCALE_MAX).toFixed(2));
+
+    // Incoming: displacement ramps down
+    const tIn = Math.min(Math.max(ms - SWARP_OUT_DUR * 0.3, 0) / SWARP_IN_DUR, 1);
+    dispIn.setAttribute('scale', (SWARP_SCALE_MAX * (1 - swarpESine(tIn))).toFixed(2));
+
+    // Opacity crossfade
+    const fadeT = Math.min(Math.max((ms - SWARP_FADE_HALF) / (TOTAL - SWARP_FADE_HALF * 2), 0), 1);
+    outLayer.style.opacity = (1 - fadeT).toFixed(3);
+    inLayer.style.opacity = fadeT.toFixed(3);
+
+    swarpRafId = requestAnimationFrame(swarpPingPong);
+  } else if (ms < TOTAL + SWARP_HOLD) {
+    // Holding — ensure final state is clean
+    const outLayer = swarpForward ? swarpLayerA! : swarpLayerB!;
+    const inLayer = swarpForward ? swarpLayerB! : swarpLayerA!;
+    outLayer.style.opacity = '0';
+    inLayer.style.opacity = '1';
+    swarpWdA!.setAttribute('scale', '0');
+    swarpWdB!.setAttribute('scale', '0');
+    swarpRafId = requestAnimationFrame(swarpPingPong);
+  } else {
+    // Reverse direction
+    swarpForward = !swarpForward;
+    swarpPhaseStart = ts;
+
+    // New turbulence seed for variety
+    swarpSeed = (swarpSeed + 7 + Math.floor(Math.random() * 17)) % 1021;
+    swarpWtA!.setAttribute('seed', String(swarpSeed));
+    swarpWtB!.setAttribute('seed', String(swarpSeed + 41));
+
+    // Pre-set incoming layer to full displacement before it fades in
+    const dispIn = swarpForward ? swarpWdB! : swarpWdA!;
+    dispIn.setAttribute('scale', String(SWARP_SCALE_MAX));
+
+    swarpRafId = requestAnimationFrame(swarpPingPong);
+  }
+}
+
+let swarpPhaseStart: number | null = null;
+
+/** Start the spinner warp animation on `#spinner-warp`. */
+export function startSpinnerWarp(): void {
+  swarpEl = document.getElementById('spinner-warp');
+  if (!swarpEl || swarpActive) return;
+  swarpActive = true;
+  swarpForward = true;
+  swarpPhaseStart = null;
+
+  swarpEl.style.display = 'grid';
+  const idxA = pickRandom(-1);
+  const idxB = pickRandom(idxA);
+
+  swarpLayerA = swarpMakeLayer();
+  swarpLayerA.innerHTML = makeSVG(allSigils[idxA]);
+  swarpLayerA.style.filter = `url(#swarp-out) ${SWARP_GLOW}`;
+  swarpEl.appendChild(swarpLayerA);
+
+  swarpLayerB = swarpMakeLayer();
+  swarpLayerB.innerHTML = makeSVG(allSigils[idxB]);
+  swarpLayerB.style.opacity = '0';
+  swarpLayerB.style.filter = `url(#swarp-in) ${SWARP_GLOW}`;
+  // Start B fully displaced so it warps in cleanly
+  swarpWdB!.setAttribute('scale', String(SWARP_SCALE_MAX));
+  swarpEl.appendChild(swarpLayerB);
+
+  swarpRafId = requestAnimationFrame(swarpPingPong);
+}
+
+/** Stop the spinner warp animation. */
+export function stopSpinnerWarp(): void {
+  swarpActive = false;
+  swarpPhaseStart = null;
+  swarpLayerA = null;
+  swarpLayerB = null;
+  if (swarpRafId !== null) {
+    cancelAnimationFrame(swarpRafId);
+    swarpRafId = null;
+  }
+  if (swarpEl) {
+    swarpEl.innerHTML = '';
+    swarpEl = null;
+  }
 }
 
 /** Restore default sigil styling. */

@@ -517,12 +517,27 @@ body::after {
   50% { opacity: 0; }
 }
 
-/* Small sigil spinner — filled sigil shown during short waits */
+/* Spinner warp — filled sigil displacement crossfade during short waits.
+   Vertically centered between mask chin and bottom sigil frame border.
+   Chin ≈ 64vh + 36px; frame inner edge ≈ 100vh − 50px.
+   Midpoint = (64vh + 36px + 100vh − 50px) / 2 = 82vh − 7px.
+   Offset by half spinner height (50px) for centering. */
 .sigil-spinner {
+  position: absolute;
+  top: calc(82vh - 7px - 50px);
+  left: 50%;
+  transform: translateX(-50%);
   width: 100px;
   height: 100px;
-  fill: var(--c6);
-  animation: glow-pulse 5s ease-in-out infinite;
+  display: grid;
+}
+
+.sigil-spinner svg {
+  fill: var(--c5);
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  display: block;
 }
 
 .qr-container {
