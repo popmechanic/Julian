@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>the pallid mask</title>
+<style>
+{{FONT_FACE}}
+{{STYLES}}
+
+body {
+  background: #000;
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 10vh 24px;
+}
+.fortune-page {
+  max-width: 520px;
+  width: 100%;
+  text-align: center;
+}
+.fortune-sigil {
+  width: 60px;
+  height: 60px;
+  margin: 0 auto 32px;
+  opacity: 0.4;
+}
+.fortune-sigil svg {
+  width: 100%;
+  height: 100%;
+  fill: var(--c3);
+}
+.fortune-meta {
+  font-size: 0.7rem;
+  color: var(--c3);
+  letter-spacing: 0.16em;
+  margin-bottom: 40px;
+}
+.fortune-divider {
+  width: 40px;
+  height: 1px;
+  background: var(--c3);
+  margin: 0 auto 40px;
+  opacity: 0.5;
+}
+.fortune-footer {
+  margin-top: 48px;
+  padding-top: 32px;
+  border-top: 1px solid var(--c2);
+  font-size: 0.6rem;
+  color: var(--c3);
+  letter-spacing: 0.12em;
+}
+
+@media (max-width: 480px) {
+  body { padding: 6vh 16px; }
+  .entity-interpret { font-size: 0.9rem; }
+}
+</style>
+</head>
+<body>
+<div class="fortune-page">
+  <div class="fortune-sigil">{{SIGIL}}</div>
+  <div class="fortune-meta">{{DATE}}</div>
+  <div class="fortune-divider"></div>
+  <div class="entity-interpret">{{FORTUNE}}</div>
+  <div class="fortune-footer">the pallid mask · sou'wester arts week</div>
+</div>
+</body>
+</html>
