@@ -1,0 +1,10 @@
+{
+  "name": "the pallid mask",
+  "short_name": "pallid mask",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "start_url": "/",
+  "icons": []
+}

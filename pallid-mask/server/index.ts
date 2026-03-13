@@ -103,14 +103,14 @@ const server = Bun.serve({
         const seed = computeSeed(body.timings);
         const passages = selectPassages(seed, yellow, bible);
 
-        const fortune = await generateFortune(soulPrompt, passages, body.name, body.question);
+        const { fortune, summaryWord } = await generateFortune(soulPrompt, passages, body.name, body.question);
 
         const sigilIndex = seed % sigils.length;
         const sigilSvg = makeSigilSvg(sigilIndex);
 
         const [audioUrl, fortunePage] = await Promise.all([
           textToSpeech(fortune),
-          generateFortunePage({ fortune, sigilSvg, publicBaseUrl: PUBLIC_URL }),
+          generateFortunePage({ fortune, sigilSvg, publicBaseUrl: PUBLIC_URL, name: body.name, summaryWord }),
         ]);
 
         const qrSvg = await generateQRSvg(fortunePage.publicUrl);

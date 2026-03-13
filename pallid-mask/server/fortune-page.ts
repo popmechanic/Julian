@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
 
@@ -8,6 +8,33 @@ function escapeHtml(text: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function sanitizeName(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 30) || "visitor";
+}
+
+function resolveFilename(name: string, word: string): string {
+  const safeName = sanitizeName(name);
+  const safeWord = /^[a-z]+$/.test(word) && word.length > 0 && word.length <= 20
+    ? word
+    : randomUUID().slice(0, 6);
+  const base = `${safeName}-${safeWord}`;
+
+  let candidate = `${base}.html`;
+  let counter = 2;
+  while (existsSync(join(FORTUNES_DIR, candidate))) {
+    candidate = `${base}-${counter}.html`;
+    counter++;
+  }
+  return candidate;
 }
 
 const TEMPLATE_PATH = join(import.meta.dir, "..", "templates", "fortune.html");
@@ -58,12 +85,15 @@ export interface FortunePageOptions {
   fortune: string;
   sigilSvg: string;
   publicBaseUrl: string;
+  name: string;
+  summaryWord: string;
 }
 
 export async function generateFortunePage(
   options: FortunePageOptions
 ): Promise<{ id: string; publicUrl: string; filePath: string }> {
-  const id = randomUUID().slice(0, 12);
+  const filename = resolveFilename(options.name, options.summaryWord);
+  const id = filename.replace(/\.html$/, "");
   const template = readFileSync(TEMPLATE_PATH, "utf-8");
   const date = new Date().toLocaleDateString("en-US", {
     month: "long",
@@ -78,9 +108,9 @@ export async function generateFortunePage(
     .replace("{{DATE}}", date)
     .replace("{{FORTUNE}}", escapeHtml(options.fortune));
 
-  const filePath = join(FORTUNES_DIR, `${id}.html`);
+  const filePath = join(FORTUNES_DIR, filename);
   await Bun.write(filePath, html);
 
-  const publicUrl = `${options.publicBaseUrl}/fortunes/${id}.html`;
+  const publicUrl = `${options.publicBaseUrl}/fortunes/${filename}`;
   return { id, publicUrl, filePath };
 }
