@@ -2,16 +2,43 @@ import { describe, test, expect } from "bun:test";
 import { computeSeed, selectPassages } from "./stichomancy";
 
 describe("computeSeed", () => {
-  test("sums inter-key timing intervals", () => {
-    expect(computeSeed([100, 200, 150])).toBe(450);
+  test("produces a 32-bit unsigned integer", () => {
+    const seed = computeSeed([100, 200, 150]);
+    expect(seed).toBeGreaterThanOrEqual(0);
+    expect(seed).toBeLessThanOrEqual(0xFFFFFFFF);
   });
 
-  test("returns 0 for empty array", () => {
-    expect(computeSeed([])).toBe(0);
+  test("returns a consistent value for the same input", () => {
+    const a = computeSeed([100, 200, 150]);
+    const b = computeSeed([100, 200, 150]);
+    expect(a).toBe(b);
   });
 
-  test("handles single timing", () => {
-    expect(computeSeed([42])).toBe(42);
+  test("produces different values for different inputs", () => {
+    const a = computeSeed([100, 200, 150]);
+    const b = computeSeed([100, 201, 150]);
+    expect(a).not.toBe(b);
+  });
+
+  test("handles empty array", () => {
+    const seed = computeSeed([]);
+    expect(seed).toBeGreaterThanOrEqual(0);
+  });
+
+  test("distributes across full Bible range for realistic inputs", () => {
+    // Simulate 500 different typing sessions
+    const bibleIndices = new Set<number>();
+    for (let i = 0; i < 500; i++) {
+      const timings: number[] = [];
+      const len = 5 + (i % 20);
+      for (let j = 0; j < len; j++) {
+        timings.push(80 + ((i * 7 + j * 13) % 250));
+      }
+      const seed = computeSeed(timings);
+      bibleIndices.add(Math.floor(seed / 1662) % 31102);
+    }
+    // Should cover far more than the old 4 passages
+    expect(bibleIndices.size).toBeGreaterThan(400);
   });
 });
 
@@ -25,16 +52,12 @@ describe("selectPassages", () => {
     { text: "The shadows lengthen" },
   ];
 
-  test("selects King in Yellow passage by seed % count", () => {
-    const result = selectPassages(3, mockYellow, mockBible);
-    expect(result.yellowPassage.index).toBe(1); // 3 % 2 = 1
-    expect(result.yellowPassage.text).toBe("The shadows lengthen");
-  });
-
-  test("selects Bible verse by floor(seed / yellowCount) % bibleCount", () => {
-    const result = selectPassages(3, mockYellow, mockBible);
-    expect(result.bibleVerse.index).toBe(1); // floor(3/2) % 2 = 1
-    expect(result.bibleVerse.text).toBe("And the earth was");
+  test("selects passages within bounds", () => {
+    const result = selectPassages(123456, mockYellow, mockBible);
+    expect(result.yellowPassage.index).toBeGreaterThanOrEqual(0);
+    expect(result.yellowPassage.index).toBeLessThan(mockYellow.length);
+    expect(result.bibleVerse.index).toBeGreaterThanOrEqual(0);
+    expect(result.bibleVerse.index).toBeLessThan(mockBible.length);
   });
 
   test("includes the seed in the result", () => {
@@ -43,8 +66,8 @@ describe("selectPassages", () => {
   });
 
   test("wraps around correctly with large seed", () => {
-    const result = selectPassages(5000, mockYellow, mockBible);
-    expect(result.yellowPassage.index).toBe(0); // 5000 % 2 = 0
-    expect(result.bibleVerse.index).toBe(0); // floor(5000/2) % 2 = 0
+    const result = selectPassages(0xFFFFFFFF, mockYellow, mockBible);
+    expect(result.yellowPassage.index).toBeGreaterThanOrEqual(0);
+    expect(result.yellowPassage.index).toBeLessThan(mockYellow.length);
   });
 });

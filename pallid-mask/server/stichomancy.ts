@@ -1,7 +1,19 @@
 import type { StichomancyResult } from "./types";
 
 export function computeSeed(timings: number[]): number {
-  return timings.reduce((sum, t) => sum + t, 0);
+  // Mix all timing intervals into a well-distributed 32-bit integer.
+  // A simple sum clusters in a tiny range (~600-6000); this hash
+  // spreads the entropy across the full passage space.
+  let h = 0x9e3779b9; // golden ratio fractional bits
+  for (const t of timings) {
+    h ^= t;
+    h = Math.imul(h, 0x5bd1e995);
+    h ^= h >>> 15;
+  }
+  // Final mix
+  h = Math.imul(h ^ (h >>> 13), 0x5bd1e995);
+  h ^= h >>> 15;
+  return (h >>> 0); // unsigned 32-bit
 }
 
 export interface BibleEntry {
