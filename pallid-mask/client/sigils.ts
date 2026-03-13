@@ -19,7 +19,7 @@ let allSigils: Sigil[] = [];
 // ── Helpers ────────────────────────────────────────────────────
 
 function makeSVG(sigil: Sigil): string {
-  return `<svg viewBox="${sigil.vb}" xmlns="http://www.w3.org/2000/svg" style="display:block;width:100%"><path d="${sigil.d}"/></svg>`;
+  return `<svg viewBox="${sigil.vb}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" style="display:block;width:100%;height:100%"><path d="${sigil.d}"/></svg>`;
 }
 
 function pickRandom(exclude: number): number {
@@ -260,19 +260,16 @@ function buildLayout(): void {
   frameInUse.forEach(fIdx => frameWdEls[fIdx].setAttribute('scale', '0'));
   frameInUse.clear();
 
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
+  // Frame extends 15px past viewport on each side (CSS inset: -15px)
+  const BLEED = 20;
+  const fw = window.innerWidth + 2 * BLEED;
+  const fh = window.innerHeight + 2 * BLEED;
 
-  function slots(len: number): { n: number; gap: number } {
-    const n = Math.floor(len / FRAME_CELL);
-    const gap = (len - n * FRAME_CELL) / (n + 1);
-    return { n, gap };
-  }
+  // Pack cells edge-to-edge; ceil ensures full coverage (viewport clips overshoot)
+  const hn = Math.ceil(fw / FRAME_CELL);
+  const vn = Math.ceil((fh - 2 * FRAME_CELL) / FRAME_CELL);
 
-  const h = slots(vw);
-  const v = slots(vh - 2 * FRAME_CELL);
-
-  frameN = 2 * h.n + 2 * v.n;
+  frameN = 2 * hn + 2 * vn;
   const step = Math.max(1, Math.floor(200 / frameN));
 
   let seq = 0;
@@ -289,30 +286,26 @@ function buildLayout(): void {
   }
 
   // TOP — left to right (owns top corners)
-  for (let i = 0; i < h.n; i++) {
-    const cx = h.gap + i * (FRAME_CELL + h.gap) + FRAME_CELL / 2;
-    addCell({ top: '0', left: cx + 'px', transform: 'translateX(-50%)' },
+  for (let i = 0; i < hn; i++) {
+    addCell({ top: '0', left: `${i * FRAME_CELL}px` },
             (seq * step) % 200);
   }
 
   // RIGHT — top to bottom (excludes corners)
-  for (let i = 0; i < v.n; i++) {
-    const cy = FRAME_CELL + v.gap + i * (FRAME_CELL + v.gap) + FRAME_CELL / 2;
-    addCell({ top: cy + 'px', right: '0', transform: 'translateY(-50%) rotate(-90deg)' },
+  for (let i = 0; i < vn; i++) {
+    addCell({ top: `${FRAME_CELL + i * FRAME_CELL}px`, right: '0', transform: 'rotate(-90deg)' },
             (seq * step) % 200);
   }
 
   // BOTTOM — right to left (clockwise; owns bottom corners)
-  for (let i = h.n - 1; i >= 0; i--) {
-    const cx = h.gap + i * (FRAME_CELL + h.gap) + FRAME_CELL / 2;
-    addCell({ bottom: '0', left: cx + 'px', transform: 'translateX(-50%)' },
+  for (let i = hn - 1; i >= 0; i--) {
+    addCell({ bottom: '0', left: `${i * FRAME_CELL}px` },
             (seq * step) % 200);
   }
 
   // LEFT — bottom to top (excludes corners)
-  for (let i = v.n - 1; i >= 0; i--) {
-    const cy = FRAME_CELL + v.gap + i * (FRAME_CELL + v.gap) + FRAME_CELL / 2;
-    addCell({ top: cy + 'px', left: '0', transform: 'translateY(-50%) rotate(90deg)' },
+  for (let i = vn - 1; i >= 0; i--) {
+    addCell({ top: `${FRAME_CELL + i * FRAME_CELL}px`, left: '0', transform: 'rotate(90deg)' },
             (seq * step) % 200);
   }
 }

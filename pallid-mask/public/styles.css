@@ -336,15 +336,15 @@ body::after {
 
 #sigil-frame {
   position: fixed;
-  inset: 0;
+  inset: -20px;   /* extend past viewport so sigil artwork padding falls offscreen */
   pointer-events: none;
   z-index: 999; /* below scanlines (1000), above .screen content */
 }
 
 .sf-cell {
   position: absolute;
-  width: 50px;     /* CELL — hard box keeps SVG width:100% from expanding to viewport */
-  height: 50px;    /* CELL */
+  width: 58px;     /* slightly wider than stride (50px) so adjacent cells overlap */
+  height: 58px;
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -354,9 +354,8 @@ body::after {
 }
 
 .sf-cell svg {
+  width: 100%;
   height: 100%;
-  width: auto;
-  max-width: 100%;
   display: block;
   fill: var(--c5);
 }
