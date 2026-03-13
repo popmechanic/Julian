@@ -126,6 +126,7 @@ const server = Bun.serve({
     // Fortune pages
     if (url.pathname.startsWith("/fortunes/")) {
       const filePath = join(FORTUNES_DIR, url.pathname.slice("/fortunes/".length));
+      if (!filePath.startsWith(FORTUNES_DIR)) return new Response("Forbidden", { status: 403 });
       const file = Bun.file(filePath);
       if (await file.exists()) {
         return new Response(file, { headers: { "Content-Type": "text/html" } });
@@ -133,8 +134,20 @@ const server = Bun.serve({
       return new Response("Not found", { status: 404 });
     }
 
+    // Data files (sigils.json for client)
+    if (url.pathname.startsWith("/data/")) {
+      const filePath = join(DATA_DIR, url.pathname.slice("/data/".length));
+      if (!filePath.startsWith(DATA_DIR)) return new Response("Forbidden", { status: 403 });
+      const file = Bun.file(filePath);
+      if (await file.exists()) {
+        return new Response(file);
+      }
+      return new Response("Not found", { status: 404 });
+    }
+
     // Public static files (index.html, styles.css, dist/, audio/)
     let filePath = join(PUBLIC_DIR, url.pathname === "/" ? "index.html" : url.pathname);
+    if (!filePath.startsWith(PUBLIC_DIR)) return new Response("Forbidden", { status: 403 });
     let file = Bun.file(filePath);
     if (await file.exists()) {
       return new Response(file);
@@ -142,7 +155,9 @@ const server = Bun.serve({
 
     // Assets (fonts, etc.)
     if (url.pathname.startsWith("/assets/")) {
+      const assetsDir = join(ROOT, "assets");
       filePath = join(ROOT, url.pathname);
+      if (!filePath.startsWith(assetsDir)) return new Response("Forbidden", { status: 403 });
       file = Bun.file(filePath);
       if (await file.exists()) {
         return new Response(file);

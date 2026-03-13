@@ -37,8 +37,13 @@ export function loadBible(raw: string): BibleEntry[] {
     .trim()
     .split("\n")
     .map((line) => {
-      const parts = line.split("\t");
-      return { reference: parts[1], text: parts[2] };
+      const tab = line.indexOf("\t");
+      if (tab === -1) return { reference: "", text: line };
+      const field = line.slice(tab + 1);
+      // Format: "01:001:001 In the beginning..." — split reference from text at first space
+      const space = field.indexOf(" ");
+      if (space === -1) return { reference: field, text: field };
+      return { reference: field.slice(0, space), text: field.slice(space + 1) };
     });
 }
 
@@ -47,7 +52,8 @@ export function loadYellow(raw: string): YellowEntry[] {
     .trim()
     .split("\n")
     .map((line) => {
-      const parts = line.split("\t");
-      return { text: parts[1] };
+      const tab = line.indexOf("\t");
+      if (tab === -1) return { text: line };
+      return { text: line.slice(tab + 1) };
     });
 }

@@ -2,6 +2,14 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 const TEMPLATE_PATH = join(import.meta.dir, "..", "templates", "fortune.html");
 const STYLES_PATH = join(import.meta.dir, "..", "public", "styles.css");
 const FONT_PATH = join(import.meta.dir, "..", "assets", "Orpheus.otf");
@@ -68,7 +76,7 @@ export async function generateFortunePage(
     .replace("{{STYLES}}", getStyles())
     .replace("{{SIGIL}}", options.sigilSvg)
     .replace("{{DATE}}", date)
-    .replace("{{FORTUNE}}", options.fortune);
+    .replace("{{FORTUNE}}", escapeHtml(options.fortune));
 
   const filePath = join(FORTUNES_DIR, `${id}.html`);
   await Bun.write(filePath, html);
