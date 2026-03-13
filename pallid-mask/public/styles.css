@@ -506,9 +506,11 @@ body::after {
   filter: drop-shadow(0 0 8px var(--c5)) drop-shadow(0 0 20px var(--c1));
 }
 
-#input-display::after {
-  content: '▎';
-  color: var(--c5);
+.input-cursor {
+  display: inline-block;
+  width: 0;
+  border-left: 2px solid var(--c5);
+  margin: 0 1px;
   animation: cursor-blink 1s step-end infinite;
 }
 
