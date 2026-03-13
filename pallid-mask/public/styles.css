@@ -283,6 +283,19 @@ body::after {
   will-change: opacity;
 }
 
+/* Visibility transitions driven by mask.ts */
+.mask-wrap {
+  transition: opacity 1.5s ease, transform 1.5s ease;
+}
+.mask-wrap.mask-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.mask-wrap.mask-receding {
+  opacity: 0.25;
+  transform: scale(0.72);
+}
+
 /* Glow line classes — bright gets two passes for richness; others single pass */
 .glow-line {
   fill: none;
