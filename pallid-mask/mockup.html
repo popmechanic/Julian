@@ -407,6 +407,11 @@ body::after {
   fill: var(--c5);
 }
 
+#sigil-bottom svg {
+  fill: var(--c6);
+  animation: glow-pulse 5s ease-in-out infinite;
+}
+
 /* Top/bottom banner slots */
 .sigil-banner-slot {
   width: 440px;
@@ -563,15 +568,7 @@ body::after {
     <div class="sigil-slot sigil-banner-slot" id="sigil-bottom"></div>
 
     <div class="border-line">
-      <svg class="corner-mark" width="18" height="18" viewBox="0 0 18 18" fill="none"
-           style="filter: drop-shadow(0 0 4px var(--c1)); transform: scaleY(-1)">
-        <polyline points="18,1 1,1 1,18" stroke="var(--c4)" stroke-width="1.5" stroke-linecap="square"/>
-      </svg>
       <div class="line"></div>
-      <svg class="corner-mark" width="18" height="18" viewBox="0 0 18 18" fill="none"
-           style="filter: drop-shadow(0 0 4px var(--c1)); transform: scale(-1,-1)">
-        <polyline points="18,1 1,1 1,18" stroke="var(--c4)" stroke-width="1.5" stroke-linecap="square"/>
-      </svg>
     </div>
 
   </div><!-- /band-bottom -->
@@ -596,18 +593,25 @@ function pickRandom(exclude) {
   return idx;
 }
 
-// ─── BOTTOM BANNER — gentle cycling ─────────────────────────
+// ─── BOTTOM BANNER — dip-swap-rise cycling ───────────────────
 (function() {
   const el = document.getElementById('sigil-bottom');
   let cur = pickRandom(-1);
   el.innerHTML = makeSVG(ALL_SIGILS[cur]);
+  el.style.animation = 'none';
+  el.style.opacity = '1';
+
   function swap() {
-    el.style.opacity = '0';
+    // Dip to near-invisible
+    el.style.transition = 'opacity 0.55s ease-in';
+    el.style.opacity = '0.03';
+    // Swap at the opacity floor — imperceptible
     setTimeout(() => {
       cur = pickRandom(cur);
       el.innerHTML = makeSVG(ALL_SIGILS[cur]);
-      el.style.opacity = '';
-    }, 1300);
+      el.style.transition = 'opacity 0.7s ease-out';
+      el.style.opacity = '1';
+    }, 580);
     setTimeout(swap, 8000 + Math.random() * 7000);
   }
   setTimeout(swap, 9000 + Math.random() * 6000);
