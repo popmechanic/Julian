@@ -1041,7 +1041,7 @@ const _STUBS_UNUSED = [
     // RIGHT — top → bottom (excludes corners)
     for (let i = 0; i < v.n; i++) {
       const cy = CELL + v.gap + i * (CELL + v.gap) + CELL / 2;
-      addCell({ top: cy + 'px', right: '0', transform: 'translateY(-50%)' },
+      addCell({ top: cy + 'px', right: '0', transform: 'translateY(-50%) rotate(-90deg)' },
               (seq * step) % 200);
     }
 
@@ -1055,7 +1055,7 @@ const _STUBS_UNUSED = [
     // LEFT — bottom → top (excludes corners)
     for (let i = v.n - 1; i >= 0; i--) {
       const cy = CELL + v.gap + i * (CELL + v.gap) + CELL / 2;
-      addCell({ top: cy + 'px', left: '0', transform: 'translateY(-50%)' },
+      addCell({ top: cy + 'px', left: '0', transform: 'translateY(-50%) rotate(90deg)' },
               (seq * step) % 200);
     }
   }
