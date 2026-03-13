@@ -126,3 +126,7 @@ bible_index = Math.floor(seed / 1662) % 31102
 **Ceremony flow:** `WELCOME → SUMMON → NAME → INPUT → DIVINE → FORTUNE → QR_DISPLAY → (reset)`.
 
 **Reference:** `mockup.html` is the original monolithic prototype, kept for visual debugging without running the server.
+
+## Fortune Data Safety
+
+**Fortune HTML files in `fortunes/` are irreplaceable artifacts.** Each is a unique Claude-generated fortune tied to a real visitor. Never overwrite, regenerate, or batch-modify existing fortune files. Template or style changes must only affect newly generated fortunes. If existing fortunes need visual updates, copy them first and verify no content is lost before replacing. We lost fortune data during a batch regeneration (2026-03-13) when a regex truncated content at a nested `</div>` — do not repeat this.
