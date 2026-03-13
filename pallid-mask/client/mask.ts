@@ -64,7 +64,7 @@ function scheduleSmile(): void {
 
 // ── Public API ────────────────────────────────────────────────
 
-export function startAnimations(): void {
+function startAnimations(): void {
   if (animationsActive) return;
   animationsActive = true;
 
@@ -78,7 +78,7 @@ export function startAnimations(): void {
   }, 30000 + Math.random() * 20000);
 }
 
-export function stopAnimations(): void {
+function stopAnimations(): void {
   animationsActive = false;
   if (blinkTimeout !== null) { clearTimeout(blinkTimeout); blinkTimeout = null; }
   if (smileTimeout !== null) { clearTimeout(smileTimeout); smileTimeout = null; }

@@ -5,8 +5,6 @@ export type CeremonyState =
   | "INPUT"
   | "DIVINE"
   | "FORTUNE"
-  | "REVEAL"
-  | "QR_OFFER"
   | "QR_DISPLAY";
 
 export interface GreetingResponse {

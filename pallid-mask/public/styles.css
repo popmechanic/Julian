@@ -104,12 +104,6 @@ body::after {
   }
 }
 
-/* Sigil ambient drift */
-@keyframes sigil-drift {
-  0%, 100% { opacity: 0.18; }
-  50%       { opacity: 0.30; }
-}
-
 /* ─── LAYOUT ─────────────────────────────────────────────── */
 
 .screen {
@@ -136,43 +130,6 @@ body::after {
 }
 
 .band-top { flex-direction: column; }
-/* Sigil decorative banners */
-.sigil-banner {
-  width: 440px;
-  display: block;
-  fill: var(--c5);
-  animation: sigil-drift 7s ease-in-out infinite;
-}
-
-/* Vectrex-style border line with corner marks */
-.border-line {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 0;
-}
-
-.border-line .line {
-  flex: 1;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    var(--c2) 10%,
-    var(--c3) 30%,
-    var(--c5) 50%,
-    var(--c3) 70%,
-    var(--c2) 90%,
-    transparent 100%
-  );
-  filter: drop-shadow(0 0 2px var(--c4)) drop-shadow(0 0 8px var(--c1));
-}
-
-.corner-mark {
-  flex: 0 0 auto;
-  display: block;
-}
-
 /* ─── CENTER ─────────────────────────────────────────────── */
 
 .center {
@@ -319,16 +276,7 @@ body::after {
   filter: drop-shadow(0 0 2px rgba(165, 125, 170, 0.5));
 }
 
-/* ─── TEXT EXCHANGE ──────────────────────────────────────── */
-
-.exchange {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 18px;
-  max-width: 600px;
-  width: 100%;
-}
+/* ─── TEXT ───────────────────────────────────────────────── */
 
 .entity-speech {
   font-size: 1.2rem;
@@ -339,28 +287,6 @@ body::after {
   filter: drop-shadow(0 0 8px var(--c5)) drop-shadow(0 0 20px var(--c1));
 }
 
-.fortune-block {
-  width: 100%;
-  padding: 14px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  position: relative;
-}
-
-.fortune-block::before,
-.fortune-block::after {
-  content: '';
-  display: block;
-  width: 100%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--c2) 20%, var(--c3) 50%, var(--c2) 80%, transparent);
-  filter: drop-shadow(0 0 3px var(--c3));
-}
-
-.fortune-block::after { margin-top: 14px; }
-.fortune-block::before { margin-bottom: 14px; }
-
 .fortune-verse {
   font-size: 1.0rem;
   line-height: 2.0;
@@ -368,14 +294,6 @@ body::after {
   text-align: center;
   letter-spacing: 0.04em;
   filter: drop-shadow(0 0 6px var(--c2));
-}
-
-.fortune-verse + .fortune-verse {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--c3);
-  color: var(--c3);
-  filter: drop-shadow(0 0 4px var(--c1));
 }
 
 .entity-interpret {
@@ -386,15 +304,6 @@ body::after {
   letter-spacing: 0.03em;
   max-width: 500px;
   filter: drop-shadow(0 0 8px var(--c4)) drop-shadow(0 0 16px var(--c1));
-}
-
-.visitor-name {
-  font-size: 0.78rem;
-  color: var(--c4);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  margin-top: 4px;
-  filter: drop-shadow(0 0 6px var(--c3));
 }
 
 /* ─── SIGIL SLOTS ─────────────────────────────────────────── */

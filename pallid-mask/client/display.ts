@@ -85,24 +85,6 @@ export async function showNarration(
   return { waitForRelease, release: releaseFn! };
 }
 
-export async function showFortune(text: string): Promise<void> {
-  overlay.innerHTML = `
-    <div class="ceremony-text">
-      <div class="entity-interpret"></div>
-    </div>`;
-  // Use textContent to avoid XSS from Claude response
-  overlay.querySelector(".entity-interpret")!.textContent = text;
-  await fadeIn(overlay);
-}
-
-export async function showQROffer(): Promise<void> {
-  overlay.innerHTML = `
-    <div class="ceremony-text">
-      <div class="entity-speech">press any key to receive your fortune.</div>
-    </div>`;
-  await fadeIn(overlay);
-}
-
 export async function showQR(svgString: string): Promise<void> {
   overlay.innerHTML = `
     <div class="ceremony-text">

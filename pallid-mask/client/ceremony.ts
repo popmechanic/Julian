@@ -15,7 +15,6 @@ const NARRATION_STEPS = [
 ];
 
 const QR_TIMEOUT_MS = 90_000;
-const REVEAL_HOLD_MS = 6_000;
 
 let state: CeremonyState = "WELCOME";
 let visitorName = "";
@@ -97,13 +96,6 @@ async function enterState(next: CeremonyState): Promise<void> {
       return enterDivine(input.question, input.timings);
     }
 
-    case "QR_OFFER": {
-      await display.showQROffer();
-      await waitForKey();
-      await display.clear();
-      return enterState("QR_DISPLAY");
-    }
-
     default:
       break;
   }
@@ -176,7 +168,7 @@ async function enterDivine(question: string, timings: number[]): Promise<void> {
   console.log(`[ceremony] → QR_DISPLAY`);
   await display.showQR(fortuneResult.qrSvg);
 
-  // Wait for keypress OR 45s timeout
+  // Wait for keypress OR 90s timeout
   await Promise.race([
     waitForKey(),
     new Promise<void>((r) => setTimeout(r, QR_TIMEOUT_MS)),

@@ -235,7 +235,7 @@ GET /fortunes/:id.html
 
 ### Typography
 
-Font: Orpheus (`assets/Orpheus.otf`) — all-caps display font. All display text written in lowercase in HTML source; Orpheus renders as uniform small caps. Never use `text-transform: uppercase` or Title Case.
+Font: Orpheus (`assets/Orpheus.otf`) — display font. All display text written in lowercase in HTML source; Orpheus renders as uniform small caps. Never use `text-transform: uppercase` or Title Case.
 
 ### Fortune Text Styling
 

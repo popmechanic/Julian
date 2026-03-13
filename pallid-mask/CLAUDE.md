@@ -1,7 +1,7 @@
 # Pallid Mask — Project Notes
 
 Sou'wester Arts Week 2026 · Ilwaco, Washington
-Two-room installation. See `docs/pallid-mask/plan.md` for full implementation plan.
+Two-room installation. See `docs/superpowers/plans/2026-03-12-pallid-mask-installation.md` for the implementation plan.
 Soul document for the entity: `pallid-mask/soul.md`.
 
 ## Typography
@@ -102,13 +102,12 @@ GLOW   = 'drop-shadow(0 0 3px var(--c5)) drop-shadow(0 0 8px var(--c1))'
 ## Sigils
 
 200 SVG files in `assets/Cyber Sigils Vectors - Fox Rockett Studio/SVG/`.
-All path data extracted into `sigils-all.js` (inlined into mockup.html for `file://` compatibility).
-Bottom banner cycles randomly via `makeSVG()`. Drift fires every 45–75s.
-Color: fill `var(--c5)` for banners, `var(--c3)` for drift.
+All path data extracted into `data/sigils.json`, served at `/data/sigils.json` and fetched by `client/sigils.ts` at runtime.
+Color: fill `var(--c5)` for banners and frame, `var(--c6)` for morph display.
 
 ## Source Texts
 
-Both in `pallid-mask/`, tab-indexed (`index\ttext`):
+Both in `pallid-mask/data/`, tab-indexed (`index\ttext`):
 - `king-in-yellow.txt` — 1,662 passages
 - `king-james-bible.txt` — 31,102 verses
 
@@ -118,16 +117,12 @@ king_yellow_index = seed % 1662
 bible_index = Math.floor(seed / 1662) % 31102
 ```
 
-## What's Built vs. What Still Needs Building
+## Architecture
 
-**Built:** `mockup.html` — full visual prototype with mask, animations, sigil morph, CRT effects, text layout.
+**Server** (`server/`): Bun server with pre-fetched greeting, stichomancy engine, Claude fortune generation, ElevenLabs TTS, QR code generation, and self-contained fortune page output.
 
-**Not yet built:**
-- The actual interactive stichomancy flow (visitor types → chaos input → fortune generated)
-- Claude API call with Pallid Mask system prompt
-- QR code generation for fortunes
-- Server endpoint or local file approach for fortune delivery
-- Julian MC mode for Room 1 (CRT)
-- Integration with the actual installation hardware
+**Client** (`client/`): Modular TypeScript — `ceremony.ts` (state machine), `mask.ts` (blink/smile), `sigils.ts` (morph/frame/spinner), `display.ts` (text overlays), `input.ts` (keystroke capture with timing), `api.ts` (server endpoints).
 
-See `docs/pallid-mask/plan.md` for the full technical spec.
+**Ceremony flow:** `WELCOME → SUMMON → NAME → INPUT → DIVINE → FORTUNE → QR_DISPLAY → (reset)`.
+
+**Reference:** `mockup.html` is the original monolithic prototype, kept for visual debugging without running the server.
