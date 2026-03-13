@@ -1,0 +1,179 @@
+import type { CeremonyState, FortuneResponse } from "./types";
+import * as mask from "./mask";
+import * as sigils from "./sigils";
+import * as display from "./display";
+import { captureInput } from "./input";
+import { requestGreeting, requestFortune, requestReset } from "./api";
+
+const NARRATION_STEPS = [
+  "gathering the intervals between your keystrokes...",
+  "deriving a seed from the rhythm of your intention...",
+  "consulting the first text...",
+  "consulting the second text...",
+  "two passages have been drawn...",
+  "the mask is interpreting...",
+];
+
+const QR_TIMEOUT_MS = 45_000;
+const REVEAL_HOLD_MS = 6_000;
+
+let state: CeremonyState = "WELCOME";
+
+function playAudio(url: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const audio = new Audio(url);
+    audio.onended = () => resolve();
+    audio.onerror = () => reject(new Error("Audio playback failed"));
+    audio.play().catch(reject);
+  });
+}
+
+function waitForKey(): Promise<void> {
+  return new Promise((resolve) => {
+    function onKey(e: KeyboardEvent) {
+      e.preventDefault();
+      document.removeEventListener("keydown", onKey);
+      resolve();
+    }
+    document.addEventListener("keydown", onKey);
+  });
+}
+
+async function enterState(next: CeremonyState): Promise<void> {
+  state = next;
+  console.log(`[ceremony] → ${state}`);
+
+  switch (state) {
+    case "WELCOME": {
+      await display.showWelcome();
+      await waitForKey();
+      await display.clear();
+      return enterState("SUMMON");
+    }
+
+    case "SUMMON": {
+      mask.show();
+      sigils.start();
+      try {
+        const greeting = await requestGreeting();
+        await playAudio(greeting.audioUrl);
+      } catch (err) {
+        console.error("Greeting failed:", err);
+        await handleError();
+        return;
+      }
+      return enterState("INPUT");
+    }
+
+    case "INPUT": {
+      await display.showPrompt();
+      const input = await captureInput();
+      await display.clear();
+      return enterDivine(input.question, input.timings);
+    }
+
+    case "QR_OFFER": {
+      await display.showQROffer();
+      await waitForKey();
+      await display.clear();
+      return enterState("QR_DISPLAY");
+    }
+
+    default:
+      break;
+  }
+}
+
+async function enterDivine(question: string, timings: number[]): Promise<void> {
+  state = "DIVINE";
+  console.log(`[ceremony] → DIVINE`);
+
+  mask.recede();
+  sigils.loadingMode();
+
+  // Start API call FIRST, then narration — both run in parallel
+  let fortuneResult: FortuneResponse | null = null;
+  let fortuneError: Error | null = null;
+
+  // Kick off the fortune request immediately (runs concurrently with narration)
+  const fortunePromise = requestFortune(question, timings)
+    .then((result) => { fortuneResult = result; })
+    .catch((err) => { fortuneError = err as Error; });
+
+  // showNarration displays all steps sequentially (~14s), then holds on the last one.
+  // While narration runs, the API call is also in flight.
+  const narration = await display.showNarration(NARRATION_STEPS);
+
+  // Narration is done. Wait for API if it hasn't resolved yet.
+  await fortunePromise;
+  // Release the narration hold
+  narration.release();
+
+  sigils.normalMode();
+  await display.clear();
+
+  if (fortuneError || !fortuneResult) {
+    await handleError();
+    return;
+  }
+
+  // FORTUNE state — mask returns, reads fortune aloud
+  state = "FORTUNE";
+  console.log(`[ceremony] → FORTUNE`);
+  mask.restore();
+
+  try {
+    await playAudio(fortuneResult.audioUrl);
+  } catch {
+    // If audio fails, proceed to text display anyway
+  }
+
+  // REVEAL state — mask fades, text appears
+  state = "REVEAL";
+  console.log(`[ceremony] → REVEAL`);
+  mask.hide();
+  await display.showFortune(fortuneResult.fortune);
+  await new Promise((r) => setTimeout(r, REVEAL_HOLD_MS));
+  await display.clear();
+
+  // QR_OFFER
+  await enterState("QR_OFFER");
+
+  // QR_DISPLAY
+  state = "QR_DISPLAY";
+  console.log(`[ceremony] → QR_DISPLAY`);
+  await display.showQR(fortuneResult.qrSvg);
+
+  // Wait for keypress OR 45s timeout
+  await Promise.race([
+    waitForKey(),
+    new Promise<void>((r) => setTimeout(r, QR_TIMEOUT_MS)),
+  ]);
+
+  await display.clear();
+  await reset();
+}
+
+async function handleError(): Promise<void> {
+  mask.hide();
+  sigils.stop();
+  await display.clear();
+  await display.showError(
+    "the mask has lost its voice.<br>press any key to begin again."
+  );
+  await waitForKey();
+  await reset();
+}
+
+async function reset(): Promise<void> {
+  mask.hide();
+  sigils.stop();
+  await display.clear();
+  await requestReset();
+  return enterState("WELCOME");
+}
+
+export async function start(): Promise<void> {
+  await sigils.init();
+  await enterState("WELCOME");
+}
