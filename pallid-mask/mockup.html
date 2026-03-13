@@ -445,15 +445,21 @@ body::after {
 
 .sf-cell {
   position: absolute;
+  width: 110px;    /* CELL — hard box keeps SVG width:100% from expanding to viewport */
+  height: 110px;   /* CELL */
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   will-change: filter;
   filter: drop-shadow(0 0 3px var(--c5)) drop-shadow(0 0 8px var(--c1));
 }
 
-/* Override makeSVG's inline style="width:100%" for frame cells only.
-   !important is necessary here because the SVG has an inline style. */
 .sf-cell svg {
-  height: 110px !important; /* CELL — fixed, never varies */
-  width: auto !important;   /* natural aspect ratio, can be narrower */
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  display: block;
   fill: var(--c5);
 }
 
