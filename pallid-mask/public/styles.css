@@ -221,38 +221,41 @@ body::after {
    Right corner always sits higher than left — the asymmetry is the secret. */
 
 @keyframes mouth-upper-smile {
-  /* Center stays anchored ~(400,447); corners curl up and outward */
+  /* Terrible joy — corners curl far up and outward like hooks.
+     Mouth nearly doubles in width; right corner always higher.
+     Center stays anchored near (400,450). */
   0%, 100% { d: path('M 363 452 C 375 444 390 443 400 447 C 410 443 425 444 439 449'); }
-  30%, 70%  { d: path('M 358 433 C 374 441 391 445 400 447 C 409 445 427 440 445 428'); }
+  30%, 70%  { d: path('M 338 415 C 358 440 385 449 400 450 C 415 449 444 438 466 408'); }
 }
 @keyframes mouth-lower-smile {
-  /* Lower lip center FIXED at (400,463); only corners lift — imp curl */
+  /* Lower lip center dips slightly (468) — mouth opens a fraction.
+     Corners match upper lip for closed seal at edges. */
   0%, 100% { d: path('M 363 452 Q 400 463 439 449'); }
-  30%, 70%  { d: path('M 358 433 Q 400 463 445 428'); }
+  30%, 70%  { d: path('M 338 415 Q 400 468 466 408'); }
 }
 
-/* Cheeks push up and outward as the smile muscles engage */
+/* Cheeks push harder outward to accommodate the wider grin */
 @keyframes cheek-left-smile {
   0%, 100% { d: path('M 345 390 L 325 450 L 340 510'); }
-  30%, 70%  { d: path('M 342 388 L 308 435 L 328 506'); }
+  30%, 70%  { d: path('M 340 386 L 296 428 L 320 502'); }
 }
 @keyframes cheek-right-smile {
   0%, 100% { d: path('M 455 390 L 475 450 L 460 510'); }
-  30%, 70%  { d: path('M 458 388 L 492 435 L 472 506'); }
+  30%, 70%  { d: path('M 460 386 L 504 428 L 480 502'); }
 }
 @keyframes cheek-bottom-smile {
   0%, 100% { d: path('M 375 510 L 400 520 L 425 510'); }
-  30%, 70%  { d: path('M 370 514 L 400 526 L 430 514'); }
+  30%, 70%  { d: path('M 365 516 L 400 530 L 435 516'); }
 }
 
-/* Face outline: slight cheekbone bulge at malar level (y≈340–420) */
+/* Face outline: stronger cheekbone bulge to support the wide grin */
 @keyframes face-left-smile {
   0%, 100% { d: path('M 330 110 C 260 140 240 260 270 370 C 290 450 340 520 400 550'); }
-  30%, 70%  { d: path('M 330 110 C 260 140 234 260 262 370 C 284 450 338 520 400 550'); }
+  30%, 70%  { d: path('M 330 110 C 260 140 230 260 256 370 C 280 450 336 520 400 550'); }
 }
 @keyframes face-right-smile {
   0%, 100% { d: path('M 470 110 C 540 140 560 260 530 370 C 510 450 460 520 400 550'); }
-  30%, 70%  { d: path('M 470 110 C 540 140 566 260 538 370 C 516 450 462 520 400 550'); }
+  30%, 70%  { d: path('M 470 110 C 540 140 570 260 544 370 C 520 450 464 520 400 550'); }
 }
 
 @keyframes crinkle-appear {
