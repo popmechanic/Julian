@@ -9,6 +9,10 @@ A fixed-position border of cycling sigils frames all four edges of the viewport.
 
 ## Layout
 
+### DOM insertion point
+
+The frame container is inserted as a **direct child of `<body>`**, before the existing hidden filter SVG. This is required because `.screen` has `filter: hue-rotate(15deg)`, which creates a stacking context that would flatten z-index values for any descendants — the frame must be a sibling of `.screen`, not a child.
+
 ### Container
 
 ```css
@@ -27,27 +31,37 @@ Cells have **fixed height = CELL**, **width = auto** (bounded by CELL max). The 
 
 - **Top:** full width, `y = 0`, owns both top corners
 - **Bottom:** full width, `y = vh − CELL`, owns both bottom corners
-- **Left:** `x = 0`, from `CELL` to `vh − CELL` (excludes corners)
-- **Right:** `x = vw − CELL`, from `CELL` to `vh − CELL` (excludes corners)
+- **Left:** `x = 0`, from `y = CELL` to `y = vh − CELL` (excludes corners), strip height = `vh − 2 * CELL`
+- **Right:** `x = vw − CELL`, same height range as left
 
-Top and bottom cells are **evenly spaced** across the strip width (gap distributed uniformly, strip always fully covered regardless of aspect ratio).
+### Spacing formula
 
-Left and right cells are **evenly spaced** across the strip height.
+For all four strips, cells are evenly spaced with padding-inclusive gaps:
+
+```
+nCells = floor(stripLength / CELL)
+gap    = (stripLength − nCells * CELL) / (nCells + 1)
+```
+
+First cell starts at `gap` from the strip origin; subsequent cells at `gap + CELL` intervals. This distributes whitespace uniformly including outer margins, fully covering the strip at any viewport size.
+
+For top/bottom: `stripLength = vw`, cells positioned along x.
+For left/right: `stripLength = vh − 2 * CELL`, cells positioned along y (offset by `CELL` from top/bottom).
 
 ### Clockwise index order
 
 ```
-0 → nTop−1          top, left→right
+0 → nTop−1              top, left→right
 nTop → nTop+nRight−1    right, top→bottom
 nTop+nRight → …         bottom, right→left
-… → N−1             left, bottom→top
+… → N−1                 left, bottom→top
 ```
 
 Total N cells determined at runtime from viewport size.
 
 ### Starting sigils
 
-Cell `i` starts at sigil index `(i * floor(200 / N)) % 200` — evenly distributed across the 200 available sigils so no two adjacent cells start on the same symbol.
+Cell `i` starts at sigil index `(i * floor(200 / N)) % 200` — distributed across the 200 available sigils so no two adjacent cells start on the same symbol.
 
 ---
 
@@ -70,7 +84,7 @@ Same seed and frequency as the bottom sigil — one continuous noise character a
 
 ### Pool management
 
-Two arrays: `available[]` (filter indices ready to assign) and `inUse` map (cell → filter index).
+Two structures: `available[]` (filter indices ready to assign) and `inUse` Map (cell index → filter index).
 
 Each rAF frame:
 1. Compute active band for this tick
@@ -78,6 +92,12 @@ Each rAF frame:
 3. For cells leaving the band: release filter index back to `available[]`, reset `cell.style.filter` to drop-shadow only, reset `scale` to 0
 
 Pool size (12) > max simultaneous active cells (WAVE_WIDTH = 10) — always has headroom.
+
+If N < WAVE_WIDTH (very small viewport), all cells may be in the active band simultaneously. Pool size 12 handles this since N would also be small in that case. No special handling required; add a comment noting the degenerate case.
+
+### `will-change` strategy
+
+All frame cells receive `will-change: filter` at construction time. This pre-promotes them to GPU layers and avoids reactive promotion jank during rAF when cells enter the active band. The fixed overhead (one composited layer per cell, ~50 cells at 1080p) is acceptable given that the frame cells are small (110px) and their SVG content is static between swaps.
 
 ---
 
@@ -97,27 +117,39 @@ Pool size (12) > max simultaneous active cells (WAVE_WIDTH = 10) — always has 
 const cursor = (elapsed / WAVE_PERIOD) * N;  // float, advances clockwise
 
 for each cell i:
-  const dist = (cursor - i + N) % N;         // how far behind the wavefront
+  const dist = (cursor - i + N) % N;
+  // dist = 0: wavefront is exactly on cell i (leading edge, just arrived)
+  // dist = WAVE_WIDTH/2: peak displacement
+  // dist = WAVE_WIDTH: cell is leaving the band (trailing edge)
+  // dist > WAVE_WIDTH: cell is inactive
   if (dist < WAVE_WIDTH) {
-    const t = dist / WAVE_WIDTH;              // 0 at leading edge, 1 at trailing
-    const scale = SCALE_MAX * Math.sin(t * Math.PI);  // bell: 0 → peak → 0
+    const t = dist / WAVE_WIDTH;                          // 0→1 through band
+    const scale = SCALE_MAX * Math.sin(t * Math.PI);     // bell: 0 → peak → 0
     wdEl.setAttribute('scale', scale.toFixed(2));
   }
 ```
 
+### Initial-state guard
+
+On the very first rAF frame, `cursor` is near 0, which means cells 0 through ~9 all have `dist < WAVE_WIDTH` simultaneously. Without intervention, all of them would trigger a sigil swap at peak. To prevent this burst:
+
+**On init, mark all cells as already swapped** (`cell.swapped = true`). The wave will naturally reset each cell's `swapped` flag as it first exits the band (`dist >= WAVE_WIDTH`), then the normal swap logic applies on the second pass.
+
 ### Sigil swap
 
-When `dist` crosses `WAVE_WIDTH / 2` for cell `i` (peak distortion), swap the cell's SVG content to a new random sigil (`pickRandom(current)`). The swap is instant — maximum displacement hides the cut.
+When `dist` crosses `WAVE_WIDTH / 2` for cell `i` (peak distortion), swap the cell's SVG content to a new random sigil (`pickRandom(currentSigil)`). The swap is instant — maximum displacement hides the cut.
 
-Each cell tracks a `swapped` boolean per wave pass, reset when `dist >= WAVE_WIDTH`.
+Each cell tracks:
+- `swapped: bool` — whether it has swapped this wave pass; reset when `dist >= WAVE_WIDTH`
+- `currentSigil: int` — current sigil index, updated on swap
 
 ---
 
 ## Glow
 
 Cells not in the active band:
-```css
-filter: drop-shadow(0 0 3px var(--c5)) drop-shadow(0 0 8px var(--c1));
+```js
+cell.style.filter = 'drop-shadow(0 0 3px var(--c5)) drop-shadow(0 0 8px var(--c1))';
 ```
 
 Cells in the active band (filter assigned):
@@ -131,9 +163,10 @@ SVG `fill: var(--c5)` — matches the existing top sigil banner color.
 
 ## Integration
 
+- Frame container inserted as direct `<body>` child, before the hidden filter SVG
 - Frame init runs after `ALL_SIGILS` is defined (end of `<script>`, after bottom sigil IIFE)
 - Frame rAF loop is independent from the top sigil morph loop
-- Frame recomputes cell layout on `window.resize` (debounced 200ms) — reinitializes cells, preserves wave cursor position
+- On `window.resize` (debounced 200ms): remove old frame container, reinitialize cells at new viewport size. The `elapsed` timestamp continues uninterrupted, so the wave resumes from its fractional lap position. Cell indices rebuild fresh at the new N — no continuity of individual cell state across resize, which is acceptable.
 
 ---
 
