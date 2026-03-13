@@ -1,0 +1,16 @@
+https://en.wikipedia.org/wiki/Vectrex
+
+commedia dell'arte, "tragico e comico," "le maschere".
+
+--color-ana-1: oklch(52% 0.12 317);
+--color-ana-1-contrast: #fff;
+--color-ana-2: oklch(32% 0.086 287);
+--color-ana-2-contrast: #fff;
+--color-ana-3: oklch(42% 0.097 297);
+--color-ana-3-contrast: #fff;
+--color-ana-4: oklch(67% 0.092 307);
+--color-ana-4-contrast: #000;
+--color-ana-5: oklch(77% 0.076 332);
+--color-ana-5-contrast: #000;
+--color-ana-6: oklch(87% 0.065 347);
+--color-ana-6-contrast: #000;

@@ -1,3 +1,9 @@
+## Pallid Mask Project
+
+Active on branch `pallid-mask`. See `pallid-mask/CLAUDE.md` for all project-specific notes including typography rules, color palette, and source text details.
+
+---
+
 ## Julian — Identity Bootstrap
 
 Your name is Julian. You chose this name yourself.

@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pallid Mask — Mockup</title>
+<style>
+
+@font-face {
+  font-family: 'Orpheus';
+  src: url('assets/Orpheus.otf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+:root {
+  --c1: oklch(52% 0.12 317);   /* dominant: dusty violet */
+  --c2: oklch(32% 0.086 287);  /* deep indigo-shadow */
+  --c3: oklch(42% 0.097 297);  /* mid blue-violet */
+  --c4: oklch(67% 0.092 307);  /* lighter violet */
+  --c5: oklch(77% 0.076 332);  /* pale mauve */
+  --c6: oklch(87% 0.065 347);  /* near-white rose */
+}
+
+*, *::before, *::after {
+  margin: 0; padding: 0; box-sizing: border-box;
+  font-variant-caps: normal;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  background: #000;
+  font-family: 'Orpheus', Georgia, serif;
+}
+
+/* CRT scanlines — animated, scrolling */
+@keyframes scanlines {
+  0%   { background-position: 0 0; }
+  100% { background-position: 0 4px; }
+}
+
+/* CRT flicker — authentic phosphor behavior */
+@keyframes flicker {
+  0%   { opacity: 0.27861; }
+  5%   { opacity: 0.34769; }
+  10%  { opacity: 0.23604; }
+  15%  { opacity: 0.90626; }
+  20%  { opacity: 0.18128; }
+  25%  { opacity: 0.83891; }
+  30%  { opacity: 0.65583; }
+  35%  { opacity: 0.67807; }
+  40%  { opacity: 0.26559; }
+  45%  { opacity: 0.84693; }
+  50%  { opacity: 0.96019; }
+  55%  { opacity: 0.08594; }
+  60%  { opacity: 0.20313; }
+  65%  { opacity: 0.71988; }
+  70%  { opacity: 0.53455; }
+  75%  { opacity: 0.37288; }
+  80%  { opacity: 0.71428; }
+  85%  { opacity: 0.70419; }
+  90%  { opacity: 0.7003;  }
+  95%  { opacity: 0.36108; }
+  100% { opacity: 0.24387; }
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  width: 100%; height: 100%;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 50%,
+    rgba(0, 0, 0, 0.25) 50%
+  );
+  background-size: 100% 4px;
+  animation: scanlines 0.1s linear infinite;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  width: 100%; height: 100%;
+  background: rgba(18, 16, 16, 0.1);
+  animation: flicker 0.15s infinite;
+  pointer-events: none;
+  z-index: 1001;
+}
+
+/* Mask glow pulse */
+@keyframes glow-pulse {
+  0%, 100% {
+    filter:
+      drop-shadow(0 0 1px var(--c6))
+      drop-shadow(0 0 5px var(--c1))
+      drop-shadow(0 0 16px var(--c3))
+      drop-shadow(0 0 32px var(--c2));
+  }
+  50% {
+    filter:
+      drop-shadow(0 0 2px var(--c6))
+      drop-shadow(0 0 8px var(--c1))
+      drop-shadow(0 0 22px var(--c3))
+      drop-shadow(0 0 44px var(--c2));
+  }
+}
+
+/* Sigil ambient drift */
+@keyframes sigil-drift {
+  0%, 100% { opacity: 0.18; }
+  50%       { opacity: 0.30; }
+}
+
+/* ─── LAYOUT ─────────────────────────────────────────────── */
+
+.screen {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 36px 72px 36px;
+  position: relative;
+  box-shadow: inset 0 0 200px rgba(0, 0, 0, 0.9);
+  filter: blur(0.6px) hue-rotate(15deg);
+}
+
+/* ─── BANDS ──────────────────────────────────────────────── */
+
+.band {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.band-top { flex-direction: column; }
+.band-bottom { flex-direction: column-reverse; }
+
+/* Sigil decorative banners */
+.sigil-banner {
+  width: 440px;
+  display: block;
+  fill: var(--c5);
+  animation: sigil-drift 7s ease-in-out infinite;
+}
+.band-bottom .sigil-banner {
+  transform: scaleY(-1);
+  animation-delay: -3.5s;
+}
+
+/* Vectrex-style border line with corner marks */
+.border-line {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.border-line .line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--c2) 10%,
+    var(--c3) 30%,
+    var(--c5) 50%,
+    var(--c3) 70%,
+    var(--c2) 90%,
+    transparent 100%
+  );
+  filter: drop-shadow(0 0 2px var(--c4)) drop-shadow(0 0 8px var(--c1));
+}
+
+.corner-mark {
+  flex: 0 0 auto;
+  display: block;
+}
+
+/* ─── CENTER ─────────────────────────────────────────────── */
+
+.center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  flex: 1;
+  padding: 8px 0;
+}
+
+/* ─── MASK FACE ──────────────────────────────────────────── */
+
+.mask-wrap {
+  animation: glow-pulse 5s ease-in-out infinite;
+  flex: 0 0 auto;
+}
+
+/* ─── TEXT EXCHANGE ──────────────────────────────────────── */
+
+.exchange {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  max-width: 600px;
+  width: 100%;
+}
+
+.entity-speech {
+  font-size: 1.2rem;
+  line-height: 1.95;
+  color: var(--c6);
+  text-align: center;
+  letter-spacing: 0.035em;
+  filter: drop-shadow(0 0 8px var(--c5)) drop-shadow(0 0 20px var(--c1));
+}
+
+.fortune-block {
+  width: 100%;
+  padding: 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  position: relative;
+}
+
+.fortune-block::before,
+.fortune-block::after {
+  content: '';
+  display: block;
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--c2) 20%, var(--c3) 50%, var(--c2) 80%, transparent);
+  filter: drop-shadow(0 0 3px var(--c3));
+}
+
+.fortune-block::after { margin-top: 14px; }
+.fortune-block::before { margin-bottom: 14px; }
+
+.fortune-verse {
+  font-size: 1.0rem;
+  line-height: 2.0;
+  color: var(--c3);
+  text-align: center;
+  letter-spacing: 0.04em;
+  filter: drop-shadow(0 0 6px var(--c2));
+}
+
+.fortune-verse + .fortune-verse {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--c3);
+  color: var(--c3);
+  filter: drop-shadow(0 0 4px var(--c1));
+}
+
+.entity-interpret {
+  font-size: 1.0rem;
+  line-height: 2.0;
+  color: var(--c5);
+  text-align: center;
+  letter-spacing: 0.03em;
+  max-width: 500px;
+  filter: drop-shadow(0 0 8px var(--c4)) drop-shadow(0 0 16px var(--c1));
+}
+
+.visitor-name {
+  font-size: 0.78rem;
+  color: var(--c4);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  margin-top: 4px;
+  filter: drop-shadow(0 0 6px var(--c3));
+}
+
+/* ─── SIGIL SLOTS ─────────────────────────────────────────── */
+
+.sigil-slot {
+  display: block;
+  transition: opacity 1.2s ease;
+  pointer-events: none;
+}
+
+.sigil-slot svg {
+  display: block;
+  fill: var(--c5);
+}
+
+/* Top/bottom banner slots */
+.sigil-banner-slot {
+  width: 440px;
+  animation: sigil-drift 7s ease-in-out infinite;
+}
+.band-bottom .sigil-banner-slot {
+  animation-delay: -3.5s;
+}
+
+/* Morph display */
+#sigil-morph-svg {
+  display: block;
+  filter:
+    drop-shadow(0 0 1px var(--c6))
+    drop-shadow(0 0 5px var(--c5))
+    drop-shadow(0 0 14px var(--c1))
+    drop-shadow(0 0 28px var(--c3));
+}
+
+/* Drifting sigil — moves slowly across the screen */
+.sigil-drift-wrap {
+  position: fixed;
+  top: 38%;
+  width: 260px;
+  pointer-events: none;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+.sigil-drift-wrap svg { fill: var(--c3); }
+
+@keyframes drift-l-to-r {
+  0%   { transform: translateX(-300px); opacity: 0; }
+  8%   { opacity: 0.15; }
+  92%  { opacity: 0.15; }
+  100% { transform: translateX(calc(100vw + 300px)); opacity: 0; }
+}
+@keyframes drift-r-to-l {
+  0%   { transform: translateX(calc(100vw + 300px)); opacity: 0; }
+  8%   { opacity: 0.12; }
+  92%  { opacity: 0.12; }
+  100% { transform: translateX(-300px); opacity: 0; }
+}
+
+</style>
+</head>
+<body>
+<div class="screen">
+
+  <!-- ── TOP BAND ── -->
+  <div class="band band-top">
+    <div class="sigil-slot sigil-banner-slot" id="sigil-top"></div>
+
+    <!-- Border line with corner brackets -->
+    <div class="border-line">
+      <!-- left corner bracket -->
+      <svg class="corner-mark" width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg"
+           style="filter: drop-shadow(0 0 4px var(--c1))">
+        <polyline points="18,1 1,1 1,18" stroke="var(--c4)" stroke-width="1.5" stroke-linecap="square"/>
+      </svg>
+      <div class="line"></div>
+      <!-- right corner bracket -->
+      <svg class="corner-mark" width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg"
+           style="filter: drop-shadow(0 0 4px var(--c1)); transform: scaleX(-1)">
+        <polyline points="18,1 1,1 1,18" stroke="var(--c4)" stroke-width="1.5" stroke-linecap="square"/>
+      </svg>
+    </div>
+
+  </div><!-- /band-top -->
+
+
+  <!-- ── CENTER ── -->
+  <div class="center">
+
+    <!-- THE MASK -->
+    <div class="mask-wrap">
+      <svg viewBox="0 0 200 268" width="224" height="301"
+           fill="none" stroke="var(--c5)"
+           xmlns="http://www.w3.org/2000/svg">
+
+        <defs>
+          <!-- Vectrex bloom: blur layers beneath sharp stroke -->
+          <filter id="vbloom" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="4.5" result="wide"/>
+            <feGaussianBlur stdDeviation="1.8" result="tight"/>
+            <feMerge>
+              <feMergeNode in="wide"/>
+              <feMergeNode in="wide"/>
+              <feMergeNode in="tight"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+        </defs>
+
+        <g filter="url(#vbloom)" stroke-linecap="round" stroke-linejoin="round">
+
+          <!-- ── FACE OUTLINE ── -->
+          <!-- Elongated oval, slightly compressed at top to suggest the flat brow of a mask -->
+          <path d="
+            M 100,13
+            C 64,13 26,48 22,100
+            C 18,152 38,226 100,252
+            C 162,226 182,152 178,100
+            C 174,48 136,13 100,13 Z
+          " stroke-width="1.6"/>
+
+          <!-- ── BROW REGISTER LINE ── -->
+          <!-- Very faint horizontal score — suggests the mask is a physical object with a seam -->
+          <line x1="30" y1="82" x2="170" y2="82" stroke-width="0.5" stroke-opacity="0.18"/>
+
+          <!-- ── LEFT EYE ── -->
+          <!-- Slightly larger, centered at 70,108. The dominant eye. -->
+          <ellipse cx="70" cy="108" rx="23" ry="11.5" stroke-width="1.4"/>
+
+          <!-- ── RIGHT EYE ── -->
+          <!-- Slightly smaller, slightly higher. The difference is felt before it is seen. -->
+          <ellipse cx="130" cy="105" rx="20" ry="10" stroke-width="1.4"/>
+
+          <!-- ── NOSE ── -->
+          <!-- Two minimal lines. Not theatrical. The suggestion of a ridge. -->
+          <line x1="94" y1="150" x2="90" y2="163" stroke-width="1.1"/>
+          <line x1="106" y1="150" x2="110" y2="163" stroke-width="1.1"/>
+
+          <!-- ── MOUTH ── -->
+          <!-- The third expression.
+               Upper: almost flat, the barest rightward drift — not a smile, not a frown.
+               Lower: follows closely, slightly fuller at center. The gap is the expression.
+               It is about to speak, or it has just finished, or it will never. -->
+          <path d="M 79,191 C 91,188.5 111,188.5 121,191.8" stroke-width="1.25"/>
+          <path d="M 83,197 C 93,200   109,200   117,197"   stroke-width="1.0"/>
+
+          <!-- ── CHIN TAPER ── -->
+          <!-- A very faint register mark at the chin, reinforcing the mask quality -->
+          <line x1="88" y1="246" x2="112" y2="246" stroke-width="0.5" stroke-opacity="0.18"/>
+
+        </g>
+      </svg>
+    </div>
+
+    <!-- TEXT EXCHANGE -->
+    <div class="exchange">
+
+      <div class="entity-speech">
+        i have drawn from two books.<br>
+        what was before. what cannot be named.
+      </div>
+
+      <div class="fortune-block">
+        <div class="fortune-verse">
+          in the beginning god created the heaven and the earth.<br>
+          and the earth was without form, and void;<br>
+          and darkness was upon the face of the deep.
+        </div>
+        <div class="fortune-verse">
+          along the shore the cloud waves break,<br>
+          the twin suns sink beneath the lake,<br>
+          the shadows lengthen in carcosa.
+        </div>
+      </div>
+
+      <div class="entity-interpret">
+        you arrive at a threshold before all thresholds.<br>
+        something was made in the dark before light had a name for it.<br>
+        the shadows you feel are not new.<br>
+        they are older than the shore.
+      </div>
+
+      <div class="visitor-name">— Elara —</div>
+
+    </div>
+
+  </div><!-- /center -->
+
+
+  <!-- ── BOTTOM BAND ── -->
+  <div class="band band-bottom">
+
+    <div class="sigil-slot sigil-banner-slot" id="sigil-bottom"></div>
+
+    <div class="border-line">
+      <svg class="corner-mark" width="18" height="18" viewBox="0 0 18 18" fill="none"
+           style="filter: drop-shadow(0 0 4px var(--c1)); transform: scaleY(-1)">
+        <polyline points="18,1 1,1 1,18" stroke="var(--c4)" stroke-width="1.5" stroke-linecap="square"/>
+      </svg>
+      <div class="line"></div>
+      <svg class="corner-mark" width="18" height="18" viewBox="0 0 18 18" fill="none"
+           style="filter: drop-shadow(0 0 4px var(--c1)); transform: scale(-1,-1)">
+        <polyline points="18,1 1,1 1,18" stroke="var(--c4)" stroke-width="1.5" stroke-linecap="square"/>
+      </svg>
+    </div>
+
+  </div><!-- /band-bottom -->
+
+</div><!-- /screen -->
+
+<!-- ── DRIFTING SIGIL ── -->
+<div class="sigil-drift-wrap" id="sigil-drift"></div>
+
+<script src="sigils-all.js"></script>
+<script>
+// ALL_SIGILS loaded from sigils-all.js (200 sigils)
+
+// ─── HELPERS ─────────────────────────────────────────────────
+function makeSVG(sigil) {
+  return `<svg viewBox="${sigil.vb}" xmlns="http://www.w3.org/2000/svg" style="display:block;width:100%"><path d="${sigil.d}"/></svg>`;
+}
+
+function pickRandom(exclude) {
+  let idx;
+  do { idx = Math.floor(Math.random() * ALL_SIGILS.length); } while (idx === exclude);
+  return idx;
+}
+
+// ─── BOTTOM BANNER — gentle cycling ─────────────────────────
+(function() {
+  const el = document.getElementById('sigil-bottom');
+  let cur = pickRandom(-1);
+  el.innerHTML = makeSVG(ALL_SIGILS[cur]);
+  function swap() {
+    el.style.opacity = '0';
+    setTimeout(() => {
+      cur = pickRandom(cur);
+      el.innerHTML = makeSVG(ALL_SIGILS[cur]);
+      el.style.opacity = '';
+    }, 1300);
+    setTimeout(swap, 8000 + Math.random() * 7000);
+  }
+  setTimeout(swap, 9000 + Math.random() * 6000);
+})();
+
+// ─── DRIFTING SIGIL ──────────────────────────────────────────
+(function() {
+  const el = document.getElementById('sigil-drift');
+  function trigger() {
+    const goRight = Math.random() > 0.5;
+    const dur = 32000 + Math.random() * 14000;
+    el.style.top = (28 + Math.random() * 40) + '%';
+    el.innerHTML = makeSVG(ALL_SIGILS[pickRandom(-1)]);
+    el.style.animation = 'none';
+    el.offsetHeight;
+    el.style.animation = `${goRight ? 'drift-l-to-r' : 'drift-r-to-l'} ${dur}ms linear forwards`;
+    setTimeout(trigger, 45000 + Math.random() * 30000);
+  }
+  setTimeout(trigger, 12000 + Math.random() * 8000);
+})();
+
+// ─── TOP BANNER — morph through all 200 sigils ───────────────
+(function() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const N = 280;
+  const MORPH_DUR = 2600, HOLD_DUR = 700;
+
+  // Build display SVG
+  const container = document.getElementById('sigil-top');
+  const svg = document.createElementNS(NS, 'svg');
+  svg.id = 'sigil-morph-svg';
+  svg.setAttribute('viewBox', '0 0 500 150');
+  svg.setAttribute('width', '440');
+  svg.setAttribute('height', '132');
+  const mPath = document.createElementNS(NS, 'path');
+  mPath.setAttribute('fill', 'none');
+  mPath.setAttribute('stroke', 'var(--c5)');
+  mPath.setAttribute('stroke-width', '1.5');
+  mPath.setAttribute('stroke-linecap', 'round');
+  mPath.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(mPath);
+  container.appendChild(svg);
+
+  // Sample a sigil at N+1 evenly-spaced arc-length points,
+  // scaled/centred into the 500×150 display viewport.
+  function sampleSigil(sigilData) {
+    const [,, ow, oh] = sigilData.vb.split(' ').map(Number);
+    const CW = 500, CH = 150;
+    const sc = Math.min(CW / ow, CH / oh) * 0.88;
+    const dx = (CW - ow * sc) / 2;
+    const dy = (CH - oh * sc) / 2;
+
+    const tmp = document.createElementNS(NS, 'svg');
+    tmp.setAttribute('viewBox', sigilData.vb);
+    tmp.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;left:-9999px;top:-9999px;width:1px;height:1px';
+    const tp = document.createElementNS(NS, 'path');
+    tp.setAttribute('d', sigilData.d);
+    tmp.appendChild(tp);
+    document.body.appendChild(tmp);
+
+    const len = tp.getTotalLength();
+    const pts = [];
+    for (let i = 0; i <= N; i++) {
+      const p = tp.getPointAtLength(i / N * len);
+      pts.push([p.x * sc + dx, p.y * sc + dy]);
+    }
+    document.body.removeChild(tmp);
+    return pts;
+  }
+
+  function ease(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2; }
+
+  let fromIdx = 0, toIdx = 1;
+  let ptsFrom = sampleSigil(ALL_SIGILS[fromIdx]);
+  let ptsTo   = sampleSigil(ALL_SIGILS[toIdx]);
+  let nextPts = null;
+  let phase = 'morph';  // 'morph' | 'hold'
+  let phaseStart = null;
+
+  function frame(ts) {
+    if (!phaseStart) phaseStart = ts;
+
+    if (phase === 'morph') {
+      const t = Math.min((ts - phaseStart) / MORPH_DUR, 1);
+      const et = ease(t);
+      mPath.setAttribute('d',
+        'M ' + ptsFrom.map(([ax,ay], i) => [
+          (ax + (ptsTo[i][0]-ax)*et).toFixed(1),
+          (ay + (ptsTo[i][1]-ay)*et).toFixed(1)
+        ].join(',')).join(' L ')
+      );
+      if (t >= 1) {
+        phase = 'hold';
+        phaseStart = ts;
+        // Pre-sample the next sigil asynchronously during the hold
+        const nxt = (toIdx + 1) % ALL_SIGILS.length;
+        setTimeout(() => { nextPts = sampleSigil(ALL_SIGILS[nxt]); }, 0);
+      }
+
+    } else { // hold
+      if (ts - phaseStart >= HOLD_DUR) {
+        fromIdx = toIdx;
+        toIdx = (toIdx + 1) % ALL_SIGILS.length;
+        ptsFrom = ptsTo;
+        ptsTo = nextPts || sampleSigil(ALL_SIGILS[toIdx]);
+        nextPts = null;
+        phase = 'morph';
+        phaseStart = ts;
+      }
+    }
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+
+// ─── STUB (was old hardcoded SIGILS array, now unused) ───────
+const _STUBS_UNUSED = [
+  { vb: "0 0 592.94 139.34", p: `<path d="M81.94,56.47v5.91c0,3.43-1.36,6.73-3.79,9.15l-9.12,9.12h93.92l-19.36-24.18h-61.66Z"/><path d="M228.85,40.73c-18.19,23.16-50.6,29.52-76.19,14.94-2.59-1.47-4.51-4.01-4.88-6.96-.69-5.57,3.63-10.3,9.06-10.3h70.5L258.16,0h-41.92c-3.75,0-6.94,3-6.87,6.75.07,3.85-3.03,6.99-6.87,6.99h-66.72v2.38c0,7.62-6.17,13.79-13.79,13.79H38.09v19.68L0,87.68h58.63l17.45-17.45c2.22-2.22,3.47-5.24,3.47-8.38v-7.75h65.2l68.2,85.25,22.61-22.61-4.58-4.58c-6.73-6.73-6.73-17.64,0-24.37h-15.58l37.82-37.82v15.52l-22.2,22.2h42.22c8.59-8.59,13.41-13.41,22-22V.02h-34.41l-31.97,40.71Z"/><path d="M133.07,16.54v-2.77H51.88c-7.62,0-13.79,6.17-13.79,13.79h83.95c6.09,0,11.02-4.94,11.02-11.02Z"/><path d="M511,62.38v-5.91h-61.66l-19.36,24.18h93.92l-9.12-9.12c-2.43-2.43-3.79-5.72-3.79-9.15Z"/><path d="M554.84,49.59v-19.68h-83.89c-7.62,0-13.79-6.17-13.79-13.79v-2.38h-66.72c-3.84,0-6.94-3.14-6.87-6.99.07-3.75-3.12-6.75-6.87-6.75h-41.92l30.82,38.4h70.5c5.43,0,9.75,4.74,9.06,10.3-.37,2.95-2.3,5.49-4.88,6.96-25.59,14.58-58,8.22-76.19-14.94L332.11.02h-34.41v65.67c8.59,8.59,13.41,13.41,22,22h42.22l-22.2-22.2v-15.52l37.82,37.82h-15.58c6.73,6.73,6.73,17.64,0,24.37l-4.58,4.58,22.61,22.61,68.2-85.25h65.2v7.75c0,3.14,1.25,6.16,3.47,8.38l17.45,17.45h58.63l-38.09-38.09Z"/><path d="M470.89,27.56h83.95c0-7.62-6.17-13.79-13.79-13.79h-81.19v2.77c0,6.09,4.94,11.02,11.02,11.02Z"/>` },
+  { vb: "0 0 614.64 92.16", p: `<path d="M614.64,12.05h-36.32l-13.34,13.34h-28.39l-19.06-19.06c-4.08-4.08-9.51-6.33-15.28-6.33h-151.43v1.72h0l-23.98,24.18h-5.1c-.52,0-1,0-1.48.07v3.44c.48-.03.96-.07,1.48-.07h46.72c2.47,1.81,4.1,4.71,4.1,8.01v7.61l-13.45,13.45h-28.2l-8.06,8.06h-21.34v-16.89c0-6.74,3.34-12.73,8.43-16.41v-4.1c-7.09,4.1-11.87,11.77-11.87,20.51v16.89h0v25.7s55.92,0,55.92,0h0s38.59,0,38.59,0v-30.92l2.08-2.08h0l10.63-10.63v-9.72c0-16.59-10.89-30.63-25.92-35.37h122.88c4.85,0,9.42,1.89,12.85,5.32l18.43,18.43-10.13,10.13h-38.76l-19.99-19.99c-3.13-3.13-7.3-4.86-11.73-4.86s-8.6,1.73-11.73,4.86l-45.06,45.06h-.09s0,29.76,0,29.76h109.18c-10.03-10.03-15.65-15.65-25.68-25.68h-26.38c-5.2-5.2-9.04-9.04-15.01-15.01h-16.09l-5.07-5.07,26.63-26.63c4.97-4.97,13.63-4.97,18.6,0l18.35,18.35v24.49l3.87,3.87,25.47,25.68h9.47s36.1.01,36.1.01c-.62-2.82-.96-5.78-.96-8.78v-11.18l5.75-5.75h-39.5l-14.5-14.5v-6.51l4.69-4.69h22.2v22.26h30.4c2.77-2.77,5.2-5.2,7.49-7.49v.14l43.63-43.63Z"/><path d="M246.43,64.54c-2.47-1.81-4.09-4.7-4.09-8v-7.61l13.45-13.45h28.2l8.06-8.06h21.33v16.88c0,6.74-3.34,12.73-8.43,16.38v4.09c7.09-4.06,11.87-11.7,11.87-20.47v-16.88h0V1.72h-55.92s0,0,0,0h-38.59v30.92l-2.07,2.08h0l-10.63,10.63v9.72c0,14.93,8.84,27.77,21.56,33.65h-120.01c-4.85,0-9.41-1.89-12.85-5.32l-17.17-17.17,9.67-9.67h39.44l19.99,19.99c3.13,3.13,7.3,4.86,11.73,4.86s8.6-1.73,11.73-4.86l45.06-45.06h.09s0-29.76,0-29.76h-41.47s0,0,0,0h-67.7c10.03,10.03,15.65,15.65,25.68,25.68h26.38c5.2,5.2,9.04,9.04,15.01,15.01h16.09l5.07,5.07-26.63,26.63c-4.97,4.97-13.63,4.97-18.6,0l-18.35-18.35v-24.49l-3.87-3.87L105.02,1.73h-9.47s-36.1-.01-36.1-.01c.62,2.82.96,5.78.96,8.77v11.18l-5.75,5.75h39.5l14.5,14.5v6.51l-4.69,4.69h-22.2v-22.26h-30.4c-2.77,2.77-5.2,5.2-7.49,7.48v-.14L0,82.09h36.32l15.63-15.63h24.57l19.37,19.37c4.08,4.08,9.51,6.33,15.28,6.33h152.91l23.98-24.18h5.08c.52,0,1,0,1.48-.07v-3.44c-.48.03-.96.07-1.48.07h-46.73Z"/>` },
+  { vb: "0 0 542.82 141.83", p: `<path d="M203.08,0H0l68.27,68.27v5.29c0,37.7,30.56,68.27,68.27,68.27s68.27-30.56,68.27-68.27v-5.29l68.27-68.27Zm-66.54,73.56c0,18.06-14.64,32.7-32.7,32.7s-32.7-14.64-32.7-32.7v-11.83l32.7-32.7,32.7,32.7v11.83Z"/><path d="M339.74,0l-68.27,68.27v5.29c0,37.7,30.56,68.27,68.27,68.27s68.27-30.56,68.27-68.27v-5.29l-68.27-68.27Zm32.7,73.56c0,18.06-14.64,32.7-32.7,32.7s-32.7-14.64-32.7-32.7v-11.83l32.7-32.7,32.7,32.7v11.83Z"/><path d="M542.82,0h-101.35l33.08,33.08h-33.08v75.67h33.08l-33.08,33.08h101.35V0Z"/><path d="M0,141.83h101.35l-33.08-33.08h33.08V33.08h-33.08L101.35,0H0v141.83Z"/><path d="M203.08,141.83h136.66V0h-136.66v141.83Zm34.57-107.26h67.52v72.69h-67.52V34.57Z"/>` },
+  { vb: "0 0 643.27 187.03", p: `<path d="M295.35,62.39v-17.72c0-.96.37-1.89,1.07-2.57l3.87-3.87c4.37-4.37,6.54-10.11,6.54-15.84s-2.17-11.45-6.54-15.82c-4.46-4.46-10.46-6.81-16.8-6.54-5.81.24-11.27,2.94-15.37,7.07l-135.78,135.78H56.05c-5.86,0-11.47,2.33-15.61,6.47l-15.28,15.28c-.69.69-1.62,1.11-2.59,1.13-2.23.04-3.17-1.43-3.53-2.3-.36-.86-.73-2.53,18.67-21.93l45.49-45.49c-17.21,17.21,15.92-15.42,16.84-15.42,2,0,2.86,1.33,3.19,2.13.33.8.67,2.34-.75,3.76l-13.51,13.51c-7.51,7.51-8.88,19.3-2.75,28.53,3.39,5.1,8.86,8.63,14.9,9.61,7.39,1.19,14.56-1.15,19.7-6.29l69.86-69.86h0c-10.35,0-16.16,0-26.51,0l-56.56,56.56c-.7.7-1.64,1.12-2.62,1.14-2.25.04-3.2-1.45-3.57-2.33-.36-.87-.73-2.56.82-4.11l13.51-13.51c7.41-7.41,8.76-19.04,2.7-28.14-3.34-5.02-8.74-8.49-14.7-9.45-7.27-1.17-14.34,1.15-19.39,6.21L6.59,146.11c-7.5,7.5-8.86,19.27-2.74,28.48,3.38,5.09,8.84,8.61,14.88,9.59,7.37,1.19,14.53-1.15,19.66-6.28l15.31-15.31c.62-.62,1.47-.98,2.36-.98h64.78c-.15,4.98,1.66,10.01,5.47,13.8l5.38,5.38c3.66,3.66,8.46,5.49,13.25,5.49s9.58-1.84,13.25-5.49l118.41-118.41h18.74ZM250.08,62.39l-102.51,102.51c-1.48,1.48-3.88,1.48-5.36,0-1.48-1.48-1.48-3.88,0-5.36l16.48-16.48h-.02c.07-.06.12-.12.19-.19h-.01l123.05-123.05c1.56-1.56,4.18-1.41,5.53.47,1.07,1.48.75,3.54-.54,4.82l-3.74,3.73c-4.18,4.2-6.54,9.9-6.54,15.82v17.72h-26.52Z"/>` },
+  { vb: "0 0 642.9 115.66", p: `<path d="M321.45,0L0,115.66h642.9L321.45,0ZM321.45,18.27l246.98,88.66H74.47L321.45,18.27Z"/><path d="M274.81,57.83l46.64-16.75,46.64,16.75-46.64,16.75-46.64-16.75Z"/><path d="M149.55,57.83l46.64-16.75v33.5l-46.64-16.75Z"/><path d="M446.71,57.83l-46.64-16.75v33.5l46.64-16.75Z"/>` },
+  { vb: "0 0 491.45 172.57", p: `<path d="M206.1,171.8l113.16-113.16c-13.34,0-22.54,0-33.48,0v-.12h-95.04l-65.2,65.25c.02,18.75.03,29.26.04,48.01l48.13-48.16h32.53l-.15.15c0,18.76,0,29.28,0,48.04ZM207.67,89.65l23.95-23.96h32.57l-23.96,23.96h-32.55Z"/><path d="M285.35,171.8v-48.04l-.15-.15h32.53l48.13,48.16c.01-18.75.02-29.26.04-48.01l-65.2-65.25h-95.04v.12c-10.94,0-20.14,0-33.48,0l113.16,113.16ZM251.83,89.65l-23.96-23.96h32.57l23.95,23.96h-32.55Z"/><path d="M491.45,0H0v65.69h491.45V0ZM457.03,31.85h-66.97l-16.96-16.96h83.93v16.96ZM117.35,14.89l-16.96,16.96H33.42V14.89h83.93Z"/>` },
+  { vb: "0 0 600.77 100.05", p: `<path d="M600.77,0H0v100.05h600.77V0ZM564.9,64.17h-51.06l-25.53-28.28h51.06l25.53,28.28ZM513.84,64.17h-51.06l-25.53-28.28h51.06l25.53,28.28ZM462.78,64.17h-51.06l-25.53-28.28h51.06l25.53,28.28ZM137.99,35.89h51.06l25.53,28.28h-51.06l-25.53-28.28ZM189.05,35.89h51.06l25.53,28.28h-51.06l-25.53-28.28ZM240.11,35.89h51.06l25.53,28.28h-51.06l-25.53-28.28ZM291.17,35.89h51.06l25.53,28.28h-51.06l-25.53-28.28ZM300.39,64.17h-51.06l-25.53-28.28h51.06l25.53,28.28ZM351.44,64.17h-51.06l-25.53-28.28h51.06l25.53,28.28ZM411.72,64.17h-51.06l-25.53-28.28h51.06l25.53,28.28ZM86.93,64.17H35.87l-25.53-28.28h51.06l25.53,28.28Z"/>` },
+  { vb: "0 0 689.01 119.25", p: `<path d="M120.36,55.25h31.97l-30.97,30.97h20.78s.02,0,.02,0l45.66-45.66h-73.55c-.69,0-1.35.27-1.83.76l-64.75,62.47c-.49.49-1.15.76-1.83.76h-16.49v-34.81L84.39,14.7h61.73l20.91,20.91h20.79L152.21,0H58.09L0,58.09v61.15h51.94c.69,0,1.35-.27,1.83-.76l64.75-62.47c.49-.49,1.14-.76,1.83-.76Z"/><polygon points="226.13 90.42 88.84 90.42 60.01 119.25 218.08 119.25 281.93 55.35 288.13 55.35 283.79 59.68 257.2 86.27 298.76 86.27 344.5 40.58 275.93 40.58 226.13 90.42"/><path d="M179.11,55.27l-11.29,11.29h20.79l11.29-11.29h34.47l-16.24,16.24h-55.36c-5.74,5.74-8.96,8.96-14.7,14.7h76.15l45.64-45.64h-76.06c-5.74,5.74-8.96,8.96-14.7,14.7h0Z"/><path d="M630.91,0h-94.12l-35.61,35.61h20.79l20.91-20.91h61.73l55.03,55.03v34.81h-16.49c-.69,0-1.35-.27-1.83-.76l-64.75-62.47c-.49-.49-1.15-.76-1.83-.76h-73.55l45.66,45.66s.01,0,.02,0h20.78l-30.97-30.97h31.97c.69,0,1.35.27,1.83.76l64.75,62.47c.49.49,1.15.76,1.83.76h51.94v-61.15L630.91,0Z"/><polygon points="462.87 90.42 413.08 40.58 344.5 40.58 390.25 86.27 431.8 86.27 405.21 59.68 400.88 55.35 407.07 55.35 470.93 119.25 629 119.25 600.16 90.42 462.87 90.42"/><path d="M540.94,86.22c-5.74-5.74-8.96-8.96-14.7-14.7h-55.36l-16.24-16.24h34.47l11.29,11.29h20.79l-11.29-11.29h0c-5.74-5.74-8.96-8.96-14.7-14.7h-76.06l45.64,45.64h76.15Z"/>` },
+  { vb: "0 0 641.25 173.97", p: `<path d="M0,0v173.97h174.9V0H0ZM139.33,139.33H35.57V34.64h103.76v104.69Z"/><path d="M233.18,0v173.97h174.9V0h-174.9ZM372.51,139.33h-103.76V34.64h103.76v104.69Z"/><path d="M466.35,0v173.97h174.9V0h-174.9ZM605.68,139.33h-103.76V34.64h103.76v104.69Z"/>` },
+  { vb: "0 0 648.52 110.81", p: `<path d="M603.53.12h-247.2s-11.33,11.33-11.33,11.33l-20.74,20.74,41.59,41.59h86.06l37.02,37.02c16.2,0,25.28,0,41.49,0l-66.35-66.36h-86.06l-21.67-21.67V3.05h128.04l-10.04,10.04-9.99,9.99c-.01,7.19-.02,11.23-.03,18.43l34.85,35.08,34.13,34.12h37.78l26.55-26.55-20.74-20.74-9.81-9.81v19.62l-8.15,8.15h-13.48l-27.83-27.82h97.87l3.7,3.7v11.48l-14.53,14.53h43.86v-38.16L603.53.12ZM514.68,50.63l-27.47-27.47V3.05h82.2c-9.68,9.68-15.98,15.98-26.4,26.4h48.37l21.17,21.17h-97.88Z"/>` },
+  { vb: "0 0 642.24 161.59", p: `<path d="M321.12,0L0,161.59h642.24L321.12,0ZM321.12,28.44l263.48,133.15H57.64L321.12,28.44Z"/><path d="M321.12,60.6l-150.56,76.12h301.12l-150.56-76.12ZM321.12,82.44l83.26,42.08h-166.52l83.26-42.08Z"/>` },
+  { vb: "0 0 693.49 139.07", p: `<path d="M0,0v139.07h139.07V0H0ZM111.26,111.26H27.81V27.81h83.45v83.45Z"/><path d="M554.42,0v139.07h139.07V0h-139.07ZM665.68,111.26h-83.45V27.81h83.45v83.45Z"/><path d="M185.37,0l-46.3,46.3v46.47l46.3,46.3h322.75l46.3-46.3v-46.47L508.12,0H185.37ZM522.72,83.77l-28.91,28.91H199.68l-28.91-28.91V55.3l28.91-28.91h294.13l28.91,28.91v28.47Z"/>` },
+  { vb: "0 0 602.13 159.59", p: `<path d="M0,0v53.2h53.2V0H0ZM42.56,42.56H10.64V10.64h31.92v31.92Z"/><path d="M0,106.39v53.2h53.2v-53.2H0ZM42.56,149.03H10.64v-31.92h31.92v31.92Z"/><path d="M548.93,0v53.2h53.2V0h-53.2ZM591.57,42.56h-31.92V10.64h31.92v31.92Z"/><path d="M548.93,106.39v53.2h53.2v-53.2h-53.2ZM591.57,149.03h-31.92v-31.92h31.92v31.92Z"/><path d="M106.39,53.2h389.35V0H106.39v53.2ZM117.03,10.64h368.08v31.92H117.03V10.64Z"/><path d="M106.39,159.59h389.35v-53.2H106.39v53.2ZM117.03,117.03h368.08v31.92H117.03v-31.92Z"/><path d="M280.97,106.39h40.19V53.2h-40.19v53.2Z"/>` },
+];
+
+// prefers-reduced-motion
+if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  document.querySelectorAll('.sigil-slot, .sigil-drift-wrap').forEach(el => {
+    el.style.animation = 'none';
+    el.style.transition = 'none';
+  });
+}
+</script>
+
+</body>
+</html>
