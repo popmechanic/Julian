@@ -474,15 +474,32 @@ body::after {
 #ceremony-overlay {
   position: fixed;
   inset: 0;
-  z-index: 500;
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: center;
+  z-index: 500; /* above content, below sigil frame (999) and scanlines (1000) */
   pointer-events: none;
-  opacity: 0;
 }
 
-#ceremony-overlay.active {
+.ceremony-text {
+  text-align: center;
+  max-width: 600px;
+  padding: 0 40px;
   pointer-events: auto;
-  opacity: 1;
+}
+
+#input-display {
+  margin-top: 20px;
+  min-height: 2em;
+  border-bottom: 1px solid var(--c3);
+  padding-bottom: 4px;
+}
+
+.qr-container {
+  max-width: 280px;
+  margin: 0 auto 24px;
+}
+.qr-container svg {
+  width: 100%;
+  height: auto;
 }
