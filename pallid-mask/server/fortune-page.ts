@@ -43,7 +43,7 @@ function getStyles(): string {
     if (interpretMatch) parts.push(interpretMatch[0]);
     // Add base body/font styles
     parts.push(`*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }`);
-    parts.push(`html, body { font-family: 'Orpheus', Georgia, serif; }`);
+    parts.push(`html, body { font-family: 'Orpheus', Georgia, serif; text-transform: lowercase; }`);
     cachedStyles = parts.join("\n");
   }
   return cachedStyles;

@@ -6,14 +6,27 @@ export async function requestGreeting(): Promise<GreetingResponse> {
   return res.json();
 }
 
+export async function requestAcknowledge(
+  name: string
+): Promise<GreetingResponse> {
+  const res = await fetch("/api/acknowledge", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`Acknowledge failed: ${res.status}`);
+  return res.json();
+}
+
 export async function requestFortune(
+  name: string,
   question: string,
   timings: number[]
 ): Promise<FortuneResponse> {
   const res = await fetch("/api/fortune", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, timings }),
+    body: JSON.stringify({ name, question, timings }),
   });
   if (!res.ok) throw new Error(`Fortune failed: ${res.status}`);
   return res.json();

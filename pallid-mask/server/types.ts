@@ -10,6 +10,7 @@ export interface GreetingResponse {
 }
 
 export interface FortuneRequest {
+  name: string;
   question: string;
   timings: number[];
 }

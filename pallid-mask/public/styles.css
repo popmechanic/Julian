@@ -24,6 +24,7 @@ html, body {
   width: 100%; height: 100%;
   background: #000;
   font-family: 'Orpheus', Georgia, serif;
+  text-transform: lowercase;
 }
 
 /* CRT scanlines — GPU-composited via transform instead of background-position */
@@ -488,11 +489,45 @@ body::after {
   pointer-events: auto;
 }
 
+/* DIVINE loading layout — morph centered, narration below */
+.divine-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 48px;
+  pointer-events: auto;
+}
+
+#morph-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#morph-slot #sigil-morph-svg {
+  display: block;
+  width: 440px;
+  height: 132px;
+}
+
 #input-display {
   margin-top: 20px;
   min-height: 2em;
   border-bottom: 1px solid var(--c3);
   padding-bottom: 4px;
+  color: var(--c6);
+  filter: drop-shadow(0 0 8px var(--c5)) drop-shadow(0 0 20px var(--c1));
+}
+
+#input-display::after {
+  content: '▎';
+  color: var(--c5);
+  animation: cursor-blink 1s step-end infinite;
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 
 .qr-container {

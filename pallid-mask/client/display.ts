@@ -29,10 +29,20 @@ export async function showWelcome(): Promise<void> {
   await fadeIn(overlay);
 }
 
-export async function showPrompt(): Promise<void> {
+export async function showNamePrompt(): Promise<void> {
   overlay.innerHTML = `
     <div class="ceremony-text">
-      <div class="entity-speech">type your question and press enter.</div>
+      <div class="entity-speech">type your name and press enter.</div>
+      <div id="input-display" class="fortune-verse"></div>
+    </div>`;
+  await fadeIn(overlay);
+}
+
+export async function showPrompt(name?: string): Promise<void> {
+  const address = name ? `${name}, type` : "type";
+  overlay.innerHTML = `
+    <div class="ceremony-text">
+      <div class="entity-speech">${address} your question and press enter.</div>
       <div id="input-display" class="fortune-verse"></div>
     </div>`;
   await fadeIn(overlay);
@@ -42,9 +52,11 @@ export async function showPrompt(): Promise<void> {
 // AND the returned `release` function is called (by the ceremony, when the API responds).
 // The last narration step holds on screen until release() is called.
 export async function showNarration(
-  steps: string[]
+  steps: string[],
+  onLayoutReady?: () => void
 ): Promise<{ waitForRelease: Promise<void>; release: () => void }> {
-  overlay.innerHTML = `<div class="ceremony-text"><div id="narration-line" class="entity-speech"></div></div>`;
+  overlay.innerHTML = `<div class="divine-layout"><div id="morph-slot"></div><div id="narration-line" class="entity-speech"></div></div>`;
+  if (onLayoutReady) onLayoutReady();
   await fadeIn(overlay);
 
   const lineEl = document.getElementById("narration-line")!;

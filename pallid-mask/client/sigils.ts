@@ -577,7 +577,6 @@ export async function init(): Promise<void> {
 }
 
 export function start(): void {
-  startMorph();
   startWarp();
   startFrame();
 }
@@ -586,6 +585,16 @@ export function stop(): void {
   stopMorph();
   stopWarp();
   stopFrame();
+}
+
+/** Start top-banner sigil morph — used as loading indicator during DIVINE. */
+export function showMorph(): void {
+  startMorph();
+}
+
+/** Stop top-banner sigil morph. */
+export function hideMorph(): void {
+  stopMorph();
 }
 
 /** Sigils prominent — used during DIVINE state. */

@@ -1,7 +1,7 @@
 import { readFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import { computeSeed, selectPassages, loadBible, loadYellow } from "./stichomancy";
-import { generateFortune, generateGreeting } from "./fortune";
+import { generateFortune, generateGreeting, generateAcknowledge } from "./fortune";
 import { textToSpeech, cleanupAudio } from "./voice";
 import { generateQRSvg } from "./qr";
 import { generateFortunePage } from "./fortune-page";
@@ -85,13 +85,25 @@ const server = Bun.serve({
       }
     }
 
+    if (req.method === "POST" && url.pathname === "/api/acknowledge") {
+      try {
+        const body = await req.json() as { name: string };
+        const text = await generateAcknowledge(soulPrompt, body.name);
+        const audioUrl = await textToSpeech(text);
+        return Response.json({ text, audioUrl } satisfies GreetingResponse);
+      } catch (err) {
+        console.error("Acknowledge error:", err);
+        return Response.json({ error: "Acknowledge generation failed" }, { status: 500 });
+      }
+    }
+
     if (req.method === "POST" && url.pathname === "/api/fortune") {
       try {
         const body = (await req.json()) as FortuneRequest;
         const seed = computeSeed(body.timings);
         const passages = selectPassages(seed, yellow, bible);
 
-        const fortune = await generateFortune(soulPrompt, passages, body.question);
+        const fortune = await generateFortune(soulPrompt, passages, body.name, body.question);
 
         const sigilIndex = seed % sigils.length;
         const sigilSvg = makeSigilSvg(sigilIndex);

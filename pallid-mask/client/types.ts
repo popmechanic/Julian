@@ -1,6 +1,7 @@
 export type CeremonyState =
   | "WELCOME"
   | "SUMMON"
+  | "NAME"
   | "INPUT"
   | "DIVINE"
   | "FORTUNE"

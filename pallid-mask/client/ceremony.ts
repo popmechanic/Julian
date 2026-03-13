@@ -2,8 +2,8 @@ import type { CeremonyState, FortuneResponse } from "./types";
 import * as mask from "./mask";
 import * as sigils from "./sigils";
 import * as display from "./display";
-import { captureInput } from "./input";
-import { requestGreeting, requestFortune, requestReset } from "./api";
+import { captureName, captureInput } from "./input";
+import { requestGreeting, requestAcknowledge, requestFortune, requestReset } from "./api";
 
 const NARRATION_STEPS = [
   "gathering the intervals between your keystrokes...",
@@ -14,10 +14,11 @@ const NARRATION_STEPS = [
   "the mask is interpreting...",
 ];
 
-const QR_TIMEOUT_MS = 45_000;
+const QR_TIMEOUT_MS = 90_000;
 const REVEAL_HOLD_MS = 6_000;
 
 let state: CeremonyState = "WELCOME";
+let visitorName = "";
 
 function playAudio(url: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -31,6 +32,7 @@ function playAudio(url: string): Promise<void> {
 function waitForKey(): Promise<void> {
   return new Promise((resolve) => {
     function onKey(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       e.preventDefault();
       document.removeEventListener("keydown", onKey);
       resolve();
@@ -62,11 +64,26 @@ async function enterState(next: CeremonyState): Promise<void> {
         await handleError();
         return;
       }
+      return enterState("NAME");
+    }
+
+    case "NAME": {
+      await display.showNamePrompt();
+      visitorName = await captureName();
+      await display.clear();
+      try {
+        const ack = await requestAcknowledge(visitorName);
+        await playAudio(ack.audioUrl);
+      } catch (err) {
+        console.error("Acknowledge failed:", err);
+        await handleError();
+        return;
+      }
       return enterState("INPUT");
     }
 
     case "INPUT": {
-      await display.showPrompt();
+      await display.showPrompt(visitorName);
       const input = await captureInput();
       await display.clear();
       return enterDivine(input.question, input.timings);
@@ -88,27 +105,39 @@ async function enterDivine(question: string, timings: number[]): Promise<void> {
   state = "DIVINE";
   console.log(`[ceremony] → DIVINE`);
 
-  mask.recede();
+  mask.hide();
   sigils.loadingMode();
+  sigils.showMorph();
 
   // Start API call FIRST, then narration — both run in parallel
   let fortuneResult: FortuneResponse | null = null;
   let fortuneError: Error | null = null;
 
   // Kick off the fortune request immediately (runs concurrently with narration)
-  const fortunePromise = requestFortune(question, timings)
+  const fortunePromise = requestFortune(visitorName, question, timings)
     .then((result) => { fortuneResult = result; })
     .catch((err) => { fortuneError = err as Error; });
 
-  // showNarration displays all steps sequentially (~14s), then holds on the last one.
-  // While narration runs, the API call is also in flight.
-  const narration = await display.showNarration(NARRATION_STEPS);
+  // Move morph SVG into centered overlay slot when layout is ready (before fade-in)
+  const morphSvg = document.getElementById("sigil-morph-svg");
+  const morphOriginalParent = morphSvg?.parentElement;
+
+  const narration = await display.showNarration(NARRATION_STEPS, () => {
+    const slot = document.getElementById("morph-slot");
+    if (morphSvg && slot) slot.appendChild(morphSvg);
+  });
 
   // Narration is done. Wait for API if it hasn't resolved yet.
   await fortunePromise;
   // Release the narration hold
   narration.release();
 
+  // Move morph SVG back to its original container
+  if (morphSvg && morphOriginalParent) {
+    morphOriginalParent.appendChild(morphSvg);
+  }
+
+  sigils.hideMorph();
   sigils.normalMode();
   await display.clear();
 
@@ -120,7 +149,7 @@ async function enterDivine(question: string, timings: number[]): Promise<void> {
   // FORTUNE state — mask returns, reads fortune aloud
   state = "FORTUNE";
   console.log(`[ceremony] → FORTUNE`);
-  mask.restore();
+  mask.show();
 
   try {
     await playAudio(fortuneResult.audioUrl);
@@ -168,6 +197,7 @@ async function handleError(): Promise<void> {
 async function reset(): Promise<void> {
   mask.hide();
   sigils.stop();
+  visitorName = "";
   await display.clear();
   await requestReset();
   return enterState("WELCOME");

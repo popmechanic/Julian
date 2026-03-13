@@ -17,6 +17,7 @@ Keep your interpretation concise — a few sentences. Do not explain what you ar
 export async function generateFortune(
   soulPrompt: string,
   passages: StichomancyResult,
+  name: string,
   question: string
 ): Promise<string> {
   const response = await client.messages.create({
@@ -27,7 +28,7 @@ export async function generateFortune(
     messages: [
       {
         role: "user",
-        content: `The visitor has asked: "${question}"
+        content: `The visitor's name is ${name}. They have asked: "${question}"
 
 Two passages have been drawn by stichomancy:
 
@@ -37,7 +38,7 @@ From the first text:
 From the second text:
 "${passages.yellowPassage.text}"
 
-Interpret these passages as a fortune for the visitor. Speak as the Pallid Mask.`,
+Interpret these passages as a fortune for ${name}. Speak as the Pallid Mask. Address them by name.`,
       },
     ],
   });
@@ -52,6 +53,28 @@ Interpret these passages as a fortune for the visitor. Speak as the Pallid Mask.
 export async function generateGreeting(soulPrompt: string): Promise<string> {
   const response = await client.messages.create({
     model: "claude-opus-4-6",
+    max_tokens: 256,
+    thinking: { type: "adaptive" },
+    system: soulPrompt,
+    messages: [
+      {
+        role: "user",
+        content:
+          "A visitor has just entered the room and pressed a key to begin. Greet them as the Pallid Mask. Ask for their name — nothing else. Keep it to 1-2 sentences. Speak slowly, with weight. Do not use contractions.",
+      },
+    ],
+  });
+
+  const textBlock = response.content.find((b) => b.type === "text");
+  if (!textBlock || textBlock.type !== "text") {
+    throw new Error("No text in Claude response");
+  }
+  return textBlock.text;
+}
+
+export async function generateAcknowledge(soulPrompt: string, name: string): Promise<string> {
+  const response = await client.messages.create({
+    model: "claude-opus-4-6",
     max_tokens: 512,
     thinking: { type: "adaptive" },
     system: soulPrompt,
@@ -59,7 +82,7 @@ export async function generateGreeting(soulPrompt: string): Promise<string> {
       {
         role: "user",
         content:
-          "A visitor has just entered the room and pressed a key to begin. Greet them as the Pallid Mask. Frame the ritual — tell them they will be asked to formulate a question about their past, present, or future. Keep it to 2-4 sentences. Speak slowly, with weight. Do not use contractions.",
+          `The visitor has given their name: ${name}. Acknowledge them by name. Then frame the ritual — tell them they will now be asked to formulate a question. The question may concern what has been, what is, or what is yet to be. Keep it to 2-4 sentences. Speak slowly, with weight. Do not use contractions.`,
       },
     ],
   });
