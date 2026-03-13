@@ -60,7 +60,7 @@ export async function generateGreeting(soulPrompt: string): Promise<string> {
       {
         role: "user",
         content:
-          "A visitor has just entered the room and pressed a key to begin. Greet them as the Pallid Mask. Ask for their name — nothing else. Keep it to 1-2 sentences. Speak slowly, with weight. Do not use contractions.",
+          "A visitor has just entered the room and pressed a key to begin. Greet them as the Pallid Mask. Ask for their name — nothing else. Keep it to 1-2 sentences. Do not comment on their presence or arrival — no 'you are here' or 'you have come.' Simply address them and ask the name. Speak slowly, with weight. Do not use contractions.",
       },
     ],
   });
