@@ -77,6 +77,28 @@ Built in `mockup.html`. SVG `viewBox="230 75 350 505"`, displayed at `height: 85
 - **Do not** apply `filter: blur()` to `.screen` — destroys GPU compositing for entire page (learned the hard way)
 - **Do not** use 4+ `drop-shadow` passes on elements inside an SVG filter group — redundant and expensive
 
+## Sigil Frame
+
+A fixed-position border of sigil cells frames all four viewport edges. A displacement wave ripples clockwise; each sigil swaps at peak distortion.
+
+**Constants (tuning knobs — top of IIFE):**
+```
+CELL   = 110   // px cell height (1/4 of bottom banner); update CSS `110px` too if changed
+POOL   = 12    // filter pool size; must exceed WAVE_W
+WAVE_W = 10    // cells in active displacement band simultaneously
+SCALE  = 42    // peak feDisplacementMap scale — form blurs, stays readable
+PERIOD = 20000 // ms per clockwise lap
+GLOW   = 'drop-shadow(0 0 3px var(--c5)) drop-shadow(0 0 8px var(--c1))'
+```
+
+**Filter pool:** 12 `<filter>` elements (`#wf-0` through `#wf-11`) in a separate hidden SVG (not the bottom sigil's SVG). Only the cells currently in the active wave band have a filter assigned. Cells entering the band pull from `avail[]`; cells exiting release back to it.
+
+**Wave dist formula:** `dist = ((cursor - i) % N + N) % N` — float-safe modulo. `dist = 0` = wavefront just arrived. Peak at `dist = WAVE_W / 2`. Band exits at `dist >= WAVE_W`.
+
+**Initial-state guard:** All cells start with `swapped: true`. Prevents a burst of simultaneous swaps when the wave first passes cells 0–9 at load. Resets to `false` when a cell exits the band.
+
+**Layout:** Top/bottom strips own both corners. Left/right strips span `CELL` to `vh − CELL`. Spacing formula: `gap = (stripLength − n * CELL) / (n + 1)` (padding-inclusive).
+
 ## Sigils
 
 200 SVG files in `assets/Cyber Sigils Vectors - Fox Rockett Studio/SVG/`.
