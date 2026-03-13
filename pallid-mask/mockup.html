@@ -1053,7 +1053,85 @@ const _STUBS_UNUSED = [
   }
 
   buildLayout();
-  // ← wave loop and resize handler go here in Tasks 5–6
+  // ── Wave loop ───────────────────────────────────────────────
+  // One rAF loop drives the clockwise displacement wave.
+  //
+  // cursor: float cell-index advancing clockwise at PERIOD ms/lap
+  // dist:   how far behind the wavefront cell i sits
+  //           0   = wavefront just arrived at i (leading edge)
+  //           W/2 = peak displacement (swap fires here)
+  //           W   = wavefront has passed, cell exiting band
+  //           >W  = cell inactive
+  //
+  // If N < WAVE_W (very small viewport), all cells stay in the band —
+  // pool size 12 handles this since N would also be small. No special case needed.
+
+  let startTs = null;
+
+  function tick(ts) {
+    if (!startTs) startTs = ts;
+    const elapsed = ts - startTs;
+    const cursor  = (elapsed / PERIOD) * N;
+
+    for (let i = 0; i < N; i++) {
+      const cell = cells[i];
+      // Float-safe modulo that handles negative intermediate values
+      const dist = ((cursor - i) % N + N) % N;
+
+      if (dist < WAVE_W) {
+        // ── Entering or in band ──────────────────────────────
+        if (!inUse.has(i) && avail.length > 0) {
+          // Assign a filter from the pool
+          const fIdx = avail.pop();
+          inUse.set(i, fIdx);
+          cell.el.style.filter = `url(#wf-${fIdx}) ${GLOW}`;
+        }
+
+        const fIdx = inUse.get(i);
+        if (fIdx !== undefined) {
+          const t     = dist / WAVE_W;                        // 0→1 through band
+          const scale = SCALE * Math.sin(t * Math.PI);        // bell: 0 → peak → 0
+          wdEls[fIdx].setAttribute('scale', scale.toFixed(2));
+        }
+
+        // Swap at peak (dist crosses WAVE_W/2).
+        // cell.swapped starts true (initial-state guard); reset only on band exit below.
+        if (dist >= WAVE_W / 2 && !cell.swapped) {
+          cell.sigilIdx = pickRandom(cell.sigilIdx);
+          cell.el.innerHTML = makeSVG(ALL_SIGILS[cell.sigilIdx]);
+          cell.swapped = true;
+        }
+
+      } else {
+        // ── Outside band ────────────────────────────────────
+        if (inUse.has(i)) {
+          // Release filter back to pool
+          const fIdx = inUse.get(i);
+          wdEls[fIdx].setAttribute('scale', '0');
+          inUse.delete(i);
+          avail.push(fIdx);
+          cell.el.style.filter = GLOW;
+        }
+        // Reset swap guard — next pass through the band will fire normally
+        cell.swapped = false;
+      }
+    }
+
+    requestAnimationFrame(tick);
+  }
+
+  buildLayout();
+  // ── Resize handler ──────────────────────────────────────────
+  // Tears down and rebuilds cell layout. The wave timestamp (startTs)
+  // continues uninterrupted — wave resumes from its fractional lap position.
+  // Cell state does not survive resize; cells rebuild fresh at new N.
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(buildLayout, 200);
+  });
+
+  requestAnimationFrame(tick);
 })();
 // ─────────────────────────────────────────────────────────────
 
