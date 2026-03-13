@@ -1,6 +1,6 @@
 # Pallid Mask — Deployment, Named Fortunes, PWA
 
-> **For agentic workers:** Use superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For Claude:** REQUIRED SUB-SKILL: Use trycycle-executing to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the Pallid Mask installation deployable to exe.xyz VMs with publicly accessible fortune pages, rename fortune files with visitor name + summary, and add PWA support for chromeless fullscreen projection.
 
@@ -64,7 +64,7 @@ This doubled path (`/opt/pallid-mask/pallid-mask`) is a cosmetic annoyance but s
 
 ### D4: systemd service file design
 
-**Decision:** Create `deploy/pallid-mask.service` following the pattern of `deploy/julian.service`, with paths adjusted for the subdirectory structure:
+**Decision:** Create `deploy/pallid-mask.service` following the pattern of `deploy/julian.service`, with paths adjusted for the subdirectory structure and `ExecStartPre` directives added for build readiness:
 
 - `WorkingDirectory=/opt/pallid-mask/pallid-mask`
 - `EnvironmentFile=/opt/pallid-mask/pallid-mask/.env`
@@ -140,7 +140,14 @@ export interface FortunePageOptions {
 
 **Decision:** Medium fidelity, 15-20 tests across two test files. No deploy configuration tests — the service file and instances.json are simple declarative files where structural tests add maintenance burden without catching real errors. They would just be re-asserting the file contents we wrote.
 
-**`server/fortune-page.test.ts`** (9-10 tests):
+**`server/fortune.test.ts`** (5 tests):
+- Parses fortune text and summary word from delimited response
+- Falls back when delimiter is missing
+- Falls back when word after delimiter is invalid (multi-word, punctuation)
+- Preserves full fortune text without the delimiter/word line
+- Uses last delimiter when fortune text contains `---`
+
+**`server/fortune-page.test.ts`** (9 tests):
 - Generates HTML file with correct name-word filename
 - Sanitizes names (strips special chars, lowercases, trims)
 - Normalizes diacritics to ASCII equivalents
@@ -151,42 +158,97 @@ export interface FortunePageOptions {
 - Inlines font and styles
 - Truncates long names
 
-**`server/fortune.test.ts`** (4-5 tests):
-- Parses fortune text and summary word from delimited response
-- Falls back when delimiter is missing
-- Falls back when word after delimiter is invalid (multi-word, punctuation)
-- Preserves full fortune text without the delimiter/word line
-- Uses last delimiter when fortune text contains `---`
-
 **Justification:** The fortune page naming is the highest-risk change (filesystem operations, string sanitization, collision handling), so it gets the most tests. The fortune parsing tests verify the delimiter protocol. Both test files cover code with real logic and edge cases.
 
 ---
 
-## Chunk 1: Named Fortune Pages
+## Task 1: Write tests for fortune parsing
 
-### Task 1: Modify fortune generation to return a summary word
+**Files:**
+- Create: `pallid-mask/server/fortune.test.ts`
+- Modify: `pallid-mask/server/fortune.ts` (add exported `parseFortune` stub)
+
+- [ ] **Step 1: Add the parseFortune stub to fortune.ts**
+
+Add this exported function at the bottom of `pallid-mask/server/fortune.ts`, before the closing of the file (after the `generateAcknowledge` function):
+
+```typescript
+export function parseFortune(raw: string): { fortune: string; summaryWord: string } {
+  return { fortune: raw.trim(), summaryWord: "" };
+}
+```
+
+This is the minimal stub that compiles but does not implement the delimiter parsing yet.
+
+- [ ] **Step 2: Create the fortune parsing test file**
+
+Create `pallid-mask/server/fortune.test.ts`:
+
+```typescript
+import { describe, test, expect } from "bun:test";
+import { parseFortune } from "./fortune";
+
+describe("parseFortune", () => {
+  test("extracts fortune text and summary word from delimited response", () => {
+    const raw = "You will find what you seek in the corridors of memory.\n---\ncorridors";
+    const result = parseFortune(raw);
+    expect(result.fortune).toBe("You will find what you seek in the corridors of memory.");
+    expect(result.summaryWord).toBe("corridors");
+  });
+
+  test("returns empty summaryWord when no delimiter present", () => {
+    const raw = "You will find what you seek.";
+    const result = parseFortune(raw);
+    expect(result.fortune).toBe("You will find what you seek.");
+    expect(result.summaryWord).toBe("");
+  });
+
+  test("returns empty summaryWord when word after delimiter is invalid", () => {
+    const raw = "Your fortune awaits.\n---\ntwo words here";
+    const result = parseFortune(raw);
+    expect(result.fortune).toBe("Your fortune awaits.");
+    expect(result.summaryWord).toBe("");
+  });
+
+  test("preserves multi-paragraph fortune text", () => {
+    const raw = "First paragraph.\n\nSecond paragraph.\n---\nbecoming";
+    const result = parseFortune(raw);
+    expect(result.fortune).toBe("First paragraph.\n\nSecond paragraph.");
+    expect(result.summaryWord).toBe("becoming");
+  });
+
+  test("uses last delimiter when fortune text contains ---", () => {
+    const raw = "A line with --- in it.\n\nMore text.\n---\nthreshold";
+    const result = parseFortune(raw);
+    expect(result.fortune).toBe("A line with --- in it.\n\nMore text.");
+    expect(result.summaryWord).toBe("threshold");
+  });
+});
+```
+
+- [ ] **Step 3: Run tests to verify they fail**
+
+Run: `cd pallid-mask && bun test server/fortune.test.ts`
+Expected: 4 of 5 tests FAIL (the "no delimiter" test passes since the stub returns raw text with empty summaryWord, but the others fail because the stub doesn't parse the delimiter).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add pallid-mask/server/fortune.test.ts pallid-mask/server/fortune.ts
+git commit -m "Add failing tests for fortune parsing"
+```
+
+---
+
+## Task 2: Implement fortune parsing
 
 **Files:**
 - Modify: `pallid-mask/server/fortune.ts`
 
-- [ ] **Step 1: Update the generateFortune function prompt and parsing**
+- [ ] **Step 1: Replace the parseFortune stub with the full implementation**
 
-In `generateFortune`, modify the system prompt to instruct Claude to append a delimiter and single summary word after the fortune text. Then parse the response to split the fortune text from the summary word.
+Replace the stub `parseFortune` function in `pallid-mask/server/fortune.ts` with:
 
-Add after the existing `INTERPRETATION_RULES` constant:
-
-```typescript
-const SUMMARY_INSTRUCTION = `
-
-After writing the fortune, add a line containing only "---", then on the next line write a single lowercase English word (no punctuation, no spaces) that captures the essence of this fortune. Examples: wandering, threshold, becoming, dissolution, radiance.`;
-```
-
-Modify the system prompt concatenation in `generateFortune` to include `SUMMARY_INSTRUCTION`:
-```typescript
-system: soulPrompt + "\n\n" + INTERPRETATION_RULES + SUMMARY_INSTRUCTION,
-```
-
-Add a parsing function (exported for testing):
 ```typescript
 export function parseFortune(raw: string): { fortune: string; summaryWord: string } {
   const delimiterIndex = raw.lastIndexOf("\n---\n");
@@ -203,155 +265,96 @@ export function parseFortune(raw: string): { fortune: string; summaryWord: strin
 }
 ```
 
+- [ ] **Step 2: Run tests to verify they pass**
+
+Run: `cd pallid-mask && bun test server/fortune.test.ts`
+Expected: All 5 tests PASS.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add pallid-mask/server/fortune.ts
+git commit -m "Implement fortune text + summary word parsing"
+```
+
+---
+
+## Task 3: Update fortune generation prompt and return type
+
+**Files:**
+- Modify: `pallid-mask/server/fortune.ts`
+
+- [ ] **Step 1: Add SUMMARY_INSTRUCTION constant**
+
+Add after the existing `INTERPRETATION_RULES` constant (after line 15) in `pallid-mask/server/fortune.ts`:
+
+```typescript
+const SUMMARY_INSTRUCTION = `
+
+After writing the fortune, add a line containing only "---", then on the next line write a single lowercase English word (no punctuation, no spaces) that captures the essence of this fortune. Examples: wandering, threshold, becoming, dissolution, radiance.`;
+```
+
+- [ ] **Step 2: Update the system prompt in generateFortune**
+
+Change the `system` field in the `generateFortune` function from:
+```typescript
+system: soulPrompt + "\n\n" + INTERPRETATION_RULES,
+```
+to:
+```typescript
+system: soulPrompt + "\n\n" + INTERPRETATION_RULES + SUMMARY_INSTRUCTION,
+```
+
+- [ ] **Step 3: Change generateFortune return type and use parseFortune**
+
 Change the return type of `generateFortune` from `Promise<string>` to `Promise<{ fortune: string; summaryWord: string }>`.
 
-Update the return statement:
+Change the function signature:
+```typescript
+export async function generateFortune(
+  soulPrompt: string,
+  passages: StichomancyResult,
+  name: string,
+  question: string
+): Promise<{ fortune: string; summaryWord: string }> {
+```
+
+Replace the return statement (line 50):
+```typescript
+return textBlock.text;
+```
+with:
 ```typescript
 return parseFortune(textBlock.text);
 ```
 
-### Task 2: Update fortune-page.ts for named files
+- [ ] **Step 4: Commit**
 
-**Files:**
-- Modify: `pallid-mask/server/fortune-page.ts`
-
-- [ ] **Step 1: Add name sanitization and collision handling**
-
-Add `existsSync` to the fs import at the top:
-```typescript
-import { readFileSync, existsSync } from "fs";
+```bash
+git add pallid-mask/server/fortune.ts
+git commit -m "Add summary word instruction to fortune prompt, return structured result"
 ```
 
-Add a `sanitizeName` function with Unicode normalization:
-```typescript
-function sanitizeName(name: string): string {
-  return name
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 30) || "visitor";
-}
-```
+---
 
-The `.normalize("NFD")` call decomposes accented characters into base + combining mark (e.g., "e" -> "e" + combining acute accent). The `[\u0300-\u036f]` regex strips all combining diacritical marks, leaving the ASCII base letter. This means "Maria" becomes "maria" (not "mara"), "Rene" becomes "rene", and "Bjork" becomes "bjork". The range `\u0300-\u036f` covers the Unicode "Combining Diacritical Marks" block, which handles Latin accents, tildes, umlauts, cedillas, and similar.
-
-Add a `resolveFilename` function:
-```typescript
-function resolveFilename(name: string, word: string): string {
-  const safeName = sanitizeName(name);
-  const safeWord = /^[a-z]+$/.test(word) && word.length > 0 && word.length <= 20
-    ? word
-    : randomUUID().slice(0, 6);
-  const base = `${safeName}-${safeWord}`;
-
-  let candidate = `${base}.html`;
-  let counter = 2;
-  while (existsSync(join(FORTUNES_DIR, candidate))) {
-    candidate = `${base}-${counter}.html`;
-    counter++;
-  }
-  return candidate;
-}
-```
-
-- [ ] **Step 2: Update FortunePageOptions and generateFortunePage**
-
-Change the interface:
-```typescript
-export interface FortunePageOptions {
-  fortune: string;
-  sigilSvg: string;
-  publicBaseUrl: string;
-  name: string;
-  summaryWord: string;
-}
-```
-
-Update `generateFortunePage` to use the new naming:
-```typescript
-export async function generateFortunePage(
-  options: FortunePageOptions
-): Promise<{ id: string; publicUrl: string; filePath: string }> {
-  const filename = resolveFilename(options.name, options.summaryWord);
-  const id = filename.replace(/\.html$/, "");
-  const template = readFileSync(TEMPLATE_PATH, "utf-8");
-  const date = new Date().toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  }).toLowerCase();
-
-  const html = template
-    .replace("{{FONT_FACE}}", getFontFace())
-    .replace("{{STYLES}}", getStyles())
-    .replace("{{SIGIL}}", options.sigilSvg)
-    .replace("{{DATE}}", date)
-    .replace("{{FORTUNE}}", escapeHtml(options.fortune));
-
-  const filePath = join(FORTUNES_DIR, filename);
-  await Bun.write(filePath, html);
-
-  const publicUrl = `${options.publicBaseUrl}/fortunes/${filename}`;
-  return { id, publicUrl, filePath };
-}
-```
-
-### Task 3: Update server/index.ts to pass name and summaryWord
-
-**Files:**
-- Modify: `pallid-mask/server/index.ts`
-
-- [ ] **Step 1: Update the fortune API handler**
-
-In the `/api/fortune` handler, update the `generateFortune` call to destructure the new return type and pass `name` and `summaryWord` to `generateFortunePage`. The `body.name` field is already available (typed as `FortuneRequest` which has `name: string`, and the client already sends it in `api.ts`).
-
-Replace the current line:
-```typescript
-const fortune = await generateFortune(soulPrompt, passages, body.name, body.question);
-```
-
-With:
-```typescript
-const { fortune, summaryWord } = await generateFortune(soulPrompt, passages, body.name, body.question);
-```
-
-And update the `generateFortunePage` call to include the two new fields:
-```typescript
-const [audioUrl, fortunePage] = await Promise.all([
-  textToSpeech(fortune),
-  generateFortunePage({
-    fortune,
-    sigilSvg,
-    publicBaseUrl: PUBLIC_URL,
-    name: body.name,
-    summaryWord,
-  }),
-]);
-```
-
-### Task 4: Tests for fortune page naming
+## Task 4: Write tests for fortune page naming
 
 **Files:**
 - Create: `pallid-mask/server/fortune-page.test.ts`
 
-- [ ] **Step 1: Write fortune-page tests**
+- [ ] **Step 1: Create the fortune page naming test file**
+
+Create `pallid-mask/server/fortune-page.test.ts`:
 
 ```typescript
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { join } from "path";
 import { mkdirSync, rmSync, existsSync, readFileSync } from "fs";
-
-// We need to test the internal functions. Since they're not exported,
-// we test through the public generateFortunePage API.
-import { generateFortunePage, clearStyleCache } from "./fortune-page";
+import { generateFortunePage } from "./fortune-page";
 
 const TEST_FORTUNES_DIR = join(import.meta.dir, "..", "fortunes");
 
 beforeEach(() => {
-  // Ensure fortunes dir exists and is empty
   if (existsSync(TEST_FORTUNES_DIR)) {
     rmSync(TEST_FORTUNES_DIR, { recursive: true });
   }
@@ -450,69 +453,189 @@ describe("generateFortunePage", () => {
 });
 ```
 
-### Task 5: Tests for fortune parsing
+- [ ] **Step 2: Run tests to verify they fail**
 
-**Files:**
-- Create: `pallid-mask/server/fortune.test.ts`
+Run: `cd pallid-mask && bun test server/fortune-page.test.ts`
+Expected: Tests fail because `generateFortunePage` does not yet accept `name` or `summaryWord` in its options interface (TypeScript compilation error or runtime failures on missing properties).
 
-- [ ] **Step 1: Export and test parseFortune**
+- [ ] **Step 3: Commit**
 
-First, export `parseFortune` from `fortune.ts` so it can be tested (already specified as `export` in Task 1).
-
-Then create the test file:
-
-```typescript
-import { describe, test, expect } from "bun:test";
-import { parseFortune } from "./fortune";
-
-describe("parseFortune", () => {
-  test("extracts fortune text and summary word from delimited response", () => {
-    const raw = "You will find what you seek in the corridors of memory.\n---\ncorridors";
-    const result = parseFortune(raw);
-    expect(result.fortune).toBe("You will find what you seek in the corridors of memory.");
-    expect(result.summaryWord).toBe("corridors");
-  });
-
-  test("returns empty summaryWord when no delimiter present", () => {
-    const raw = "You will find what you seek.";
-    const result = parseFortune(raw);
-    expect(result.fortune).toBe("You will find what you seek.");
-    expect(result.summaryWord).toBe("");
-  });
-
-  test("returns empty summaryWord when word after delimiter is invalid", () => {
-    const raw = "Your fortune awaits.\n---\ntwo words here";
-    const result = parseFortune(raw);
-    expect(result.fortune).toBe("Your fortune awaits.");
-    expect(result.summaryWord).toBe("");
-  });
-
-  test("preserves multi-paragraph fortune text", () => {
-    const raw = "First paragraph.\n\nSecond paragraph.\n---\nbecoming";
-    const result = parseFortune(raw);
-    expect(result.fortune).toBe("First paragraph.\n\nSecond paragraph.");
-    expect(result.summaryWord).toBe("becoming");
-  });
-
-  test("uses last delimiter when fortune text contains ---", () => {
-    const raw = "A line with --- in it.\n\nMore text.\n---\nthreshold";
-    const result = parseFortune(raw);
-    expect(result.fortune).toBe("A line with --- in it.\n\nMore text.");
-    expect(result.summaryWord).toBe("threshold");
-  });
-});
+```bash
+git add pallid-mask/server/fortune-page.test.ts
+git commit -m "Add failing tests for fortune page naming"
 ```
 
 ---
 
-## Chunk 2: exe.xyz Deployment
+## Task 5: Implement fortune page naming
 
-### Task 6: Create systemd service file
+**Files:**
+- Modify: `pallid-mask/server/fortune-page.ts`
+
+- [ ] **Step 1: Add existsSync to fs import**
+
+Change line 1 of `pallid-mask/server/fortune-page.ts` from:
+```typescript
+import { readFileSync } from "fs";
+```
+to:
+```typescript
+import { readFileSync, existsSync } from "fs";
+```
+
+- [ ] **Step 2: Add sanitizeName function**
+
+Add after the `escapeHtml` function (after line 11):
+
+```typescript
+function sanitizeName(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 30) || "visitor";
+}
+```
+
+- [ ] **Step 3: Add resolveFilename function**
+
+Add after `sanitizeName`:
+
+```typescript
+function resolveFilename(name: string, word: string): string {
+  const safeName = sanitizeName(name);
+  const safeWord = /^[a-z]+$/.test(word) && word.length > 0 && word.length <= 20
+    ? word
+    : randomUUID().slice(0, 6);
+  const base = `${safeName}-${safeWord}`;
+
+  let candidate = `${base}.html`;
+  let counter = 2;
+  while (existsSync(join(FORTUNES_DIR, candidate))) {
+    candidate = `${base}-${counter}.html`;
+    counter++;
+  }
+  return candidate;
+}
+```
+
+- [ ] **Step 4: Update FortunePageOptions interface**
+
+Change the `FortunePageOptions` interface from:
+```typescript
+export interface FortunePageOptions {
+  fortune: string;
+  sigilSvg: string;
+  publicBaseUrl: string;
+}
+```
+to:
+```typescript
+export interface FortunePageOptions {
+  fortune: string;
+  sigilSvg: string;
+  publicBaseUrl: string;
+  name: string;
+  summaryWord: string;
+}
+```
+
+- [ ] **Step 5: Update generateFortunePage to use named files**
+
+Replace the `generateFortunePage` function body. Change:
+```typescript
+  const id = randomUUID().slice(0, 12);
+```
+to:
+```typescript
+  const filename = resolveFilename(options.name, options.summaryWord);
+  const id = filename.replace(/\.html$/, "");
+```
+
+And change:
+```typescript
+  const filePath = join(FORTUNES_DIR, `${id}.html`);
+  await Bun.write(filePath, html);
+
+  const publicUrl = `${options.publicBaseUrl}/fortunes/${id}.html`;
+```
+to:
+```typescript
+  const filePath = join(FORTUNES_DIR, filename);
+  await Bun.write(filePath, html);
+
+  const publicUrl = `${options.publicBaseUrl}/fortunes/${filename}`;
+```
+
+- [ ] **Step 6: Run tests to verify they pass**
+
+Run: `cd pallid-mask && bun test server/fortune-page.test.ts`
+Expected: All 9 tests PASS.
+
+- [ ] **Step 7: Run all tests to verify nothing is broken**
+
+Run: `cd pallid-mask && bun test`
+Expected: All tests pass (fortune.test.ts + fortune-page.test.ts + stichomancy.test.ts).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add pallid-mask/server/fortune-page.ts
+git commit -m "Implement named fortune page files with sanitization and collision handling"
+```
+
+---
+
+## Task 6: Wire up server to pass name and summaryWord
+
+**Files:**
+- Modify: `pallid-mask/server/index.ts`
+
+- [ ] **Step 1: Update the fortune API handler**
+
+In `pallid-mask/server/index.ts`, in the `/api/fortune` handler, change line 106:
+```typescript
+const fortune = await generateFortune(soulPrompt, passages, body.name, body.question);
+```
+to:
+```typescript
+const { fortune, summaryWord } = await generateFortune(soulPrompt, passages, body.name, body.question);
+```
+
+And update the `generateFortunePage` call on line 113:
+```typescript
+generateFortunePage({ fortune, sigilSvg, publicBaseUrl: PUBLIC_URL }),
+```
+to:
+```typescript
+generateFortunePage({ fortune, sigilSvg, publicBaseUrl: PUBLIC_URL, name: body.name, summaryWord }),
+```
+
+- [ ] **Step 2: Verify TypeScript compilation**
+
+Run: `cd pallid-mask && bunx tsc --noEmit`
+Expected: No errors.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add pallid-mask/server/index.ts
+git commit -m "Pass visitor name and summary word through to fortune page generation"
+```
+
+---
+
+## Task 7: Create systemd service file
 
 **Files:**
 - Create: `deploy/pallid-mask.service`
 
 - [ ] **Step 1: Write the service file**
+
+Create `deploy/pallid-mask.service`:
 
 ```ini
 [Unit]
@@ -537,18 +660,24 @@ WantedBy=multi-user.target
 
 **Path rationale:** The exe.xyz deploy tooling clones the full Julian repo to `/opt/pallid-mask`. Since the pallid-mask application lives in the `pallid-mask/` subdirectory of the repo, the `WorkingDirectory` must be `/opt/pallid-mask/pallid-mask` so that `bun install`, `bun run build`, and `bun run server/index.ts` all resolve against the correct `package.json`. The `.env` file lives alongside the application at this same path.
 
-No `--cwd` flags are needed because `WorkingDirectory` already sets the working directory for all `Exec*` directives. This keeps the service file clean and follows the principle of least surprise.
+- [ ] **Step 2: Commit**
 
-The two `ExecStartPre` directives ensure the application is ready after a `git pull` deploy: `bun install` handles dependency updates, `bun run build` bundles the client TypeScript. Both are fast (~1-2s combined).
+```bash
+git add deploy/pallid-mask.service
+git commit -m "Add systemd service for pallid-mask exe.xyz deployment"
+```
 
-### Task 7: Update instances.json
+---
+
+## Task 8: Update instances.json
 
 **Files:**
 - Modify: `deploy/instances.json`
 
 - [ ] **Step 1: Add pallid-mask entry**
 
-Add to the JSON object:
+Add to the end of the JSON object in `deploy/instances.json`, before the closing `}`:
+
 ```json
 "pallid-mask": {
   "url": "https://pallid-mask.exe.xyz",
@@ -557,16 +686,25 @@ Add to the JSON object:
 }
 ```
 
+Remember to add a comma after the preceding entry (`"julian-remote": {...}`).
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add deploy/instances.json
+git commit -m "Add pallid-mask instance to deploy registry"
+```
+
 ---
 
-## Chunk 3: PWA Support
-
-### Task 8: Create web app manifest
+## Task 9: Create web app manifest
 
 **Files:**
 - Create: `pallid-mask/public/manifest.json`
 
 - [ ] **Step 1: Write the manifest file**
+
+Create `pallid-mask/public/manifest.json`:
 
 ```json
 {
@@ -581,14 +719,23 @@ Add to the JSON object:
 }
 ```
 
-### Task 9: Add PWA meta tags to index.html
+- [ ] **Step 2: Commit**
+
+```bash
+git add pallid-mask/public/manifest.json
+git commit -m "Add PWA manifest for fullscreen projector display"
+```
+
+---
+
+## Task 10: Add PWA meta tags to index.html
 
 **Files:**
 - Modify: `pallid-mask/public/index.html`
 
 - [ ] **Step 1: Add manifest link and meta tags to `<head>`**
 
-After the existing `<link rel="stylesheet" href="/styles.css">` line, add:
+In `pallid-mask/public/index.html`, after the existing `<link rel="stylesheet" href="/styles.css">` line (line 7), add:
 
 ```html
 <link rel="manifest" href="/manifest.json">
@@ -599,6 +746,18 @@ After the existing `<link rel="stylesheet" href="/styles.css">` line, add:
 ```
 
 The `mobile-web-app-capable` meta tag is the Chrome/Android equivalent of Apple's `apple-mobile-web-app-capable`. Both are needed for cross-browser fullscreen-without-UI behavior when the page is added to the home screen.
+
+- [ ] **Step 2: Run the build to verify everything compiles**
+
+Run: `cd pallid-mask && bun run build`
+Expected: Build succeeds, output in `public/dist/`.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add pallid-mask/public/index.html
+git commit -m "Add PWA meta tags for chromeless fullscreen projection"
+```
 
 ---
 
