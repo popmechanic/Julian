@@ -2,6 +2,7 @@
 
 Sou'wester Arts Week 2026 · Ilwaco, Washington
 Two-room installation. See `docs/pallid-mask/plan.md` for full implementation plan.
+Soul document for the entity: `pallid-mask/soul.md`.
 
 ## Typography
 
@@ -17,25 +18,71 @@ Two-room installation. See `docs/pallid-mask/plan.md` for full implementation pl
 Defined in `assets/colors.txt`. Dominant: `oklch(52% 0.12 317)` (dusty violet).
 
 ```css
---c1: oklch(52% 0.12 317);   /* dominant line color */
---c2: oklch(32% 0.086 287);  /* deep shadow */
---c3: oklch(42% 0.097 297);  /* mid tone */
---c4: oklch(67% 0.092 307);  /* lighter */
---c5: oklch(77% 0.076 332);  /* pale mauve — entity speech */
---c6: oklch(87% 0.065 347);  /* near-white — bloom highlight */
+--c1: oklch(52% 0.12 317);   /* dominant line color / structural frame */
+--c2: oklch(32% 0.086 287);  /* deep shadow / far-field glow */
+--c3: oklch(42% 0.097 297);  /* mid tone / fortune verses */
+--c4: oklch(67% 0.092 307);  /* lighter / sigils / visitor name */
+--c5: oklch(77% 0.076 332);  /* pale mauve — mask face strokes / entity speech */
+--c6: oklch(87% 0.065 347);  /* near-white — bloom highlight / vertex nodes */
 ```
 
 ## Vectrex Aesthetic
 
-Vector lines with light bloom. Achieved via layered `drop-shadow` filters:
-```css
-filter:
-  drop-shadow(0 0 1px var(--c6))   /* tight bright halo */
-  drop-shadow(0 0 5px var(--c1))   /* phosphor bloom */
-  drop-shadow(0 0 16px var(--c3))  /* ambient glow */
-  drop-shadow(0 0 32px var(--c2)); /* far-field radiation */
+The mask uses a triple-layer SVG `feGaussianBlur` filter (stdDeviation 1.7 / 5 / 10) for bloom. CSS `drop-shadow` adds per-element colored glow. `glow-line-bright` gets two drop-shadow passes for richness; `glow-line` and `glow-line-faint` use single pass.
+
+SVG filter region must be generous: `x="-60%" y="-40%" width="220%" height="180%"` — too tight causes hard clip edges on the glow.
+
+## The Mask Face
+
+Built in `mockup.html`. SVG `viewBox="230 75 350 505"`, displayed at `height: 85vh`.
+
+**Artistic references:**
+- Commedia dell'arte — elongated oval, wearable mask shape with concave brow notch (V-curve at top)
+- The expression is NOT comedy or tragedy — it is the face of something that has just finished processing you and not yet decided whether to speak
+- The smile references the John the Baptist painting attributed to da Vinci — corners curl asymmetrically, the right higher than the left, center anchored
+
+**Key element IDs** (animation targets):
 ```
-SVG elements use `fill="none"` stroke-based drawing. SVG bloom filter (`feGaussianBlur` layers) applied to mask face group.
+#face-left / #face-right   — face outline curves (cheek bulge during smile)
+#eye-left / #eye-right      — eye groups (blink via scaleY)
+#mouth-upper / #mouth-lower — lip paths (smile via CSS d-property)
+#cheek-left / #cheek-right / #cheek-bottom — cheek structure lines
+.eye-crinkle                — outer eye corner lines (fade in during smile)
+```
+
+**Mouth geometry:**
+- Upper: `M 363 452 C 375 444 390 443 400 447 C 410 443 425 444 439 449`
+- Lower: `M 363 452 Q 400 463 439 449`
+- Right corner always sits 3 units higher than left — that asymmetry is the expression
+
+## Animations
+
+**Blink:** CSS `scaleY(0.04)` on `.eye-group` from center (whole eye flattens to line). 5–14s between blinks. 12% chance of double-blink. Cartoonish snap, not anatomical.
+
+**Knowing smile:** CSS `d` property morph, 9 seconds. Fires every 70–130s; first smile at 30–50s after load.
+- Lower lip center fixed at (400, 463) — does not move
+- Corners curl up ~20 SVG units; right corner higher
+- Cheeks push diagonally outward-upward
+- Face outline bulges slightly at malar level
+- Cleanup via `setTimeout(SMILE_DUR + 100)` — do NOT rely on `animationend` (unreliable)
+
+**Sigil morph (top banner):** rAF loop at 30fps cycles through all 200 sigils sequentially. Data inlined in mockup.html (258KB). Easing: `1 - Math.pow(1-t, 4.5)` — hard deceleration landing. 1500ms morph, 600ms hold.
+
+## Performance Notes
+
+- **Scanlines:** use `transform: translateY(4px)` not `background-position` — GPU-composited
+- **`glow-pulse`:** animates CSS `filter` — CPU-bound but isolated via `will-change` and `translateZ(0)` on mask SVG
+- **`filter` on `.screen`:** restored to `hue-rotate(15deg)` — creates compositing barrier but is visually essential; accept the cost
+- **`will-change: transform`** on `.eye-group` and `.mask-wrap` for GPU layer hints
+- **Do not** apply `filter: blur()` to `.screen` — destroys GPU compositing for entire page (learned the hard way)
+- **Do not** use 4+ `drop-shadow` passes on elements inside an SVG filter group — redundant and expensive
+
+## Sigils
+
+200 SVG files in `assets/Cyber Sigils Vectors - Fox Rockett Studio/SVG/`.
+All path data extracted into `sigils-all.js` (inlined into mockup.html for `file://` compatibility).
+Bottom banner cycles randomly via `makeSVG()`. Drift fires every 45–75s.
+Color: fill `var(--c5)` for banners, `var(--c3)` for drift.
 
 ## Source Texts
 
@@ -43,10 +90,22 @@ Both in `pallid-mask/`, tab-indexed (`index\ttext`):
 - `king-in-yellow.txt` — 1,662 passages
 - `king-james-bible.txt` — 31,102 verses
 
-Stichomancy seed derived from inter-keystroke timing intervals.
+Stichomancy seed: sum of inter-keystroke timing intervals (ms).
+```
+king_yellow_index = seed % 1662
+bible_index = Math.floor(seed / 1662) % 31102
+```
 
-## Sigils
+## What's Built vs. What Still Needs Building
 
-200 SVG files in `assets/Cyber Sigils Vectors - Fox Rockett Studio/SVG/`.
-Used as ambient decoration at low opacity (`0.07–0.13`), animated with slow drift.
-Sigil 7 used as top/bottom banner decoration in current mockup.
+**Built:** `mockup.html` — full visual prototype with mask, animations, sigil morph, CRT effects, text layout.
+
+**Not yet built:**
+- The actual interactive stichomancy flow (visitor types → chaos input → fortune generated)
+- Claude API call with Pallid Mask system prompt
+- QR code generation for fortunes
+- Server endpoint or local file approach for fortune delivery
+- Julian MC mode for Room 1 (CRT)
+- Integration with the actual installation hardware
+
+See `docs/pallid-mask/plan.md` for the full technical spec.
