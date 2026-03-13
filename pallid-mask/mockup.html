@@ -990,6 +990,8 @@ const _STUBS_UNUSED = [
     cells = [];
     avail.length = 0;
     for (let i = 0; i < POOL; i++) avail.push(i);
+    // Reset scale on any filters that were active mid-wave before rebuild
+    inUse.forEach(fIdx => wdEls[fIdx].setAttribute('scale', '0'));
     inUse.clear();
 
     const vw = window.innerWidth;
@@ -1052,7 +1054,6 @@ const _STUBS_UNUSED = [
     }
   }
 
-  buildLayout();
   // ── Wave loop ───────────────────────────────────────────────
   // One rAF loop drives the clockwise displacement wave.
   //
