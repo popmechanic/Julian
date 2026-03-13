@@ -20,7 +20,9 @@
 
 **Justification:** The user wants fortune URLs like `marcus-wandering.html`. This requires two pieces: the visitor's name (already available in `FortuneRequest.name`) and a one-word summary of the fortune. The summary must come from the fortune generation step since the fortune text is the only meaningful source. Rather than a second Claude call, we extend the existing fortune generation prompt to return structured output: the fortune text plus a single-word essence. This is a trivial prompt modification and avoids an extra API roundtrip.
 
-**Sanitization:** Lowercase, strip non-alphanumeric (except hyphens), collapse multiple hyphens, trim to 30 chars for the name portion. The word portion is a single lowercase word from Claude's response, validated to be `[a-z]+` only.
+**Sanitization:** Unicode NFD normalization (to strip diacritics to ASCII equivalents), then lowercase, strip non-alphanumeric (except hyphens), collapse multiple hyphens, trim to 30 chars for the name portion. The word portion is a single lowercase word from Claude's response, validated to be `[a-z]+` only.
+
+**Why NFD normalization matters:** This is an art installation with international visitors. A visitor named "Maria" should produce "maria" in their URL, not "mara" (which is what happens if you strip non-ASCII directly). NFD decomposition splits "i" into "i" + combining acute accent, then stripping the combining marks yields "i". This is the standard approach for ASCII-safe slug generation.
 
 **Collision handling:** If `{name}-{word}.html` already exists, append a numeric suffix: `{name}-{word}-2.html`, `{name}-{word}-3.html`, etc. This handles the edge case of two visitors with the same name getting the same summary word. The collision check is a simple `existsSync` loop, which is fine since fortunes are generated one at a time (one visitor at a time per the spec).
 
@@ -58,6 +60,8 @@ The `WorkingDirectory` must point to the application root (`/opt/pallid-mask/pal
 
 This doubled path (`/opt/pallid-mask/pallid-mask`) is a cosmetic annoyance but structurally correct. The alternative — restructuring the repo to put pallid-mask at root — would break the branch-based workflow where `pallid-mask` branch is a diverged branch of the Julian repo.
 
+**Note on provisioning:** The Julian deploy skill (`julian-plugin/skills/deploy/SKILL.md`) is designed for Julian instances and includes Julian-specific setup (Clerk keys, JulianScreen service, directory at `/opt/julian`). The Pallid Mask is a standalone installation — no Clerk, no JulianScreen, different `.env` variables. Provisioning a pallid-mask VM uses the same exe.xyz infrastructure (VM creation, deploy keys, git clone, systemd) but with pallid-mask-specific paths and configuration. The service file and `instances.json` entry created by this plan provide the artifacts needed; the actual provisioning follows the same general steps as the deploy skill but with the pallid-mask-specific values substituted in.
+
 ### D4: systemd service file design
 
 **Decision:** Create `deploy/pallid-mask.service` following the pattern of `deploy/julian.service`, with paths adjusted for the subdirectory structure:
@@ -69,6 +73,14 @@ This doubled path (`/opt/pallid-mask/pallid-mask`) is a cosmetic annoyance but s
 - `ExecStart` for `bun run server/index.ts`
 
 **Justification:** The existing Julian services use `User=exedev`, Bun from `~/.bun/bin`, `.env` in the working directory. The two `ExecStartPre` directives ensure the application is ready after a deploy: `bun install` handles dependency updates, `bun run build` bundles the client. Both are fast (~1-2s combined). Since `WorkingDirectory` is set to the application root, these commands find `package.json` automatically without needing `--cwd`.
+
+**Required `.env` variables on the VM:**
+```
+ANTHROPIC_API_KEY=<key>        # Claude API (used implicitly by @anthropic-ai/sdk)
+ELEVENLABS_API_KEY=<key>       # ElevenLabs TTS (used by server/voice.ts)
+PUBLIC_URL=https://pallid-mask.exe.xyz  # Base URL for fortune page links and QR codes
+PORT=3000                      # Server port (exe.xyz reverse-proxies to this)
+```
 
 ### D5: instances.json entry
 
@@ -128,14 +140,16 @@ export interface FortunePageOptions {
 
 **Decision:** Medium fidelity, 15-20 tests across two test files. No deploy configuration tests — the service file and instances.json are simple declarative files where structural tests add maintenance burden without catching real errors. They would just be re-asserting the file contents we wrote.
 
-**`server/fortune-page.test.ts`** (8-10 tests):
+**`server/fortune-page.test.ts`** (9-10 tests):
 - Generates HTML file with correct name-word filename
 - Sanitizes names (strips special chars, lowercases, trims)
+- Normalizes diacritics to ASCII equivalents
 - Handles collision with numeric suffix
 - Falls back to hex slug when summaryWord is invalid
 - Returns correct publicUrl with the named file
 - Escapes HTML entities in fortune text
 - Inlines font and styles
+- Truncates long names
 
 **`server/fortune.test.ts`** (4-5 tests):
 - Parses fortune text and summary word from delimited response
@@ -208,10 +222,12 @@ Add `existsSync` to the fs import at the top:
 import { readFileSync, existsSync } from "fs";
 ```
 
-Add a `sanitizeName` function:
+Add a `sanitizeName` function with Unicode normalization:
 ```typescript
 function sanitizeName(name: string): string {
   return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, "")
     .replace(/-+/g, "-")
@@ -219,6 +235,8 @@ function sanitizeName(name: string): string {
     .slice(0, 30) || "visitor";
 }
 ```
+
+The `.normalize("NFD")` call decomposes accented characters into base + combining mark (e.g., "e" -> "e" + combining acute accent). The `[\u0300-\u036f]` regex strips all combining diacritical marks, leaving the ASCII base letter. This means "Maria" becomes "maria" (not "mara"), "Rene" becomes "rene", and "Bjork" becomes "bjork". The range `\u0300-\u036f` covers the Unicode "Combining Diacritical Marks" block, which handles Latin accents, tildes, umlauts, cedillas, and similar.
 
 Add a `resolveFilename` function:
 ```typescript
@@ -362,12 +380,12 @@ describe("generateFortunePage", () => {
     expect(existsSync(result.filePath)).toBe(true);
   });
 
-  test("lowercases and sanitizes the visitor name", async () => {
+  test("normalizes diacritics to ASCII equivalents", async () => {
     const result = await generateFortunePage({
       ...baseOpts,
       name: "María José",
     });
-    expect(result.id).toBe("marajos-wandering");
+    expect(result.id).toBe("mariajose-wandering");
   });
 
   test("strips special characters from name", async () => {
@@ -594,7 +612,7 @@ The `mobile-web-app-capable` meta tag is the Chrome/Android equivalent of Apple'
 
 ### Modified files:
 - `pallid-mask/server/fortune.ts` — add `SUMMARY_INSTRUCTION`, export `parseFortune`, change `generateFortune` return type
-- `pallid-mask/server/fortune-page.ts` — add `sanitizeName`, `resolveFilename`, update `FortunePageOptions` interface and `generateFortunePage` function
+- `pallid-mask/server/fortune-page.ts` — add `sanitizeName` (with Unicode NFD normalization), `resolveFilename`, update `FortunePageOptions` interface and `generateFortunePage` function
 - `pallid-mask/server/index.ts` — destructure new `generateFortune` return type, pass `name`/`summaryWord` to `generateFortunePage`
 - `pallid-mask/public/index.html` — add PWA meta tags and manifest link
 - `deploy/instances.json` — add `pallid-mask` entry
