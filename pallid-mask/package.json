@@ -1,0 +1,19 @@
+{
+  "name": "pallid-mask",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "bun run server/index.ts",
+    "build": "bun build client/main.ts --outdir public/dist --target browser",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "latest",
+    "@elevenlabs/elevenlabs-js": "latest",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.5",
+    "bun-types": "latest"
+  }
+}
