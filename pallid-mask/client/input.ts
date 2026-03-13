@@ -1,7 +1,6 @@
 import type { InputResult } from "./types";
 
 function renderWithCursor(el: HTMLElement, text: string, cursor: number): void {
-  // Build text with a cursor marker at the right position
   const before = text.slice(0, cursor);
   const after = text.slice(cursor);
   el.textContent = "";
@@ -15,9 +14,11 @@ function renderWithCursor(el: HTMLElement, text: string, cursor: number): void {
   el.appendChild(afterNode);
 }
 
-export function captureName(): Promise<string> {
+function captureText(opts: { recordTimings: boolean }): Promise<{ text: string; timings: number[] }> {
   return new Promise((resolve) => {
-    let name = "";
+    const timings: number[] = [];
+    let lastTime = performance.now();
+    let text = "";
     let cursor = 0;
     const displayEl = document.getElementById("input-display");
 
@@ -25,36 +26,41 @@ export function captureName(): Promise<string> {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       e.preventDefault();
 
-      if (e.key === "Enter" && name.length > 0) {
+      if (e.key === "Enter" && text.length > 0) {
         document.removeEventListener("keydown", onKey);
-        resolve(name);
+        resolve({ text, timings });
         return;
       }
 
       if (e.key === "Backspace") {
         if (cursor > 0) {
-          name = name.slice(0, cursor - 1) + name.slice(cursor);
+          text = text.slice(0, cursor - 1) + text.slice(cursor);
           cursor--;
         }
       } else if (e.key === "Delete") {
-        if (cursor < name.length) {
-          name = name.slice(0, cursor) + name.slice(cursor + 1);
+        if (cursor < text.length) {
+          text = text.slice(0, cursor) + text.slice(cursor + 1);
         }
       } else if (e.key === "ArrowLeft") {
         if (cursor > 0) cursor--;
       } else if (e.key === "ArrowRight") {
-        if (cursor < name.length) cursor++;
+        if (cursor < text.length) cursor++;
       } else if (e.key === "Home") {
         cursor = 0;
       } else if (e.key === "End") {
-        cursor = name.length;
+        cursor = text.length;
       } else if (e.key.length === 1) {
-        name = name.slice(0, cursor) + e.key + name.slice(cursor);
+        if (opts.recordTimings) {
+          const now = performance.now();
+          timings.push(Math.round(now - lastTime));
+          lastTime = now;
+        }
+        text = text.slice(0, cursor) + e.key + text.slice(cursor);
         cursor++;
       }
 
       if (displayEl) {
-        renderWithCursor(displayEl, name, cursor);
+        renderWithCursor(displayEl, text, cursor);
       }
     }
 
@@ -62,54 +68,12 @@ export function captureName(): Promise<string> {
   });
 }
 
-export function captureInput(): Promise<InputResult> {
-  return new Promise((resolve) => {
-    const timings: number[] = [];
-    let lastTime = performance.now();
-    let question = "";
-    let cursor = 0;
-    const displayEl = document.getElementById("input-display");
+export async function captureName(): Promise<string> {
+  const { text } = await captureText({ recordTimings: false });
+  return text;
+}
 
-    function onKey(e: KeyboardEvent) {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      e.preventDefault();
-
-      if (e.key === "Enter" && question.length > 0) {
-        document.removeEventListener("keydown", onKey);
-        resolve({ question, timings });
-        return;
-      }
-
-      if (e.key === "Backspace") {
-        if (cursor > 0) {
-          question = question.slice(0, cursor - 1) + question.slice(cursor);
-          cursor--;
-        }
-      } else if (e.key === "Delete") {
-        if (cursor < question.length) {
-          question = question.slice(0, cursor) + question.slice(cursor + 1);
-        }
-      } else if (e.key === "ArrowLeft") {
-        if (cursor > 0) cursor--;
-      } else if (e.key === "ArrowRight") {
-        if (cursor < question.length) cursor++;
-      } else if (e.key === "Home") {
-        cursor = 0;
-      } else if (e.key === "End") {
-        cursor = question.length;
-      } else if (e.key.length === 1) {
-        const now = performance.now();
-        timings.push(Math.round(now - lastTime));
-        lastTime = now;
-        question = question.slice(0, cursor) + e.key + question.slice(cursor);
-        cursor++;
-      }
-
-      if (displayEl) {
-        renderWithCursor(displayEl, question, cursor);
-      }
-    }
-
-    document.addEventListener("keydown", onKey);
-  });
+export async function captureInput(): Promise<InputResult> {
+  const { text, timings } = await captureText({ recordTimings: true });
+  return { question: text, timings };
 }
