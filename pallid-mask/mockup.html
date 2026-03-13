@@ -203,6 +203,23 @@ body::after {
   flex: 0 0 auto;
 }
 
+/* Blink — whole eye group collapses to a flat line from center */
+.eye-group {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+}
+
+@keyframes blink-close {
+  0%   { transform: scaleY(1); }
+  20%  { transform: scaleY(0.04); }  /* snap flat */
+  65%  { transform: scaleY(0.04); }  /* hold */
+  100% { transform: scaleY(1); }     /* snap open */
+}
+
+.eye-group.blinking {
+  animation: blink-close 220ms ease-in-out forwards;
+}
+
 .mask-wrap svg {
   height: 85vh;
   width: auto;
@@ -428,13 +445,17 @@ body::after {
           <path class="glow-line-bright" d="M 330 110 C 260 140 240 260 270 370 C 290 450 340 520 400 550"/>
           <path class="glow-line-bright" d="M 470 110 C 540 140 560 260 530 370 C 510 450 460 520 400 550"/>
 
-          <!-- eyes — asymmetric: left curves lower, right terminates higher -->
-          <path class="glow-line-bright" d="M 290 235 L 380 235"/>
-          <path class="glow-line-bright" d="M 420 235 L 510 235"/>
-          <path class="glow-line"        d="M 290 235 L 305 270 Q 340 295 380 235"/>
-          <path class="glow-line"        d="M 420 235 Q 465 275 495 260 L 510 235"/>
-          <path class="glow-line-faint"  d="M 305 270 Q 330 280 355 260"/>
-          <path class="glow-line-faint"  d="M 445 260 Q 470 270 495 260"/>
+          <!-- eyes — whole eye collapses to flat line on blink -->
+          <g class="eye-group" id="eye-left">
+            <path class="glow-line-bright" d="M 290 235 L 380 235"/>
+            <path class="glow-line"        d="M 290 235 L 305 270 Q 340 295 380 235"/>
+            <path class="glow-line-faint"  d="M 305 270 Q 330 280 355 260"/>
+          </g>
+          <g class="eye-group" id="eye-right">
+            <path class="glow-line-bright" d="M 420 235 L 510 235"/>
+            <path class="glow-line"        d="M 420 235 Q 465 275 495 260 L 510 235"/>
+            <path class="glow-line-faint"  d="M 445 260 Q 470 270 495 260"/>
+          </g>
 
           <!-- nose — long vertical descending line -->
           <path class="glow-line"        d="M 380 235 L 388 385 L 400 405 L 412 385 L 420 235"/>
@@ -700,6 +721,33 @@ const _STUBS_UNUSED = [
   { vb: "0 0 693.49 139.07", p: `<path d="M0,0v139.07h139.07V0H0ZM111.26,111.26H27.81V27.81h83.45v83.45Z"/><path d="M554.42,0v139.07h139.07V0h-139.07ZM665.68,111.26h-83.45V27.81h83.45v83.45Z"/><path d="M185.37,0l-46.3,46.3v46.47l46.3,46.3h322.75l46.3-46.3v-46.47L508.12,0H185.37ZM522.72,83.77l-28.91,28.91H199.68l-28.91-28.91V55.3l28.91-28.91h294.13l28.91,28.91v28.47Z"/>` },
   { vb: "0 0 602.13 159.59", p: `<path d="M0,0v53.2h53.2V0H0ZM42.56,42.56H10.64V10.64h31.92v31.92Z"/><path d="M0,106.39v53.2h53.2v-53.2H0ZM42.56,149.03H10.64v-31.92h31.92v31.92Z"/><path d="M548.93,0v53.2h53.2V0h-53.2ZM591.57,42.56h-31.92V10.64h31.92v31.92Z"/><path d="M548.93,106.39v53.2h53.2v-53.2h-53.2ZM591.57,149.03h-31.92v-31.92h31.92v31.92Z"/><path d="M106.39,53.2h389.35V0H106.39v53.2ZM117.03,10.64h368.08v31.92H117.03V10.64Z"/><path d="M106.39,159.59h389.35v-53.2H106.39v53.2ZM117.03,117.03h368.08v31.92H117.03v-31.92Z"/><path d="M280.97,106.39h40.19V53.2h-40.19v53.2Z"/>` },
 ];
+
+// ─── BLINK ───────────────────────────────────────────────────
+(function() {
+  const eyes = () => document.querySelectorAll('.eye-group');
+
+  function doBlink() {
+    eyes().forEach(el => {
+      el.classList.add('blinking');
+      el.addEventListener('animationend', () => el.classList.remove('blinking'), { once: true });
+    });
+  }
+
+  function schedule() {
+    const delay = 2200 + Math.random() * 4800; // 2.2–7s between blinks
+    setTimeout(() => {
+      doBlink();
+      // 12% chance of a quick double-blink
+      if (Math.random() < 0.12) {
+        setTimeout(doBlink, 340);
+      }
+      schedule();
+    }, delay);
+  }
+
+  // First blink after a brief natural pause
+  setTimeout(schedule, 1500 + Math.random() * 2000);
+})();
 
 // prefers-reduced-motion
 if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
