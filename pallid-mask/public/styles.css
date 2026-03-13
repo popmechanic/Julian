@@ -1,0 +1,475 @@
+
+@font-face {
+  font-family: 'Orpheus';
+  src: url('/assets/Orpheus.otf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+:root {
+  --c1: oklch(52% 0.12 317);   /* dominant: dusty violet */
+  --c2: oklch(32% 0.086 287);  /* deep indigo-shadow */
+  --c3: oklch(42% 0.097 297);  /* mid blue-violet */
+  --c4: oklch(67% 0.092 307);  /* lighter violet */
+  --c5: oklch(77% 0.076 332);  /* pale mauve */
+  --c6: oklch(87% 0.065 347);  /* near-white rose */
+}
+
+*, *::before, *::after {
+  margin: 0; padding: 0; box-sizing: border-box;
+  font-variant-caps: normal;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  background: #000;
+  font-family: 'Orpheus', Georgia, serif;
+}
+
+/* CRT scanlines — GPU-composited via transform instead of background-position */
+@keyframes scanlines {
+  from { transform: translateY(0); }
+  to   { transform: translateY(4px); }
+}
+
+/* CRT flicker — authentic phosphor behavior */
+@keyframes flicker {
+  0%   { opacity: 0.27861; }
+  5%   { opacity: 0.34769; }
+  10%  { opacity: 0.23604; }
+  15%  { opacity: 0.90626; }
+  20%  { opacity: 0.18128; }
+  25%  { opacity: 0.83891; }
+  30%  { opacity: 0.65583; }
+  35%  { opacity: 0.67807; }
+  40%  { opacity: 0.26559; }
+  45%  { opacity: 0.84693; }
+  50%  { opacity: 0.96019; }
+  55%  { opacity: 0.08594; }
+  60%  { opacity: 0.20313; }
+  65%  { opacity: 0.71988; }
+  70%  { opacity: 0.53455; }
+  75%  { opacity: 0.37288; }
+  80%  { opacity: 0.71428; }
+  85%  { opacity: 0.70419; }
+  90%  { opacity: 0.7003;  }
+  95%  { opacity: 0.36108; }
+  100% { opacity: 0.24387; }
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  /* Slightly taller than viewport so translateY(4px) never shows a gap */
+  width: 100%; height: calc(100% + 4px);
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent          0px,
+    transparent          2px,
+    rgba(0,0,0,0.13)     2px,
+    rgba(0,0,0,0.13)     4px
+  );
+  animation: scanlines 0.25s linear infinite;
+  will-change: transform;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  width: 100%; height: 100%;
+  background: rgba(18, 16, 16, 0.1);
+  animation: flicker 0.15s infinite;
+  pointer-events: none;
+  z-index: 1001;
+}
+
+/* Mask glow pulse — 3 shadows (down from 4) keeps the bloom, saves one filter pass */
+@keyframes glow-pulse {
+  0%, 100% {
+    filter:
+      drop-shadow(0 0 2px var(--c6))
+      drop-shadow(0 0 8px var(--c1))
+      drop-shadow(0 0 26px var(--c2));
+  }
+  50% {
+    filter:
+      drop-shadow(0 0 3px var(--c6))
+      drop-shadow(0 0 13px var(--c1))
+      drop-shadow(0 0 38px var(--c2));
+  }
+}
+
+/* Sigil ambient drift */
+@keyframes sigil-drift {
+  0%, 100% { opacity: 0.18; }
+  50%       { opacity: 0.30; }
+}
+
+/* ─── LAYOUT ─────────────────────────────────────────────── */
+
+.screen {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 36px 72px 36px;
+  position: relative;
+  box-shadow: inset 0 0 200px rgba(0, 0, 0, 0.9);
+  filter: hue-rotate(15deg);
+}
+
+/* ─── BANDS ──────────────────────────────────────────────── */
+
+.band {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.band-top { flex-direction: column; }
+.band-bottom { flex-direction: column-reverse; }
+
+/* Sigil decorative banners */
+.sigil-banner {
+  width: 440px;
+  display: block;
+  fill: var(--c5);
+  animation: sigil-drift 7s ease-in-out infinite;
+}
+.band-bottom .sigil-banner {
+  transform: scaleY(-1);
+  animation-delay: -3.5s;
+}
+
+/* Vectrex-style border line with corner marks */
+.border-line {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.border-line .line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--c2) 10%,
+    var(--c3) 30%,
+    var(--c5) 50%,
+    var(--c3) 70%,
+    var(--c2) 90%,
+    transparent 100%
+  );
+  filter: drop-shadow(0 0 2px var(--c4)) drop-shadow(0 0 8px var(--c1));
+}
+
+.corner-mark {
+  flex: 0 0 auto;
+  display: block;
+}
+
+/* ─── CENTER ─────────────────────────────────────────────── */
+
+.center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  flex: 1;
+  padding: 8px 0;
+}
+
+/* ─── MASK FACE ──────────────────────────────────────────── */
+
+.mask-wrap {
+  animation: glow-pulse 5s ease-in-out infinite;
+  will-change: opacity;
+  flex: 0 0 auto;
+}
+
+/* Blink — whole eye group collapses to a flat line from center */
+.eye-group {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+
+@keyframes blink-close {
+  0%   { transform: scaleY(1); }
+  20%  { transform: scaleY(0.04); }  /* snap flat */
+  65%  { transform: scaleY(0.04); }  /* hold */
+  100% { transform: scaleY(1); }     /* snap open */
+}
+
+.eye-group.blinking {
+  animation: blink-close 220ms ease-in-out forwards;
+}
+
+/* ── KNOWING SMILE ──────────────────────────────────────────
+   Mouth morphs via CSS d-property; crinkle lines fade in.
+   Eye blink uses transform — no conflict. ── */
+
+/* ── KNOWING SMILE — full face anatomy ─────────────────────────
+   Corners lift ~20 SVG units. Cheeks push outward and up.
+   Face outline bulges at the malar (cheekbone) level.
+   Right corner always sits higher than left — the asymmetry is the secret. */
+
+@keyframes mouth-upper-smile {
+  /* Center stays anchored ~(400,447); corners curl up and outward */
+  0%, 100% { d: path('M 363 452 C 375 444 390 443 400 447 C 410 443 425 444 439 449'); }
+  30%, 70%  { d: path('M 358 433 C 374 441 391 445 400 447 C 409 445 427 440 445 428'); }
+}
+@keyframes mouth-lower-smile {
+  /* Lower lip center FIXED at (400,463); only corners lift — imp curl */
+  0%, 100% { d: path('M 363 452 Q 400 463 439 449'); }
+  30%, 70%  { d: path('M 358 433 Q 400 463 445 428'); }
+}
+
+/* Cheeks push up and outward as the smile muscles engage */
+@keyframes cheek-left-smile {
+  0%, 100% { d: path('M 345 390 L 325 450 L 340 510'); }
+  30%, 70%  { d: path('M 342 388 L 308 435 L 328 506'); }
+}
+@keyframes cheek-right-smile {
+  0%, 100% { d: path('M 455 390 L 475 450 L 460 510'); }
+  30%, 70%  { d: path('M 458 388 L 492 435 L 472 506'); }
+}
+@keyframes cheek-bottom-smile {
+  0%, 100% { d: path('M 375 510 L 400 520 L 425 510'); }
+  30%, 70%  { d: path('M 370 514 L 400 526 L 430 514'); }
+}
+
+/* Face outline: slight cheekbone bulge at malar level (y≈340–420) */
+@keyframes face-left-smile {
+  0%, 100% { d: path('M 330 110 C 260 140 240 260 270 370 C 290 450 340 520 400 550'); }
+  30%, 70%  { d: path('M 330 110 C 260 140 234 260 262 370 C 284 450 338 520 400 550'); }
+}
+@keyframes face-right-smile {
+  0%, 100% { d: path('M 470 110 C 540 140 560 260 530 370 C 510 450 460 520 400 550'); }
+  30%, 70%  { d: path('M 470 110 C 540 140 566 260 538 370 C 516 450 462 520 400 550'); }
+}
+
+@keyframes crinkle-appear {
+  0%, 100% { opacity: 0; }
+  30%, 70%  { opacity: 0.7; }
+}
+
+#mouth-upper.smiling  { animation: mouth-upper-smile  9s ease-in-out forwards; }
+#mouth-lower.smiling  { animation: mouth-lower-smile  9s ease-in-out forwards; }
+#cheek-left.smiling   { animation: cheek-left-smile   9s ease-in-out forwards; }
+#cheek-right.smiling  { animation: cheek-right-smile  9s ease-in-out forwards; }
+#cheek-bottom.smiling { animation: cheek-bottom-smile 9s ease-in-out forwards; }
+#face-left.smiling    { animation: face-left-smile    9s ease-in-out forwards; }
+#face-right.smiling   { animation: face-right-smile   9s ease-in-out forwards; }
+.eye-crinkle           { opacity: 0; }
+.eye-crinkle.smiling   { animation: crinkle-appear    9s ease-in-out forwards; }
+
+.mask-wrap svg {
+  height: 76.5vh;
+  width: auto;
+  /* Isolate SVG filter to its own GPU layer */
+  transform: translateZ(0);
+  will-change: opacity;
+}
+
+/* Glow line classes — bright gets two passes for richness; others single pass */
+.glow-line {
+  fill: none;
+  stroke: var(--c5);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: miter;
+  filter: drop-shadow(0 0 4px rgba(190, 145, 170, 0.6));
+}
+.glow-line-bright {
+  fill: none;
+  stroke: var(--c6);
+  stroke-width: 2.8;
+  stroke-linecap: round;
+  stroke-linejoin: miter;
+  filter: drop-shadow(0 0 4px rgba(235, 190, 215, 0.8)) drop-shadow(0 0 12px rgba(180, 130, 165, 0.45));
+}
+.glow-line-faint {
+  fill: none;
+  stroke: var(--c4);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 2px rgba(165, 125, 170, 0.5));
+}
+
+/* ─── TEXT EXCHANGE ──────────────────────────────────────── */
+
+.exchange {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  max-width: 600px;
+  width: 100%;
+}
+
+.entity-speech {
+  font-size: 1.2rem;
+  line-height: 1.95;
+  color: var(--c6);
+  text-align: center;
+  letter-spacing: 0.035em;
+  filter: drop-shadow(0 0 8px var(--c5)) drop-shadow(0 0 20px var(--c1));
+}
+
+.fortune-block {
+  width: 100%;
+  padding: 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  position: relative;
+}
+
+.fortune-block::before,
+.fortune-block::after {
+  content: '';
+  display: block;
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--c2) 20%, var(--c3) 50%, var(--c2) 80%, transparent);
+  filter: drop-shadow(0 0 3px var(--c3));
+}
+
+.fortune-block::after { margin-top: 14px; }
+.fortune-block::before { margin-bottom: 14px; }
+
+.fortune-verse {
+  font-size: 1.0rem;
+  line-height: 2.0;
+  color: var(--c3);
+  text-align: center;
+  letter-spacing: 0.04em;
+  filter: drop-shadow(0 0 6px var(--c2));
+}
+
+.fortune-verse + .fortune-verse {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--c3);
+  color: var(--c3);
+  filter: drop-shadow(0 0 4px var(--c1));
+}
+
+.entity-interpret {
+  font-size: 1.0rem;
+  line-height: 2.0;
+  color: var(--c5);
+  text-align: center;
+  letter-spacing: 0.03em;
+  max-width: 500px;
+  filter: drop-shadow(0 0 8px var(--c4)) drop-shadow(0 0 16px var(--c1));
+}
+
+.visitor-name {
+  font-size: 0.78rem;
+  color: var(--c4);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  margin-top: 4px;
+  filter: drop-shadow(0 0 6px var(--c3));
+}
+
+/* ─── SIGIL SLOTS ─────────────────────────────────────────── */
+
+.sigil-slot {
+  display: block;
+  transition: opacity 1.2s ease;
+  pointer-events: none;
+}
+
+.sigil-slot svg {
+  display: block;
+  fill: var(--c5);
+}
+
+#sigil-bottom svg {
+  fill: var(--c6);
+  animation: glow-pulse 5s ease-in-out infinite;
+}
+
+/* Top/bottom banner slots */
+.sigil-banner-slot {
+  width: 440px;
+  animation: sigil-drift 7s ease-in-out infinite;
+}
+.band-bottom .sigil-banner-slot {
+  animation-delay: -3.5s;
+}
+
+/* Morph display — matches mask brightness and glow */
+#sigil-top {
+  animation: none;
+  opacity: 1;
+}
+#sigil-morph-svg {
+  display: block;
+  fill: var(--c6);
+  animation: glow-pulse 5s ease-in-out infinite;
+  transform: translateZ(0);
+  will-change: filter;
+}
+
+/* ─── SIGIL FRAME ────────────────────────────────────────── */
+
+#sigil-frame {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 999; /* below scanlines (1000), above .screen content */
+}
+
+.sf-cell {
+  position: absolute;
+  width: 50px;     /* CELL — hard box keeps SVG width:100% from expanding to viewport */
+  height: 50px;    /* CELL */
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  will-change: filter;
+  filter: drop-shadow(0 0 3px var(--c5)) drop-shadow(0 0 8px var(--c1));
+}
+
+.sf-cell svg {
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  display: block;
+  fill: var(--c5);
+}
+
+/* ─── CEREMONY OVERLAY ───────────────────────────────────── */
+
+#ceremony-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+}
+
+#ceremony-overlay.active {
+  pointer-events: auto;
+  opacity: 1;
+}
