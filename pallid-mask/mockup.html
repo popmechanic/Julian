@@ -227,23 +227,60 @@ body::after {
    Mouth morphs via CSS d-property; crinkle lines fade in.
    Eye blink uses transform — no conflict. ── */
 
+/* ── KNOWING SMILE — full face anatomy ─────────────────────────
+   Corners lift ~20 SVG units. Cheeks push outward and up.
+   Face outline bulges at the malar (cheekbone) level.
+   Right corner always sits higher than left — the asymmetry is the secret. */
+
 @keyframes mouth-upper-smile {
+  /* Center stays anchored ~(400,447); corners curl up and outward */
   0%, 100% { d: path('M 363 452 C 375 444 390 443 400 447 C 410 443 425 444 439 449'); }
-  30%, 70%  { d: path('M 363 446 C 376 440 390 438 400 442 C 410 438 426 440 439 443'); }
+  30%, 70%  { d: path('M 358 433 C 374 441 391 445 400 447 C 409 445 427 440 445 428'); }
 }
 @keyframes mouth-lower-smile {
+  /* Lower lip center FIXED at (400,463); only corners lift — imp curl */
   0%, 100% { d: path('M 363 452 Q 400 463 439 449'); }
-  30%, 70%  { d: path('M 363 446 Q 400 461 439 443'); }
-}
-@keyframes crinkle-appear {
-  0%, 100% { opacity: 0; }
-  30%, 70%  { opacity: 0.65; }
+  30%, 70%  { d: path('M 358 433 Q 400 463 445 428'); }
 }
 
-#mouth-upper.smiling { animation: mouth-upper-smile 9s ease-in-out forwards; }
-#mouth-lower.smiling { animation: mouth-lower-smile 9s ease-in-out forwards; }
-.eye-crinkle          { opacity: 0; }
-.eye-crinkle.smiling  { animation: crinkle-appear 9s ease-in-out forwards; }
+/* Cheeks push up and outward as the smile muscles engage */
+@keyframes cheek-left-smile {
+  0%, 100% { d: path('M 345 390 L 325 450 L 340 510'); }
+  30%, 70%  { d: path('M 342 388 L 308 435 L 328 506'); }
+}
+@keyframes cheek-right-smile {
+  0%, 100% { d: path('M 455 390 L 475 450 L 460 510'); }
+  30%, 70%  { d: path('M 458 388 L 492 435 L 472 506'); }
+}
+@keyframes cheek-bottom-smile {
+  0%, 100% { d: path('M 375 510 L 400 520 L 425 510'); }
+  30%, 70%  { d: path('M 370 514 L 400 526 L 430 514'); }
+}
+
+/* Face outline: slight cheekbone bulge at malar level (y≈340–420) */
+@keyframes face-left-smile {
+  0%, 100% { d: path('M 330 110 C 260 140 240 260 270 370 C 290 450 340 520 400 550'); }
+  30%, 70%  { d: path('M 330 110 C 260 140 234 260 262 370 C 284 450 338 520 400 550'); }
+}
+@keyframes face-right-smile {
+  0%, 100% { d: path('M 470 110 C 540 140 560 260 530 370 C 510 450 460 520 400 550'); }
+  30%, 70%  { d: path('M 470 110 C 540 140 566 260 538 370 C 516 450 462 520 400 550'); }
+}
+
+@keyframes crinkle-appear {
+  0%, 100% { opacity: 0; }
+  30%, 70%  { opacity: 0.7; }
+}
+
+#mouth-upper.smiling  { animation: mouth-upper-smile  9s ease-in-out forwards; }
+#mouth-lower.smiling  { animation: mouth-lower-smile  9s ease-in-out forwards; }
+#cheek-left.smiling   { animation: cheek-left-smile   9s ease-in-out forwards; }
+#cheek-right.smiling  { animation: cheek-right-smile  9s ease-in-out forwards; }
+#cheek-bottom.smiling { animation: cheek-bottom-smile 9s ease-in-out forwards; }
+#face-left.smiling    { animation: face-left-smile    9s ease-in-out forwards; }
+#face-right.smiling   { animation: face-right-smile   9s ease-in-out forwards; }
+.eye-crinkle           { opacity: 0; }
+.eye-crinkle.smiling   { animation: crinkle-appear    9s ease-in-out forwards; }
 
 .mask-wrap svg {
   height: 85vh;
@@ -468,8 +505,8 @@ body::after {
           <path class="glow-line"        d="M 470 110 L 458 128"/>
 
           <!-- face outline -->
-          <path class="glow-line-bright" d="M 330 110 C 260 140 240 260 270 370 C 290 450 340 520 400 550"/>
-          <path class="glow-line-bright" d="M 470 110 C 540 140 560 260 530 370 C 510 450 460 520 400 550"/>
+          <path id="face-left"  class="glow-line-bright" d="M 330 110 C 260 140 240 260 270 370 C 290 450 340 520 400 550"/>
+          <path id="face-right" class="glow-line-bright" d="M 470 110 C 540 140 560 260 530 370 C 510 450 460 520 400 550"/>
 
           <!-- eyes — whole eye collapses to flat line on blink -->
           <g class="eye-group" id="eye-left">
@@ -498,15 +535,13 @@ body::after {
           <path class="eye-crinkle glow-line-faint" d="M 511 247 Q 525 255 532 265"/>
 
           <!-- cheek structure lines -->
-          <path class="glow-line"        d="M 345 390 L 325 450 L 340 510"/>
-          <path class="glow-line"        d="M 455 390 L 475 450 L 460 510"/>
-          <path class="glow-line"        d="M 375 510 L 400 520 L 425 510"/>
+          <path id="cheek-left"   class="glow-line" d="M 345 390 L 325 450 L 340 510"/>
+          <path id="cheek-right"  class="glow-line" d="M 455 390 L 475 450 L 460 510"/>
+          <path id="cheek-bottom" class="glow-line" d="M 375 510 L 400 520 L 425 510"/>
 
           <!-- faint structural geometry -->
           <path class="glow-line-faint"  d="M 270 370 L 315 415 L 340 480"/>
           <path class="glow-line-faint"  d="M 530 370 L 485 415 L 460 480"/>
-          <path class="glow-line-faint"  d="M 300 235 L 290 280 L 315 340"/>
-          <path class="glow-line-faint"  d="M 500 235 L 510 280 L 485 340"/>
 
           <!-- vertex nodes — electron beam dwell points -->
           <circle cx="330" cy="110" r="1.5" fill="var(--c6)"/>
@@ -766,7 +801,7 @@ const _STUBS_UNUSED = [
   }
 
   function schedule() {
-    const delay = 2200 + Math.random() * 4800; // 2.2–7s between blinks
+    const delay = 5000 + Math.random() * 9000; // 5–14s between blinks
     setTimeout(() => {
       doBlink();
       // 12% chance of a quick double-blink
@@ -789,6 +824,11 @@ const _STUBS_UNUSED = [
     const els = [
       document.getElementById('mouth-upper'),
       document.getElementById('mouth-lower'),
+      document.getElementById('cheek-left'),
+      document.getElementById('cheek-right'),
+      document.getElementById('cheek-bottom'),
+      document.getElementById('face-left'),
+      document.getElementById('face-right'),
       ...document.querySelectorAll('.eye-crinkle')
     ];
     // Add class to trigger animation
