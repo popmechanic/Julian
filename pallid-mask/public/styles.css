@@ -84,6 +84,8 @@ body::after {
   width: 100%; height: 100%;
   background: rgba(18, 16, 16, 0.1);
   animation: flicker 0.15s infinite;
+  will-change: opacity;
+  transform: translateZ(0);
   pointer-events: none;
   z-index: 1001;
 }
@@ -146,7 +148,7 @@ body::after {
 
 .mask-wrap {
   animation: glow-pulse 5s ease-in-out infinite;
-  will-change: opacity;
+  will-change: filter;
   flex: 0 0 auto;
 }
 
@@ -245,6 +247,7 @@ body::after {
 .mask-wrap.mask-hidden {
   opacity: 0;
   pointer-events: none;
+  animation-play-state: paused;
 }
 .mask-wrap.mask-enlarged svg {
   height: 84vh;
@@ -349,7 +352,6 @@ body::after {
   display: flex;
   align-items: center;
   justify-content: center;
-  will-change: filter;
   filter: drop-shadow(0 0 3px var(--c5)) drop-shadow(0 0 8px var(--c1));
 }
 

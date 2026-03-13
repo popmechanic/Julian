@@ -203,6 +203,8 @@ const frameInUse = new Map<number, number>();
 
 let frameRafId: number | null = null;
 let frameStartTs: number | null = null;
+let frameLastTickTs = 0;
+const FRAME_TICK_MS = 1000 / 30; // throttle to 30fps
 let frameResizeTimer: ReturnType<typeof setTimeout> | null = null;
 let frameResizeListener: (() => void) | null = null;
 
@@ -226,7 +228,7 @@ function initFrameDOM(): void {
     const turb = document.createElementNS(NS, 'feTurbulence');
     turb.setAttribute('type', 'fractalNoise');
     turb.setAttribute('baseFrequency', '0.011 0.008');
-    turb.setAttribute('numOctaves', '4');
+    turb.setAttribute('numOctaves', '2');
     turb.setAttribute('seed', '17');
     turb.setAttribute('result', 'n');
 
@@ -310,6 +312,9 @@ function buildLayout(): void {
 }
 
 function frameTick(ts: number): void {
+  frameRafId = requestAnimationFrame(frameTick);
+  if (ts - frameLastTickTs < FRAME_TICK_MS) return;
+  frameLastTickTs = ts;
   if (!frameStartTs) frameStartTs = ts;
   const elapsed = ts - frameStartTs;
   const cursor = (elapsed / framePeriod) * frameN;
@@ -355,7 +360,6 @@ function frameTick(ts: number): void {
     }
   }
 
-  frameRafId = requestAnimationFrame(frameTick);
 }
 
 function startFrame(): void {
@@ -493,7 +497,7 @@ function initSpinnerWarpDOM(): void {
     const turb = document.createElementNS(NS, 'feTurbulence');
     turb.setAttribute('type', 'fractalNoise');
     turb.setAttribute('baseFrequency', '0.011 0.008');
-    turb.setAttribute('numOctaves', '4');
+    turb.setAttribute('numOctaves', '2');
     turb.setAttribute('seed', '17');
     turb.setAttribute('result', 'n');
 
