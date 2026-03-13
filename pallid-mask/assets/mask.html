@@ -1,0 +1,140 @@
+<html lang="en" vid="0"><head vid="1">
+    <meta charset="UTF-8" vid="2">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" vid="3">
+    <script src="https://cdn.tailwindcss.com/3.4.17" vid="4"></script>
+    <style vid="5">
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000000;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .vectrex-container {
+            width: 100%;
+            height: 100%;
+            background-color: #020202;
+            position: relative;
+        }
+
+        .crt-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%);
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .glow-line {
+            fill: none;
+            stroke: #f8fbff;
+            stroke-width: 2.5;
+            stroke-linecap: round;
+            stroke-linejoin: miter;
+            stroke-miterlimit: 4;
+            filter: drop-shadow(0 0 4px rgba(200, 230, 255, 0.8)) drop-shadow(0 0 12px rgba(150, 200, 255, 0.4));
+        }
+
+        .glow-line-bright {
+            fill: none;
+            stroke: #ffffff;
+            stroke-width: 3.5;
+            stroke-linecap: round;
+            stroke-linejoin: miter;
+            filter: drop-shadow(0 0 6px rgba(200, 240, 255, 0.9)) drop-shadow(0 0 15px rgba(100, 180, 255, 0.5));
+        }
+
+        .glow-line-faint {
+            fill: none;
+            stroke: #d0e4ff;
+            stroke-width: 1.5;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            filter: drop-shadow(0 0 3px rgba(150, 200, 255, 0.6));
+        }
+    </style>
+</head>
+<body vid="6">
+
+<div class="vectrex-container" vid="7">
+    <div class="crt-overlay" vid="8"></div>
+    <svg viewBox="0 0 800 600" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" vid="9">
+        <defs vid="10">
+            <filter id="vector-glow" x="-20%" y="-20%" width="140%" height="140%" vid="11">
+                <feGaussianBlur stdDeviation="2" result="blur1" vid="12"></feGaussianBlur>
+                <feGaussianBlur stdDeviation="6" result="blur2" vid="13"></feGaussianBlur>
+                <feGaussianBlur stdDeviation="12" result="blur3" vid="14"></feGaussianBlur>
+                <feMerge vid="15">
+                    <feMergeNode in="blur3" vid="16"></feMergeNode>
+                    <feMergeNode in="blur2" vid="17"></feMergeNode>
+                    <feMergeNode in="blur1" vid="18"></feMergeNode>
+                    <feMergeNode in="SourceGraphic" vid="19"></feMergeNode>
+                </feMerge>
+            </filter>
+        </defs>
+
+        <g filter="url(#vector-glow)" vid="20">
+            <path class="glow-line-bright" d="M 330 110 Q 400 180 470 110" vid="21"></path>
+            <path class="glow-line" d="M 342 128 Q 400 195 458 128" vid="22"></path>
+            <path class="glow-line" d="M 330 110 L 342 128" vid="23"></path>
+            <path class="glow-line" d="M 470 110 L 458 128" vid="24"></path>
+
+            <path class="glow-line-bright" d="M 330 110 C 260 140 240 260 270 370 C 290 450 340 520 400 550" vid="25"></path>
+            <path class="glow-line-bright" d="M 470 110 C 540 140 560 260 530 370 C 510 450 460 520 400 550" vid="26"></path>
+
+            <path class="glow-line-bright" d="M 290 235 L 380 235" vid="27"></path>
+            <path class="glow-line-bright" d="M 420 235 L 510 235" vid="28"></path>
+
+            <path class="glow-line" d="M 290 235 L 305 270 Q 340 295 380 235" vid="29"></path>
+            <path class="glow-line" d="M 420 235 Q 465 275 495 260 L 510 235" vid="30"></path>
+
+            <path class="glow-line-faint" d="M 305 270 Q 330 280 355 260" vid="31"></path>
+            <path class="glow-line-faint" d="M 445 260 Q 470 270 495 260" vid="32"></path>
+
+            <path class="glow-line" d="M 380 235 L 388 385 L 400 405 L 412 385 L 420 235" vid="33"></path>
+            
+            <path class="glow-line" d="M 375 375 L 400 395 L 425 375" vid="34"></path>
+            
+
+            <path class="glow-line-bright" d="M 363 457 L 400 462 L 437 457" vid="35"></path>
+            <path class="glow-line-bright" d="M 360 445 L 400 450 L 440 445" vid="36"></path>
+            <path class="glow-line-bright" d="M 360 445 L 400 450 L 440 445" vid="37"></path>
+            
+
+            <path class="glow-line" d="M 345 390 L 325 450 L 340 510" vid="38"></path>
+            <path class="glow-line" d="M 455 390 L 475 450 L 460 510" vid="39"></path>
+
+            
+            
+
+            <path class="glow-line" d="M 375 510 L 400 520 L 425 510" vid="40"></path>
+        
+
+            <path class="glow-line-faint" d="M 270 370 L 315 415 L 340 480" vid="41"></path>
+            <path class="glow-line-faint" d="M 530 370 L 485 415 L 460 480" vid="42"></path>
+            
+            <path class="glow-line-faint" d="M 300 235 L 290 280 L 315 340" vid="43"></path>
+            <path class="glow-line-faint" d="M 500 235 L 510 280 L 485 340" vid="44"></path>
+
+            <circle cx="330" cy="110" r="1.5" fill="#ffffff" vid="45"></circle>
+            <circle cx="470" cy="110" r="1.5" fill="#ffffff" vid="46"></circle>
+            <circle cx="290" cy="235" r="1.5" fill="#ffffff" vid="47"></circle>
+            <circle cx="380" cy="235" r="1.5" fill="#ffffff" vid="48"></circle>
+            <circle cx="420" cy="235" r="1.5" fill="#ffffff" vid="49"></circle>
+            <circle cx="510" cy="235" r="1.5" fill="#ffffff" vid="50"></circle>
+            <circle cx="400" cy="550" r="1.5" fill="#ffffff" vid="51"></circle>
+        </g>
+    </svg>
+</div>
+
+
+</body></html>

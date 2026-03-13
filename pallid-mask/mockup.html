@@ -72,7 +72,7 @@ body::before {
   background: linear-gradient(
     to bottom,
     rgba(0, 0, 0, 0) 50%,
-    rgba(0, 0, 0, 0.25) 50%
+    rgba(0, 0, 0, 0.13) 50%
   );
   background-size: 100% 4px;
   animation: scanlines 0.25s linear infinite;
@@ -201,6 +201,37 @@ body::after {
 .mask-wrap {
   animation: glow-pulse 5s ease-in-out infinite;
   flex: 0 0 auto;
+}
+
+.mask-wrap svg {
+  height: 85vh;
+  width: auto;
+}
+
+/* Glow line classes from mask.html — adapted to our palette */
+.glow-line {
+  fill: none;
+  stroke: var(--c5);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: miter;
+  filter: drop-shadow(0 0 2.5px rgba(210, 165, 190, 0.68)) drop-shadow(0 0 8px rgba(155, 110, 150, 0.34));
+}
+.glow-line-bright {
+  fill: none;
+  stroke: var(--c6);
+  stroke-width: 2.8;
+  stroke-linecap: round;
+  stroke-linejoin: miter;
+  filter: drop-shadow(0 0 4px rgba(235, 190, 215, 0.77)) drop-shadow(0 0 12px rgba(180, 130, 165, 0.43));
+}
+.glow-line-faint {
+  fill: none;
+  stroke: var(--c4);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 1.5px rgba(170, 130, 175, 0.51));
 }
 
 /* ─── TEXT EXCHANGE ──────────────────────────────────────── */
@@ -369,65 +400,69 @@ body::after {
 
     <!-- THE MASK -->
     <div class="mask-wrap">
-      <svg viewBox="0 0 200 268" width="224" height="301"
-           fill="none" stroke="var(--c5)"
+      <!-- Triple-layer Gaussian bloom from mask.html, adapted to our palette -->
+      <svg viewBox="230 75 350 505" width="230" height="332"
            xmlns="http://www.w3.org/2000/svg">
-
         <defs>
-          <!-- Vectrex bloom: blur layers beneath sharp stroke -->
-          <filter id="vbloom" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="4.5" result="wide"/>
-            <feGaussianBlur stdDeviation="1.8" result="tight"/>
+          <filter id="vector-glow" x="-60%" y="-40%" width="220%" height="180%">
+            <feGaussianBlur stdDeviation="1.7"  result="blur1"/>
+            <feGaussianBlur stdDeviation="5"    result="blur2"/>
+            <feGaussianBlur stdDeviation="10"   result="blur3"/>
             <feMerge>
-              <feMergeNode in="wide"/>
-              <feMergeNode in="wide"/>
-              <feMergeNode in="tight"/>
+              <feMergeNode in="blur3"/>
+              <feMergeNode in="blur2"/>
+              <feMergeNode in="blur1"/>
               <feMergeNode in="SourceGraphic"/>
             </feMerge>
           </filter>
         </defs>
 
-        <g filter="url(#vbloom)" stroke-linecap="round" stroke-linejoin="round">
+        <g filter="url(#vector-glow)">
+          <!-- brow notch — the concave V that marks this as a wearable mask -->
+          <path class="glow-line-bright" d="M 330 110 Q 400 180 470 110"/>
+          <path class="glow-line"        d="M 342 128 Q 400 195 458 128"/>
+          <path class="glow-line"        d="M 330 110 L 342 128"/>
+          <path class="glow-line"        d="M 470 110 L 458 128"/>
 
-          <!-- ── FACE OUTLINE ── -->
-          <!-- Elongated oval, slightly compressed at top to suggest the flat brow of a mask -->
-          <path d="
-            M 100,13
-            C 64,13 26,48 22,100
-            C 18,152 38,226 100,252
-            C 162,226 182,152 178,100
-            C 174,48 136,13 100,13 Z
-          " stroke-width="1.6"/>
+          <!-- face outline -->
+          <path class="glow-line-bright" d="M 330 110 C 260 140 240 260 270 370 C 290 450 340 520 400 550"/>
+          <path class="glow-line-bright" d="M 470 110 C 540 140 560 260 530 370 C 510 450 460 520 400 550"/>
 
-          <!-- ── BROW REGISTER LINE ── -->
-          <!-- Very faint horizontal score — suggests the mask is a physical object with a seam -->
-          <line x1="30" y1="82" x2="170" y2="82" stroke-width="0.5" stroke-opacity="0.18"/>
+          <!-- eyes — asymmetric: left curves lower, right terminates higher -->
+          <path class="glow-line-bright" d="M 290 235 L 380 235"/>
+          <path class="glow-line-bright" d="M 420 235 L 510 235"/>
+          <path class="glow-line"        d="M 290 235 L 305 270 Q 340 295 380 235"/>
+          <path class="glow-line"        d="M 420 235 Q 465 275 495 260 L 510 235"/>
+          <path class="glow-line-faint"  d="M 305 270 Q 330 280 355 260"/>
+          <path class="glow-line-faint"  d="M 445 260 Q 470 270 495 260"/>
 
-          <!-- ── LEFT EYE ── -->
-          <!-- Slightly larger, centered at 70,108. The dominant eye. -->
-          <ellipse cx="70" cy="108" rx="23" ry="11.5" stroke-width="1.4"/>
+          <!-- nose — long vertical descending line -->
+          <path class="glow-line"        d="M 380 235 L 388 385 L 400 405 L 412 385 L 420 235"/>
+          <path class="glow-line"        d="M 375 375 L 400 395 L 425 375"/>
 
-          <!-- ── RIGHT EYE ── -->
-          <!-- Slightly smaller, slightly higher. The difference is felt before it is seen. -->
-          <ellipse cx="130" cy="105" rx="20" ry="10" stroke-width="1.4"/>
+          <!-- mouth — slightly open, two lines, the gap is the expression -->
+          <path class="glow-line-bright" d="M 363 457 L 400 462 L 437 457"/>
+          <path class="glow-line-bright" d="M 360 445 L 400 450 L 440 445"/>
 
-          <!-- ── NOSE ── -->
-          <!-- Two minimal lines. Not theatrical. The suggestion of a ridge. -->
-          <line x1="94" y1="150" x2="90" y2="163" stroke-width="1.1"/>
-          <line x1="106" y1="150" x2="110" y2="163" stroke-width="1.1"/>
+          <!-- cheek structure lines -->
+          <path class="glow-line"        d="M 345 390 L 325 450 L 340 510"/>
+          <path class="glow-line"        d="M 455 390 L 475 450 L 460 510"/>
+          <path class="glow-line"        d="M 375 510 L 400 520 L 425 510"/>
 
-          <!-- ── MOUTH ── -->
-          <!-- The third expression.
-               Upper: almost flat, the barest rightward drift — not a smile, not a frown.
-               Lower: follows closely, slightly fuller at center. The gap is the expression.
-               It is about to speak, or it has just finished, or it will never. -->
-          <path d="M 79,191 C 91,188.5 111,188.5 121,191.8" stroke-width="1.25"/>
-          <path d="M 83,197 C 93,200   109,200   117,197"   stroke-width="1.0"/>
+          <!-- faint structural geometry -->
+          <path class="glow-line-faint"  d="M 270 370 L 315 415 L 340 480"/>
+          <path class="glow-line-faint"  d="M 530 370 L 485 415 L 460 480"/>
+          <path class="glow-line-faint"  d="M 300 235 L 290 280 L 315 340"/>
+          <path class="glow-line-faint"  d="M 500 235 L 510 280 L 485 340"/>
 
-          <!-- ── CHIN TAPER ── -->
-          <!-- A very faint register mark at the chin, reinforcing the mask quality -->
-          <line x1="88" y1="246" x2="112" y2="246" stroke-width="0.5" stroke-opacity="0.18"/>
-
+          <!-- vertex nodes — electron beam dwell points -->
+          <circle cx="330" cy="110" r="1.5" fill="var(--c6)"/>
+          <circle cx="470" cy="110" r="1.5" fill="var(--c6)"/>
+          <circle cx="290" cy="235" r="1.5" fill="var(--c6)"/>
+          <circle cx="380" cy="235" r="1.5" fill="var(--c6)"/>
+          <circle cx="420" cy="235" r="1.5" fill="var(--c6)"/>
+          <circle cx="510" cy="235" r="1.5" fill="var(--c6)"/>
+          <circle cx="400" cy="550" r="1.5" fill="var(--c6)"/>
         </g>
       </svg>
     </div>
@@ -604,41 +639,47 @@ function pickRandom(exclude) {
   let phaseStart = null;
 
   function frame(ts) {
+    // Always schedule next frame first — nothing can break the loop
+    requestAnimationFrame(frame);
+
     // Throttle to TARGET_FPS
-    if (ts - lastFrameTs < FRAME_MS) { requestAnimationFrame(frame); return; }
+    if (ts - lastFrameTs < FRAME_MS) return;
     lastFrameTs = ts;
     if (!phaseStart) phaseStart = ts;
 
-    if (phase === 'morph') {
-      const t = Math.min((ts - phaseStart) / MORPH_DUR, 1);
-      const et = ease(t);
-      mPath.setAttribute('d',
-        'M ' + ptsFrom.map(([ax,ay], i) => [
-          (ax + (ptsTo[i][0]-ax)*et).toFixed(1),
-          (ay + (ptsTo[i][1]-ay)*et).toFixed(1)
-        ].join(',')).join(' L ')
-      );
-      if (t >= 1) {
-        phase = 'hold';
-        phaseStart = ts;
-        // Pre-sample the next sigil asynchronously during the hold
-        const nxt = (toIdx + 1) % ALL_SIGILS.length;
-        setTimeout(() => { nextPts = sampleSigil(ALL_SIGILS[nxt]); }, 0);
-      }
+    try {
+      if (phase === 'morph') {
+        const t = Math.min((ts - phaseStart) / MORPH_DUR, 1);
+        const et = ease(t);
+        mPath.setAttribute('d',
+          'M ' + ptsFrom.map(([ax,ay], i) => [
+            (ax + (ptsTo[i][0]-ax)*et).toFixed(1),
+            (ay + (ptsTo[i][1]-ay)*et).toFixed(1)
+          ].join(',')).join(' L ')
+        );
+        if (t >= 1) {
+          phase = 'hold';
+          phaseStart = ts;
+          const nxt = (toIdx + 1) % ALL_SIGILS.length;
+          setTimeout(() => { nextPts = sampleSigil(ALL_SIGILS[nxt]); }, 0);
+        }
 
-    } else { // hold
-      if (ts - phaseStart >= HOLD_DUR) {
-        fromIdx = toIdx;
-        toIdx = (toIdx + 1) % ALL_SIGILS.length;
-        ptsFrom = ptsTo;
-        ptsTo = nextPts || sampleSigil(ALL_SIGILS[toIdx]);
-        nextPts = null;
-        phase = 'morph';
-        phaseStart = ts;
+      } else { // hold
+        if (ts - phaseStart >= HOLD_DUR) {
+          fromIdx = toIdx;
+          toIdx = (toIdx + 1) % ALL_SIGILS.length;
+          ptsFrom = ptsTo;
+          ptsTo = nextPts || sampleSigil(ALL_SIGILS[toIdx]);
+          nextPts = null;
+          phase = 'morph';
+          phaseStart = ts;
+        }
       }
+    } catch(e) {
+      // Skip bad frame, loop continues
+      console.warn('Morph frame skipped:', e);
+      phaseStart = ts;
     }
-
-    requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
 })();
