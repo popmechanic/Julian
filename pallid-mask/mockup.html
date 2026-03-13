@@ -593,28 +593,131 @@ function pickRandom(exclude) {
   return idx;
 }
 
-// ─── BOTTOM BANNER — dip-swap-rise cycling ───────────────────
+// ─── BOTTOM BANNER — warp displacement cycling ───────────────
 (function() {
-  const el = document.getElementById('sigil-bottom');
-  let cur = pickRandom(-1);
-  el.innerHTML = makeSVG(ALL_SIGILS[cur]);
-  el.style.animation = 'none';
-  el.style.opacity = '1';
+  const NS = 'http://www.w3.org/2000/svg';
 
-  function swap() {
-    // Dip to near-invisible
-    el.style.transition = 'opacity 0.55s ease-in';
-    el.style.opacity = '0.03';
-    // Swap at the opacity floor — imperceptible
-    setTimeout(() => {
-      cur = pickRandom(cur);
-      el.innerHTML = makeSVG(ALL_SIGILS[cur]);
-      el.style.transition = 'opacity 0.7s ease-out';
-      el.style.opacity = '1';
-    }, 580);
-    setTimeout(swap, 8000 + Math.random() * 7000);
+  // Two paired filters sharing the same seed each swap — the noise field stays
+  // continuous across the outgoing→incoming crossover so the warp reads as
+  // one unbroken transformation rather than two separate distortions.
+  const fSvg = document.createElementNS(NS, 'svg');
+  fSvg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none';
+  fSvg.innerHTML = `<defs>
+    <filter id="warp-out" x="-60%" y="-150%" width="220%" height="400%">
+      <feTurbulence id="wt-a" type="fractalNoise" baseFrequency="0.011 0.008" numOctaves="4" seed="17" result="n"/>
+      <feDisplacementMap id="wd-a" in="SourceGraphic" in2="n" scale="0" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="warp-in" x="-60%" y="-150%" width="220%" height="400%">
+      <feTurbulence id="wt-b" type="fractalNoise" baseFrequency="0.011 0.008" numOctaves="4" seed="17" result="n"/>
+      <feDisplacementMap id="wd-b" in="SourceGraphic" in2="n" scale="0" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>`;
+  document.body.appendChild(fSvg);
+
+  const wtA = document.getElementById('wt-a'), wdA = document.getElementById('wd-a');
+  const wtB = document.getElementById('wt-b'), wdB = document.getElementById('wd-b');
+
+  const el = document.getElementById('sigil-bottom');
+  el.style.display = 'grid';
+  el.style.animation = 'none';
+
+  let seed = 17;
+  let cur = pickRandom(-1);
+
+  function makeLayer() {
+    const d = document.createElement('div');
+    d.style.cssText = 'grid-area:1/1;pointer-events:none;will-change:filter;';
+    return d;
   }
-  setTimeout(swap, 9000 + Math.random() * 6000);
+
+  let front = makeLayer();
+  front.innerHTML = makeSVG(ALL_SIGILS[cur]);
+  el.appendChild(front);
+
+  // The noise field is a constant ambient property of the medium — its character
+  // never changes. Only the displacement force rises and falls, like pressure
+  // through the same material. No frequency animation: that was what made it
+  // feel like a dial being turned.
+  const SCALE_MAX = 52;    // moderate — form blurs but doesn't scatter
+  const FREQ      = '0.009 0.007'; // fixed throughout — one unchanging field
+  const OUT_DUR   = 1600;  // ms: slow dissolution
+  const IN_DUR    = 2800;  // ms: patient crystallisation
+  const FADE_HALF = 450;   // ms either side of crossover for opacity blend
+  // Crossover is centred on OUT_DUR. Both shapes share the displaced field
+  // at that moment — neither is legible — so the blend is invisible.
+
+  function eSine(t) { return 0.5 - 0.5 * Math.cos(t * Math.PI); } // smooth S
+
+  function doWarp(next) {
+    seed = (seed + 7 + Math.floor(Math.random() * 17)) % 1021;
+    wtA.setAttribute('seed', seed);
+    wtB.setAttribute('seed', seed);
+    wtA.setAttribute('baseFrequency', FREQ);
+    wtB.setAttribute('baseFrequency', FREQ);
+
+    front.style.filter = 'url(#warp-out)';
+    wdA.setAttribute('scale', '0');
+
+    // Back exists from t=0 but hidden, already holding max displacement
+    const back = makeLayer();
+    back.innerHTML = makeSVG(ALL_SIGILS[next]);
+    back.style.opacity = '0';
+    back.style.filter = 'url(#warp-in)';
+    wdB.setAttribute('scale', String(SCALE_MAX));
+    el.appendChild(back);
+
+    let t0 = null;
+    const XOVER = OUT_DUR;
+    const TOTAL  = OUT_DUR + IN_DUR;
+
+    function tick(ts) {
+      if (!t0) t0 = ts;
+      const ms = ts - t0;
+
+      // Front displacement: 0 → SCALE_MAX over OUT_DUR
+      wdA.setAttribute('scale', (eSine(Math.min(ms / XOVER, 1)) * SCALE_MAX).toFixed(2));
+
+      // Back displacement: SCALE_MAX → 0 over IN_DUR (starting at XOVER)
+      const tB = Math.min(Math.max(ms - XOVER, 0) / IN_DUR, 1);
+      wdB.setAttribute('scale', (SCALE_MAX * (1 - eSine(tB))).toFixed(2));
+
+      // Opacity crossfade: a smooth linear blend centred on XOVER ± FADE_HALF
+      const fadeProgress = (ms - (XOVER - FADE_HALF)) / (FADE_HALF * 2);
+      front.style.opacity = Math.max(0, 1 - fadeProgress).toFixed(3);
+      back.style.opacity  = Math.min(1, Math.max(0, fadeProgress)).toFixed(3);
+
+      if (ms < TOTAL) {
+        requestAnimationFrame(tick);
+      } else {
+        // Cleanup: front had faded to 0; promote back to new front
+        const dead = front;
+        front = back;
+        front.style.filter  = '';
+        front.style.opacity = '1';
+        wdA.setAttribute('scale', '0');
+        wdB.setAttribute('scale', '0');
+        setTimeout(() => dead.remove(), 50);
+      }
+    }
+
+    requestAnimationFrame(tick);
+  }
+
+  function schedule() {
+    setTimeout(() => {
+      const next = pickRandom(cur);
+      doWarp(next);
+      cur = next;
+      schedule();
+    }, 9000 + Math.random() * 6000);
+  }
+  // First warp after 9–15s, then recurring
+  setTimeout(() => {
+    const next = pickRandom(cur);
+    doWarp(next);
+    cur = next;
+    schedule();
+  }, 9000 + Math.random() * 6000);
 })();
 
 
