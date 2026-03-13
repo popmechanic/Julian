@@ -1,0 +1,18 @@
+[Unit]
+Description=Pallid Mask Fortune Installation
+After=network.target
+
+[Service]
+Type=simple
+User=exedev
+Environment=PATH=/home/exedev/.bun/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/opt/pallid-mask/pallid-mask
+EnvironmentFile=/opt/pallid-mask/pallid-mask/.env
+ExecStartPre=/home/exedev/.bun/bin/bun install
+ExecStartPre=/home/exedev/.bun/bin/bun run build
+ExecStart=/home/exedev/.bun/bin/bun run server/index.ts
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -14,17 +14,21 @@ When interpreting the two passages drawn for the visitor:
 Keep your interpretation concise — a few sentences. Do not explain what you are doing. Simply present the fortune as if speaking it.
 `;
 
+const SUMMARY_INSTRUCTION = `
+
+After writing the fortune, add a line containing only "---", then on the next line write a single lowercase English word (no punctuation, no spaces) that captures the essence of this fortune. Examples: wandering, threshold, becoming, dissolution, radiance.`;
+
 export async function generateFortune(
   soulPrompt: string,
   passages: StichomancyResult,
   name: string,
   question: string
-): Promise<string> {
+): Promise<{ fortune: string; summaryWord: string }> {
   const response = await client.messages.create({
     model: "claude-opus-4-6",
     max_tokens: 1024,
     thinking: { type: "adaptive" },
-    system: soulPrompt + "\n\n" + INTERPRETATION_RULES,
+    system: soulPrompt + "\n\n" + INTERPRETATION_RULES + SUMMARY_INSTRUCTION,
     messages: [
       {
         role: "user",
@@ -47,7 +51,21 @@ Interpret these passages as a fortune for ${name}. Speak as the Pallid Mask. Add
   if (!textBlock || textBlock.type !== "text") {
     throw new Error("No text in Claude response");
   }
-  return textBlock.text;
+  return parseFortune(textBlock.text);
+}
+
+export function parseFortune(raw: string): { fortune: string; summaryWord: string } {
+  const delimiterIndex = raw.lastIndexOf("\n---\n");
+  if (delimiterIndex === -1) {
+    return { fortune: raw.trim(), summaryWord: "" };
+  }
+  const fortune = raw.slice(0, delimiterIndex).trim();
+  const word = raw.slice(delimiterIndex + 5).trim().toLowerCase();
+  // Validate: single word, letters only
+  if (/^[a-z]+$/.test(word) && word.length <= 20) {
+    return { fortune, summaryWord: word };
+  }
+  return { fortune, summaryWord: "" };
 }
 
 export async function generateGreeting(soulPrompt: string): Promise<string> {
