@@ -106,7 +106,10 @@ export async function generateFortunePage(
     .replace("{{STYLES}}", getStyles())
     .replace("{{SIGIL}}", options.sigilSvg)
     .replace("{{DATE}}", date)
-    .replace("{{FORTUNE}}", escapeHtml(options.fortune).replace(/\n\n+/g, "<br><br>").replace(/\n/g, "<br>"));
+    .replace("{{FORTUNE}}", escapeHtml(options.fortune)
+      .replace(/\n\n+/g, "<br><br>")
+      .replace(/\n/g, "<br>")
+      .replace(/(?:<br>)*-{2,3}(?:<br>)*/g, `<div class="fortune-break">${options.sigilSvg}</div>`));
 
   const filePath = join(FORTUNES_DIR, filename);
   await Bun.write(filePath, html);
