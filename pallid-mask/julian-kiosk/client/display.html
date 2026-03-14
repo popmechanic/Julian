@@ -51,19 +51,15 @@ function initScreen() {
   const wrap = document.getElementById('wrap');
 
   function resize() {
+    // Fill the entire viewport — no integer scaling, no black bars
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const scaleX = Math.floor(vw / 640) || 1;
-    const scaleY = Math.floor(vh / 480) || 1;
-    const scale = Math.min(scaleX, scaleY);
-    const w = 640 * scale;
-    const h = 480 * scale;
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
-    wrap.style.width = w + 'px';
-    wrap.style.height = h + 'px';
+    canvas.style.width = vw + 'px';
+    canvas.style.height = vh + 'px';
+    wrap.style.width = vw + 'px';
+    wrap.style.height = vh + 'px';
     if (window.JScreen) {
-      window.JScreen._scale = scale;
+      window.JScreen._scale = vw / 640;
       window.JScreen._canvasRect = canvas.getBoundingClientRect();
     }
   }
