@@ -15,9 +15,13 @@
 </style>
 </head>
 <body>
-<iframe id="screen" src="http://localhost:3848"></iframe>
+<iframe id="screen"></iframe>
 <audio id="audio" preload="none"></audio>
 <script>
+// Point iframe at JulianScreen on the same host, port 3848
+const screenHost = window.location.hostname;
+document.getElementById('screen').src = `http://${screenHost}:3848`;
+
 const audio = document.getElementById('audio');
 let lastAudioUrl = null;
 
