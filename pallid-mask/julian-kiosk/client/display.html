@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Julian</title>
+<style>
+  * { margin: 0; padding: 0; }
+  html, body { height: 100%; background: #000; overflow: hidden; }
+  iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+  }
+</style>
+</head>
+<body>
+<iframe id="screen" src="http://localhost:3848"></iframe>
+<audio id="audio" preload="none"></audio>
+<script>
+const audio = document.getElementById('audio');
+let lastAudioUrl = null;
+
+audio.addEventListener('ended', async () => {
+  try {
+    await fetch('/julian/api/audio-done', { method: 'POST' });
+  } catch (e) {
+    console.error('Audio done signal failed:', e);
+  }
+});
+
+async function poll() {
+  try {
+    const res = await fetch('/julian/api/state');
+    const data = await res.json();
+
+    if (data.audioUrl && data.audioUrl !== lastAudioUrl) {
+      lastAudioUrl = data.audioUrl;
+      audio.src = data.audioUrl;
+      audio.play().catch(e => {
+        console.error('Audio play failed:', e);
+        // If autoplay blocked, signal done anyway so ceremony can continue
+        fetch('/julian/api/audio-done', { method: 'POST' });
+      });
+    }
+
+    if (!data.audioUrl) {
+      lastAudioUrl = null;
+    }
+  } catch (e) {
+    console.error('Poll failed:', e);
+  }
+
+  setTimeout(poll, 500);
+}
+
+poll();
+</script>
+</body>
+</html>
