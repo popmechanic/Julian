@@ -11,9 +11,15 @@ const client = new ElevenLabsClient({
 
 const AUDIO_DIR = join(import.meta.dir, "..", "public", "audio");
 
+function prepareForSpeech(text: string): string {
+  return text
+    .replace(/\n\n+/g, ' <break time="1.2s" /> ')
+    .replace(/\n/g, " ");
+}
+
 export async function textToSpeech(text: string): Promise<string> {
   const audio = await client.textToSpeech.convert(VOICE_ID, {
-    text,
+    text: prepareForSpeech(text),
     modelId: MODEL_ID,
   });
 
