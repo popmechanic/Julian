@@ -179,10 +179,6 @@ DOT 320 401
 DOT 321 401
 W 5000
 FACE on idle`,
-  // Ready: sparkle effect then happy face
-  READY:
-    `FACE off
-F sparkle
-W 1000
-FACE on happy`,
+  // Ready: just go happy — no FACE off/sparkle to avoid timing conflicts with reset
+  READY: "FACE happy",
 };
