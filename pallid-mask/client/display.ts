@@ -62,7 +62,7 @@ export async function showNarration(
   await fadeIn(overlay);
 
   const lineEl = document.getElementById("narration-line")!;
-  const HOLD_MS = 2200;
+  const HOLD_MS = 3800;
   const FADE_MS = 600;
 
   for (let i = 0; i < steps.length; i++) {
