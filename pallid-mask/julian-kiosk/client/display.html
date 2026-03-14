@@ -102,7 +102,17 @@ function initScreen() {
 const audio = document.getElementById('audio');
 let lastAudioUrl = null;
 
+// Sync face animation with actual audio playback
+function sendFaceCmd(cmd) {
+  fetch('/julian/screen/cmd', { method: 'POST', body: cmd }).catch(() => {});
+}
+
+audio.addEventListener('playing', () => {
+  sendFaceCmd('FACE talking');
+});
+
 audio.addEventListener('ended', async () => {
+  sendFaceCmd('FACE idle');
   try {
     await fetch('/julian/api/audio-done', { method: 'POST' });
   } catch (e) {
@@ -121,6 +131,7 @@ async function poll() {
       audio.play().catch(e => {
         console.error('Audio play failed:', e);
         // If autoplay blocked, signal done anyway so ceremony can continue
+        sendFaceCmd('FACE idle');
         fetch('/julian/api/audio-done', { method: 'POST' });
       });
     }

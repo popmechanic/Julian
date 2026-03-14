@@ -212,8 +212,8 @@ async function processState(stateName: Exclude<KioskStateName, "IDLE">): Promise
       return;
     }
 
-    // Switch to talking face
-    await sendScreenCmd("FACE on talking");
+    // Don't switch to talking here — the CRT display page will send
+    // FACE talking when audio actually starts playing, for lip sync.
 
     // Update state for CRT to pick up
     state.audioUrl = audioUrl;
