@@ -191,6 +191,38 @@ const server = Bun.serve({
       if (await file.exists()) return new Response(file, { headers: { "Content-Type": "text/html" } });
     }
 
+    if (url.pathname === "/julian/manifest.json") {
+      return Response.json({
+        name: "Julian",
+        short_name: "Julian",
+        display: "fullscreen",
+        orientation: "landscape",
+        background_color: "#000000",
+        theme_color: "#000000",
+        start_url: "/julian",
+        icons: [
+          { src: "/android-chrome-192x192.png", sizes: "192x192", type: "image/png" },
+          { src: "/android-chrome-512x512.png", sizes: "512x512", type: "image/png" }
+        ]
+      });
+    }
+
+    if (url.pathname === "/julian/control/manifest.json") {
+      return Response.json({
+        name: "Julian Control",
+        short_name: "Control",
+        display: "fullscreen",
+        orientation: "portrait",
+        background_color: "#000000",
+        theme_color: "#000000",
+        start_url: "/julian/control",
+        icons: [
+          { src: "/android-chrome-192x192.png", sizes: "192x192", type: "image/png" },
+          { src: "/android-chrome-512x512.png", sizes: "512x512", type: "image/png" }
+        ]
+      });
+    }
+
     // --- JulianScreen Proxy (port 3848 not exposed externally) ---
     // Catches /julian/screen/* AND /julian/sprites/* (relative paths from JulianScreen scripts)
 
