@@ -143,6 +143,8 @@ export async function advance(): Promise<{ ignored?: boolean }> {
   if (state.current === "READY") {
     state.transitioning = true;
     await cleanupAudioByPrefix(JULIAN_AUDIO_PREFIX);
+    // Full screen reset — clear all layers and return to face
+    await sendScreenCmd("FACE off\nCLR\nCLRITM\nCLRBTN\nBG empty\nFACE on idle");
     state.current = "IDLE";
     state.buttonEnabled = true;
     state.buttonText = BUTTON_TEXT.IDLE;
