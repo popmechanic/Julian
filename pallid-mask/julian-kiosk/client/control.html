@@ -28,10 +28,11 @@
     font-size: 64px;
     letter-spacing: 3px;
     cursor: pointer;
-    transition: opacity 0.3s;
+    opacity: 1;
+    transition: opacity 0.6s;
   }
-  .btn.disabled {
-    opacity: 0.2;
+  .btn.hidden {
+    opacity: 0;
     pointer-events: none;
   }
   .btn:active {
@@ -46,8 +47,10 @@ const btn = document.getElementById('btn');
 let polling = false;
 
 btn.addEventListener('click', async () => {
-  if (btn.classList.contains('disabled')) return;
-  btn.classList.add('disabled');
+  if (btn.classList.contains('hidden')) return;
+
+  // Fade out immediately
+  btn.classList.add('hidden');
 
   try {
     await fetch('/julian/api/advance', { method: 'POST' });
@@ -69,10 +72,10 @@ async function poll() {
     const res = await fetch('/julian/api/state');
     const data = await res.json();
 
-    btn.textContent = data.buttonText;
-
     if (data.buttonEnabled) {
-      btn.classList.remove('disabled');
+      // Update text while still hidden, then fade in
+      btn.textContent = data.buttonText;
+      btn.classList.remove('hidden');
       polling = false;
       return;
     }
@@ -90,7 +93,7 @@ async function poll() {
     const data = await res.json();
     btn.textContent = data.buttonText;
     if (!data.buttonEnabled) {
-      btn.classList.add('disabled');
+      btn.classList.add('hidden');
       startPolling();
     }
   } catch (e) {
