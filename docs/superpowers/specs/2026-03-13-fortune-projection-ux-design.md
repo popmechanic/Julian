@@ -44,10 +44,10 @@ This tightens glow halos so letterforms stay crisp at distance while preserving 
 **Problem:** ElevenLabs TTS reads the fortune text continuously without pausing at line breaks, giving the listener no time to absorb what's being said.
 
 **Solution:** Add a `prepareForSpeech(text: string)` function in `server/voice.ts` that:
-1. XML-escapes the text (`&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`) to prevent malformed SSML
-2. Replaces `\n\n+` (double/multiple newlines) with `<break time="1.2s"/>` for paragraph-level pauses
-3. Replaces remaining `\n` (single newlines) with spaces — these are intra-stanza breaks that don't need pauses
-4. Wraps the result in `<speak>...</speak>` tags
+1. Replaces `\n\n+` (double/multiple newlines) with ` <break time="1.2s" /> ` for paragraph-level pauses
+2. Replaces remaining `\n` (single newlines) with spaces — intra-stanza breaks that don't need pauses
+
+No `<speak>` wrapper or XML escaping needed — ElevenLabs accepts inline SSML break tags in plain text (confirmed for all models except V3; this project uses `eleven_multilingual_v2`).
 
 **Design rationale:** Only double-newlines become `<break>` tags. ElevenLabs warns that too many `<break>` tags in a single generation can cause audio instability (speedups, artifacts). By reserving breaks for paragraph divisions only, we keep the tag count low while still providing natural breathing room at the major structural points in the fortune. Maximum break duration supported is 3s; we use 1.2s.
 
