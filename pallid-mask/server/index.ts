@@ -6,6 +6,7 @@ import { textToSpeech, cleanupAudio } from "./voice";
 import { generateQRSvg } from "./qr";
 import { generateFortunePage } from "./fortune-page";
 import type { FortuneRequest, GreetingResponse, FortuneResponse } from "./types";
+import { getState, advance, audioDone, checkJulianScreen } from "../julian-kiosk/kiosk";
 
 // Resolve paths relative to this file
 const ROOT = join(import.meta.dir, "..");
@@ -13,6 +14,8 @@ const PUBLIC_DIR = join(ROOT, "public");
 const FORTUNES_DIR = join(ROOT, "fortunes");
 const DATA_DIR = join(ROOT, "data");
 const AUDIO_DIR = join(PUBLIC_DIR, "audio");
+const JULIAN_DIR = join(ROOT, "julian-kiosk");
+const JULIAN_CLIENT_DIR = join(JULIAN_DIR, "client");
 
 // Ensure runtime directories exist
 for (const dir of [FORTUNES_DIR, AUDIO_DIR]) {
@@ -54,6 +57,15 @@ async function prefetchGreeting(): Promise<void> {
 
 // Start pre-fetching on boot
 prefetchGreeting();
+
+// Check JulianScreen availability
+checkJulianScreen().then((ok) => {
+  if (ok) {
+    console.log("JulianScreen connected on port 3848");
+  } else {
+    console.warn("WARNING: JulianScreen not reachable on port 3848 — Julian kiosk will run in audio-only mode");
+  }
+});
 
 function makeSigilSvg(index: number): string {
   const sigil = sigils[index % sigils.length];
@@ -133,6 +145,34 @@ const server = Bun.serve({
       return Response.json({ ok: true });
     }
 
+    // --- Julian Kiosk API Routes ---
+
+    if (req.method === "POST" && url.pathname === "/julian/api/advance") {
+      const result = await advance();
+      return Response.json(result);
+    }
+
+    if (req.method === "GET" && url.pathname === "/julian/api/state") {
+      return Response.json(getState());
+    }
+
+    if (req.method === "POST" && url.pathname === "/julian/api/audio-done") {
+      await audioDone();
+      return Response.json({ ok: true });
+    }
+
+    // --- Julian Kiosk Static Files ---
+
+    if (url.pathname === "/julian") {
+      const file = Bun.file(join(JULIAN_CLIENT_DIR, "display.html"));
+      if (await file.exists()) return new Response(file, { headers: { "Content-Type": "text/html" } });
+    }
+
+    if (url.pathname === "/julian/control") {
+      const file = Bun.file(join(JULIAN_CLIENT_DIR, "control.html"));
+      if (await file.exists()) return new Response(file, { headers: { "Content-Type": "text/html" } });
+    }
+
     // --- Static Files ---
 
     // Fortune pages
@@ -181,3 +221,6 @@ const server = Bun.serve({
 });
 
 console.log(`Pallid Mask server running on http://localhost:${server.port}`);
+console.log(`  Pallid Mask ceremony: http://localhost:${server.port}/`);
+console.log(`  Julian kiosk (CRT):   http://localhost:${server.port}/julian`);
+console.log(`  Julian control (iPad): http://localhost:${server.port}/julian/control`);
