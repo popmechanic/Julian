@@ -287,7 +287,7 @@ body::after {
   color: var(--c6);
   text-align: center;
   letter-spacing: 0.035em;
-  filter: drop-shadow(0 0 8px var(--c5)) drop-shadow(0 0 20px var(--c1));
+  filter: drop-shadow(0 0 5px var(--c5)) drop-shadow(0 0 12px var(--c1));
 }
 
 .fortune-verse {
@@ -296,7 +296,7 @@ body::after {
   color: var(--c3);
   text-align: center;
   letter-spacing: 0.04em;
-  filter: drop-shadow(0 0 6px var(--c2));
+  filter: drop-shadow(0 0 4px var(--c2));
 }
 
 .entity-interpret {
@@ -306,7 +306,7 @@ body::after {
   text-align: center;
   letter-spacing: 0.03em;
   max-width: 500px;
-  filter: drop-shadow(0 0 8px var(--c4)) drop-shadow(0 0 16px var(--c1));
+  filter: drop-shadow(0 0 5px var(--c4)) drop-shadow(0 0 10px var(--c1));
 }
 
 /* ─── SIGIL SLOTS ─────────────────────────────────────────── */
