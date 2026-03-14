@@ -74,6 +74,24 @@ function makeSigilSvg(index: number): string {
 
 const server = Bun.serve({
   port: PORT,
+  websocket: {
+    open(ws) {
+      // Connect to upstream JulianScreen WebSocket
+      const upstream = new WebSocket("ws://localhost:3848/ws");
+      (ws as any)._upstream = upstream;
+      upstream.onmessage = (e) => { try { ws.send(e.data as string); } catch {} };
+      upstream.onclose = () => { try { ws.close(); } catch {} };
+      upstream.onerror = () => { try { ws.close(); } catch {} };
+    },
+    message(ws, msg) {
+      const upstream = (ws as any)._upstream as WebSocket | undefined;
+      if (upstream && upstream.readyState === 1) upstream.send(msg as string);
+    },
+    close(ws) {
+      const upstream = (ws as any)._upstream as WebSocket | undefined;
+      if (upstream) { try { upstream.close(); } catch {} }
+    },
+  },
   async fetch(req) {
     const url = new URL(req.url);
 
@@ -171,6 +189,35 @@ const server = Bun.serve({
     if (url.pathname === "/julian/control") {
       const file = Bun.file(join(JULIAN_CLIENT_DIR, "control.html"));
       if (await file.exists()) return new Response(file, { headers: { "Content-Type": "text/html" } });
+    }
+
+    // --- JulianScreen Proxy (port 3848 not exposed externally) ---
+
+    if (url.pathname.startsWith("/julian/screen")) {
+      const screenPath = url.pathname.slice("/julian/screen".length) || "/";
+
+      // WebSocket upgrade
+      if (screenPath === "/ws" && req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+        if (server.upgrade(req, { data: {} })) return undefined as any;
+        return new Response("WebSocket upgrade failed", { status: 400 });
+      }
+
+      // Proxy HTTP requests to JulianScreen
+      const screenUrl = `http://localhost:3848${screenPath}${url.search}`;
+      try {
+        const proxyRes = await fetch(screenUrl, {
+          method: req.method,
+          headers: { "Content-Type": req.headers.get("Content-Type") || "text/plain" },
+          body: req.method !== "GET" && req.method !== "HEAD" ? await req.text() : undefined,
+        });
+        return new Response(proxyRes.body, {
+          status: proxyRes.status,
+          headers: proxyRes.headers,
+        });
+      } catch (err) {
+        console.error("JulianScreen proxy error:", err);
+        return new Response("JulianScreen unavailable", { status: 502 });
+      }
     }
 
     // --- Static Files ---
