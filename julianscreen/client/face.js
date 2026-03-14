@@ -58,6 +58,11 @@ const FACE_MOUTH = {
     [10,24],[11,24],[12,24],[13,24],[14,24]
   ],
   talk2: [
+    [10,21],[11,21],[12,21],[13,21],[14,21],
+    [9,22],[15,22],
+    [10,23],[11,23],[12,23],[13,23],[14,23]
+  ],
+  talk3: [
     [11,22],[12,22],[13,22]
   ],
 };
@@ -168,12 +173,24 @@ function renderFace(ctx, timestamp) {
 
   // Draw mouth based on state
   if (faceState === 'talking') {
-    // Alternate between open and closed mouth
-    if (Math.floor(timestamp / 150) % 2 === 0) {
-      drawFacePixels(ctx, FACE_MOUTH.talk1, ON);
-    } else {
-      drawFacePixels(ctx, FACE_MOUTH.talk2, ON);
+    // Cycle through mouth shapes: open → medium → closed → medium
+    // Varying timing for natural speech rhythm
+    const talkFrames = [
+      { mouth: 'talk1', dur: 180 },  // wide open
+      { mouth: 'talk2', dur: 140 },  // medium
+      { mouth: 'talk3', dur: 100 },  // closed
+      { mouth: 'talk2', dur: 160 },  // medium
+      { mouth: 'talk1', dur: 200 },  // wide open (longer hold)
+      { mouth: 'talk3', dur: 120 },  // closed
+    ];
+    const totalDur = talkFrames.reduce((s, f) => s + f.dur, 0);
+    let t = timestamp % totalDur;
+    let mouthKey = 'talk1';
+    for (const frame of talkFrames) {
+      if (t < frame.dur) { mouthKey = frame.mouth; break; }
+      t -= frame.dur;
     }
+    drawFacePixels(ctx, FACE_MOUTH[mouthKey], ON);
   } else if (faceState === 'thinking') {
     drawFacePixels(ctx, FACE_THINKING_MOUTH, ON);
     // Animate thinking dots
