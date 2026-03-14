@@ -192,9 +192,12 @@ const server = Bun.serve({
     }
 
     // --- JulianScreen Proxy (port 3848 not exposed externally) ---
+    // Catches /julian/screen/* AND /julian/sprites/* (relative paths from JulianScreen scripts)
 
-    if (url.pathname.startsWith("/julian/screen")) {
-      const screenPath = url.pathname.slice("/julian/screen".length) || "/";
+    if (url.pathname.startsWith("/julian/screen") || url.pathname.startsWith("/julian/sprites/")) {
+      const screenPath = url.pathname.startsWith("/julian/screen")
+        ? (url.pathname.slice("/julian/screen".length) || "/")
+        : url.pathname.slice("/julian".length);  // /julian/sprites/x → /sprites/x
 
       // WebSocket upgrade
       if (screenPath === "/ws" && req.headers.get("upgrade")?.toLowerCase() === "websocket") {
