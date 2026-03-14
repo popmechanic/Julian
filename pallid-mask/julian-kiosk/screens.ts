@@ -110,7 +110,53 @@ DOT 322 387`,
 // These run after the CRT signals audio playback is complete
 export const POST_AUDIO_SCREENS: Record<string, string | null> = {
   IDLE: null,
-  GREETING: "FACE on idle",
+  // Greeting: draw something for the visitor, hold it, return to face
+  GREETING:
+    `FACE off
+CLR
+COL 1
+CIRC 320 200 50
+CIRC 320 200 48
+COL 3
+DOT 305 190
+DOT 306 190
+DOT 305 191
+DOT 306 191
+DOT 335 188
+DOT 336 188
+DOT 335 189
+DOT 336 189
+COL 1
+DOT 310 210
+DOT 311 210
+DOT 312 211
+DOT 313 211
+DOT 314 212
+DOT 315 212
+DOT 316 212
+DOT 317 212
+DOT 318 212
+DOT 319 212
+DOT 320 212
+DOT 321 212
+DOT 322 211
+DOT 323 211
+DOT 324 210
+DOT 325 210
+DOT 326 209
+DOT 327 209
+DOT 328 210
+DOT 329 210
+DOT 330 211
+COL 9
+DOT 280 320
+DOT 360 320
+DOT 320 360
+LINE 280 320 360 320
+LINE 360 320 320 360
+LINE 320 360 280 320
+W 6000
+FACE on idle`,
   CONTEXT: "FACE on idle",
   // Mantle: draw the oval of light after speaking, then return to face
   MANTLE:
