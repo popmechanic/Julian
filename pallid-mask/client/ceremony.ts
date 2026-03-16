@@ -24,7 +24,9 @@ function playAudio(url: string): Promise<void> {
     const audio = new Audio(url);
     audio.onended = () => resolve();
     audio.onerror = () => reject(new Error("Audio playback failed"));
-    audio.play().catch(reject);
+    audio.addEventListener("canplaythrough", () => {
+      audio.play().catch(reject);
+    }, { once: true });
   });
 }
 
