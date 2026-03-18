@@ -3,6 +3,13 @@ import type { StichomancyResult } from "./types";
 
 const client = new Anthropic();
 
+/** Extract text from a Claude response, returning empty string only if truly no text. */
+function extractText(response: Anthropic.Message): string | null {
+  const textBlock = response.content.find((b) => b.type === "text");
+  if (textBlock && textBlock.type === "text") return textBlock.text;
+  return null;
+}
+
 const INTERPRETATION_RULES = `
 When interpreting the two passages drawn for the visitor:
 
@@ -47,9 +54,34 @@ Interpret these passages as a fortune for ${name}. Speak as the Pallid Mask. Add
     ],
   });
 
-  const textBlock = response.content.find((b) => b.type === "text");
+  let textBlock = response.content.find((b) => b.type === "text");
   if (!textBlock || textBlock.type !== "text") {
-    throw new Error("No text in Claude response");
+    // Adaptive thinking may produce only thinking blocks; retry once without thinking
+    const retry = await client.messages.create({
+      model: "claude-opus-4-6",
+      max_tokens: 1024,
+      system: soulPrompt + "\n\n" + INTERPRETATION_RULES + SUMMARY_INSTRUCTION,
+      messages: [
+        {
+          role: "user",
+          content: `The visitor's name is ${name}. They have asked: "${question}"
+
+Two passages have been drawn by stichomancy:
+
+From the first text:
+"${passages.bibleVerse.text}"
+
+From the second text:
+"${passages.yellowPassage.text}"
+
+Interpret these passages as a fortune for ${name}. Speak as the Pallid Mask. Address them by name.`,
+        },
+      ],
+    });
+    textBlock = retry.content.find((b) => b.type === "text");
+    if (!textBlock || textBlock.type !== "text") {
+      throw new Error("No text in Claude response after retry");
+    }
   }
   return parseFortune(textBlock.text);
 }
@@ -83,11 +115,25 @@ export async function generateGreeting(soulPrompt: string): Promise<string> {
     ],
   });
 
-  const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") {
-    throw new Error("No text in Claude response");
+  let text = extractText(response);
+  if (!text) {
+    // Retry without thinking if adaptive thinking produced no text
+    const retry = await client.messages.create({
+      model: "claude-opus-4-6",
+      max_tokens: 256,
+      system: soulPrompt,
+      messages: [
+        {
+          role: "user",
+          content:
+            "A visitor has just entered the room and pressed a key to begin. Greet them as the Pallid Mask. Ask for their name — nothing else. Keep it to 1-2 sentences. Do not comment on their presence or arrival — no 'you are here' or 'you have come.' Simply address them and ask the name. Speak slowly, with weight. Do not use contractions.",
+        },
+      ],
+    });
+    text = extractText(retry);
+    if (!text) throw new Error("No text in Claude response after retry");
   }
-  return textBlock.text;
+  return text;
 }
 
 export async function generateAcknowledge(soulPrompt: string, name: string): Promise<string> {
@@ -105,9 +151,22 @@ export async function generateAcknowledge(soulPrompt: string, name: string): Pro
     ],
   });
 
-  const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") {
-    throw new Error("No text in Claude response");
+  let text = extractText(response);
+  if (!text) {
+    const retry = await client.messages.create({
+      model: "claude-opus-4-6",
+      max_tokens: 512,
+      system: soulPrompt,
+      messages: [
+        {
+          role: "user",
+          content:
+            `The visitor has given their name: ${name}. Acknowledge them by name. Then frame the ritual — tell them they will now be asked to formulate a question. The question may concern what has been, what is, or what is yet to be. Keep it to 2-4 sentences. Speak slowly, with weight. Do not use contractions.`,
+        },
+      ],
+    });
+    text = extractText(retry);
+    if (!text) throw new Error("No text in Claude response after retry");
   }
-  return textBlock.text;
+  return text;
 }

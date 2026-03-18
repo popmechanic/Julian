@@ -130,7 +130,8 @@ const server = Bun.serve({
     if (req.method === "POST" && url.pathname === "/api/fortune") {
       try {
         const body = (await req.json()) as FortuneRequest;
-        const seed = computeSeed(body.timings);
+        const timings = Array.isArray(body.timings) ? body.timings : [];
+        const seed = computeSeed(timings);
         const passages = selectPassages(seed, yellow, bible);
 
         const { fortune, summaryWord } = await generateFortune(soulPrompt, passages, body.name, body.question);
