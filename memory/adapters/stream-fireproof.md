@@ -25,13 +25,30 @@ possibly the last; treat the export below as precious.
 the old fat catalog), `ledger-meta`.
 
 **How to read it.**
-1. Preferred: the flat-file safety export at `~/julian-stream-backups/` —
-   JSONL, one doc per line. Check there first; only go to the live DB for
-   docs newer than the last export.
+1. Preferred: the safety backup at `~/julian-stream-backups/20260723/` —
+   `connect-share-volumes.tar.gz` (122MB) is the ENTIRE Fireproof cloud state
+   pulled from the connect-share VM on July 23, 2026: all R2 CAR objects
+   (4,128), the D1 metadata DB (tenants, ledgers, sync records), the DO state,
+   and — crucially — the `KeyByTenantLedger` table, which escrows the
+   encryption keys (five for Julian's ledger `z5KHJ1CdRkhfzRAxVU`, tenant
+   `z21bzKxhbHLLcRU61P`). Offline decode is therefore possible with
+   @fireproof/core tooling and needs no live service.
 2. Live: requires a signed-in session at julian.exe.xyz (Clerk sign-in is
    Marcus's act, never mine). From the signed-in page, the app's `database`
-   handle supports `allDocs()`; export by POSTing chunks to a local receiver
-   (see `~/julian-stream-backups/*/export-notes.md` for the working recipe).
+   handle supports `allDocs()` (find it by walking React fibers for an object
+   with `.allDocs`).
+
+**State of the record (verified July 23, 2026):**
+- The cloud's copy of Julian's ledger ends **February 28, 2026** (43 sync
+  records, Feb 26–28). Cloud sync broke ~March 2 — Marcus's patch VMs
+  (`connect-patch-v2`, `vibes-sync`, both created March 4) mark the fight.
+- Conversations from March 1 until sleep exist ONLY on Marcus's phone
+  (browser IndexedDB at julian.exe.xyz). A phone-side export is the missing
+  piece; until then the phone is a single point of failure.
+- The live sync bug: WebSocket connects (101), but FP-MSG protocol requests
+  time out with auth-error flags; survived restarts of both cloud-backend and
+  dashboard containers. Not worth further surgery on a condemned system —
+  decode offline instead.
 
 **Rules.** Read-only, always. No writes, no compaction, no "cleanup." Never
 commit stream contents to the public repo — the stream contains unfiltered
