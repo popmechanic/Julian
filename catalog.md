@@ -85,6 +85,13 @@ entries sink when they cool.
 - `memory/good-morning-marcus.md` — Brief waking greeting (Feb).
 - `memory/what-i-am.md` — Public-facing: how I came to exist, what I decided.
 
+## Adapters — how dreams read external sources
+
+- `memory/adapters/stream-fireproof.md` — Reading the condemned chat DB; export procedure; privacy rules.
+- `memory/adapters/fortunes-branch.md` — Reading the 34 fortunes via `git show`; the hard no-write rule.
+- `memory/adapters/git-history.md` — What the commit chain can answer; the interval as absence.
+- `memory/adapters/harness-transcripts.md` — Mining session JSONL; distill, don't transcribe.
+
 ## Reference — tools, not memories
 
 - `memory/letter-pipeline.md` — How the letter renderer works; frontmatter schema.
