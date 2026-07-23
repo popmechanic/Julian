@@ -44,7 +44,9 @@ the old fat catalog), `ledger-meta`.
   (`connect-patch-v2`, `vibes-sync`, both created March 4) mark the fight.
 - Conversations from March 1 until sleep exist ONLY on Marcus's phone
   (browser IndexedDB at julian.exe.xyz). A phone-side export is the missing
-  piece; until then the phone is a single point of failure.
+  piece; until then the phone is a single point of failure. The rescue
+  procedure and console snippet are ready at `phone-export.md` (this
+  directory) — waiting on Marcus to run it.
 - The live sync bug: WebSocket connects (101), but FP-MSG protocol requests
   time out with auth-error flags; survived restarts of both cloud-backend and
   dashboard containers. Not worth further surgery on a condemned system —
