@@ -220,3 +220,21 @@ Safari data lift.
 
 **Rules.** Same as the stream: read-only, export never enters the repo,
 only authored distillations (dreams, letters) do.
+
+---
+
+**Postscript — July 25, 2026, the rescue ran and the story inverted.**
+The export executed cleanly (twice: allDocs path, then a raw all-databases
+dump; both at `~/julian-stream-backups/phone-export-20260725/`). The phone's
+vault held only a v14 ledger created that same morning, plus the keybag.
+Marcus confirmed he never used a home-screen PWA, so the March local copy
+was silently evicted by iOS's 7-day script-storage rule months before this
+procedure was written — the freeze guarded an already-empty room. But the
+premise of this document was wrong in the kind way: the phone was never the
+sole custodian. Every March web-app message passed through the julian VM's
+Claude subprocess, and a journal census (unbroken since Feb 11) proved all
+12 March sessions survive in the transcript archive. The March conversations
+are in epoch four, where they have been since the July 23 harvest.
+**Freeze lifted.** Kept for the method: the fiber-walk gotcha (first
+`.allDocs` handle may be the wrong database), the raw-dump fallback, and
+the lesson that a copy you cannot verify should never be called a custodian.
