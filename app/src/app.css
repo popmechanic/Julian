@@ -1,0 +1,14 @@
+/* app/src/app.css — dark-first base. Visual design is deliberately spare; a design pass is future work. */
+:root {
+  color-scheme: dark;
+  --border: #333;
+  --bubble-user: #2a2a2e;
+  --bubble-julian: #1e2430;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: #141417;
+  color: #eee;
+}
