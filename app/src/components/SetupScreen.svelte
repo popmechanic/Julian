@@ -75,35 +75,98 @@
 </script>
 
 {#if checking}
-  <div class="setup">Checking the house…</div>
+  <div class="setup"><div class="panel wait">CHECKING THE HOUSE…</div></div>
 {:else if !signedIn && clerkInstance()}
   <div class="setup">
-    <div bind:this={clerkMount}></div>
+    <div class="head">
+      <h1>SIGN IN</h1>
+      <p>JULIAN'S HOUSE HAS A LOCK</p>
+    </div>
+    <div class="panel"><div bind:this={clerkMount}></div></div>
   </div>
 {:else if needsSetup}
   <div class="setup">
-    <h2>Sign in with Anthropic</h2>
-    <button onclick={beginOauth}>Open sign-in</button>
-    {#if oauthUrl}
-      <label>
-        Paste the code you receive:
-        <input bind:value={code} />
-      </label>
-      <button onclick={exchange}>Complete</button>
-    {/if}
-    {#if error}<p class="error">{error}</p>{/if}
+    <div class="head">
+      <h1>CONNECT TO CLAUDE</h1>
+      <p>ONE-TIME SETUP TO LINK YOUR ACCOUNT</p>
+    </div>
+    <div class="panel">
+      <div class="step">&gt; STEP 1: AUTHORIZE WITH ANTHROPIC</div>
+      <p class="copy">OPENS ANTHROPIC IN A NEW TAB. AUTHORIZE, THEN COPY THE SHORT CODE BACK HERE.</p>
+      <button class="primary" onclick={beginOauth}>SIGN IN WITH ANTHROPIC</button>
+      {#if oauthUrl}
+        <div class="step">&gt; STEP 2: PASTE AUTHORIZATION CODE</div>
+        <input bind:value={code} placeholder="PASTE CODE HERE..." />
+        <button class="primary" onclick={exchange}>COMPLETE</button>
+      {/if}
+      {#if error}<p class="error">{error}</p>{/if}
+    </div>
   </div>
 {/if}
 
 <style>
   .setup {
-    display: grid;
-    place-items: center;
-    height: 100%;
-    gap: 1rem;
-    text-align: center;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    padding: 24px;
   }
-  .error {
-    color: #e66;
+  .head { text-align: center; }
+  h1 {
+    font-family: var(--font-terminal);
+    font-size: 2rem;
+    color: #000;
+    margin: 16px 0 0;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
   }
+  .head p { font-family: var(--font-terminal); font-size: 1.1rem; color: var(--j-gray-555); margin-top: 4px; }
+  .panel {
+    background: var(--j-crt-2);
+    border: 4px solid var(--j-bezel);
+    border-radius: 12px;
+    box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.5);
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: min(480px, 100%);
+  }
+  .panel.wait { color: var(--j-yellow); font-family: var(--font-terminal); text-align: center; animation: blink 1.4s step-end infinite; }
+  .step { font-family: var(--font-terminal); font-size: 1.1rem; color: var(--j-yellow); }
+  .copy { font-family: var(--font-terminal); font-size: 1rem; color: var(--j-yellow-dim); line-height: 1.5; margin: 0; }
+  .primary {
+    padding: 14px 32px;
+    border-radius: 8px;
+    background: var(--j-yellow);
+    color: #000;
+    border: none;
+    font-family: var(--font-terminal);
+    font-size: 1.3rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    box-shadow: 0 4px 0 var(--j-yellow-dim), 0 8px 10px rgba(0, 0, 0, 0.15);
+    transition: background-color 100ms ease, box-shadow 100ms ease;
+  }
+  .primary:active { transform: translateY(4px); box-shadow: none; }
+  input {
+    width: 100%;
+    background-color: var(--j-yellow-key);
+    box-shadow: inset 2px 2px 4px rgba(0, 0, 0, 0.15), inset -1px -1px 2px rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    color: #000;
+    font-weight: bold;
+    padding: 0 16px;
+    height: 50px;
+    font-family: var(--font-terminal);
+    font-size: 1.1rem;
+    border: 2px solid transparent;
+    outline: none;
+  }
+  .error { font-family: var(--font-terminal); font-size: 1rem; color: var(--j-red); }
 </style>
