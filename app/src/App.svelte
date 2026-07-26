@@ -17,6 +17,7 @@
   import ScreenEmbed from './components/ScreenEmbed.svelte';
   import SyncStatus from './components/SyncStatus.svelte';
 
+  let booted = $state(false);
   let ready = $state(false);
   let sessionActive = $state(false);
   let processing = $state(false);
@@ -36,15 +37,24 @@
     (async () => {
       await initClerk();
       await startPersistence();
-      connectEvents({ onEphemeral: handleEphemeral });
-      await startSync(getToken);
-      const h = await fetchHealth();
-      sessionActive = h.sessionActive;
+      booted = true;
     })();
+  });
+
+  // Authed connections start only after SetupScreen clears (signed in + no setup
+  // needed) — polling before then just 401s against the Clerk-gated server.
+  $effect(() => {
+    if (!ready) return;
+    const conn = connectEvents({ onEphemeral: handleEphemeral });
+    startSync(getToken);
+    fetchHealth().then((h) => (sessionActive = h.sessionActive));
+    return () => conn.stop();
   });
 </script>
 
-{#if !ready}
+{#if !booted}
+  <div class="boot">Waking…</div>
+{:else if !ready}
   <SetupScreen onReady={() => (ready = true)} />
 {:else}
   <div class="layout">
@@ -68,6 +78,11 @@
 {/if}
 
 <style>
+  .boot {
+    display: grid;
+    place-items: center;
+    height: 100vh;
+  }
   .layout {
     display: flex;
     flex-direction: column;

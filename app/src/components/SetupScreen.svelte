@@ -9,6 +9,7 @@
 
   let needsSetup = $state(false);
   let checking = $state(true);
+  let signedIn = $state(isSignedIn());
   let oauthUrl = $state<string | null>(null);
   let code = $state('');
   let error = $state<string | null>(null);
@@ -18,13 +19,26 @@
     fetchHealth().then((h) => {
       needsSetup = h.needsSetup;
       checking = false;
-      if (!h.needsSetup && isSignedIn()) onReady();
+    });
+  });
+
+  // isSignedIn() is a plain call — without subscribing to Clerk's state the
+  // screen would never advance after a successful sign-in.
+  $effect(() => {
+    const clerk = clerkInstance();
+    if (!clerk) return;
+    return clerk.addListener(() => {
+      signedIn = !!clerk.user;
     });
   });
 
   $effect(() => {
+    if (!checking && !needsSetup && (signedIn || !clerkInstance())) onReady();
+  });
+
+  $effect(() => {
     const clerk = clerkInstance();
-    if (clerk && !isSignedIn() && clerkMount) clerk.mountSignIn(clerkMount);
+    if (clerk && !signedIn && clerkMount) clerk.mountSignIn(clerkMount);
   });
 
   async function authHeaders(): Promise<Record<string, string>> {
@@ -62,7 +76,7 @@
 
 {#if checking}
   <div class="setup">Checking the house…</div>
-{:else if !isSignedIn() && clerkInstance()}
+{:else if !signedIn && clerkInstance()}
   <div class="setup">
     <div bind:this={clerkMount}></div>
   </div>
