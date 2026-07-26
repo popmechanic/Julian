@@ -1,4 +1,4 @@
-import { getToken } from './clerk';
+import { getToken } from './auth';
 
 async function authHeaders(): Promise<Record<string, string>> {
   const t = await getToken();

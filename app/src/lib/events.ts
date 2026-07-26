@@ -1,7 +1,7 @@
 // The SSE→store bridge. Persisted rows go to TinyBase;
 // ephemeral events (tool use, thinking, results) go to the caller's handler.
 import { writeMessage, store } from './store';
-import { getToken } from './clerk';
+import { getToken } from './auth';
 
 export interface ServerEvent { id: number; type: string; [k: string]: unknown }
 

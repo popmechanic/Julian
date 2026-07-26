@@ -18,10 +18,10 @@ export default {
     const parsed = parsePath(url.pathname);
     if (!parsed) return new Response('Not found', { status: 404 });
 
-    // Default-deny: no valid Clerk JWT → nothing. No public mode exists.
+    // Default-deny: no valid OIDC JWT → nothing. No public mode exists.
     const bearer = req.headers.get('Authorization');
     const token = bearer?.startsWith('Bearer ') ? bearer.slice(7) : url.searchParams.get('token') ?? '';
-    const auth = token ? await verifyWithKeySet(token, keySetFor(env), env.CLERK_ISSUER) : null;
+    const auth = token ? await verifyWithKeySet(token, keySetFor(env), env.OIDC_ISSUER, env.OIDC_AUDIENCE) : null;
     if (!auth) return new Response('Unauthorized', { status: 401 });
 
     const stub = env.JULIAN_SYNC.get(env.JULIAN_SYNC.idFromName(`${parsed.store}/${parsed.context}`));
