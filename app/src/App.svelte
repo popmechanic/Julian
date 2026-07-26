@@ -1,6 +1,6 @@
 <!-- app/src/App.svelte -->
 <!--
-  The running SPA shell. Boot sequence: initClerk → startPersistence →
+  The running SPA shell. Boot sequence: initAuth → startPersistence →
   connectEvents → startSync. Layout: the yellow room holds the chat machine
   (face header + chat) on the left and the glass-tab console (screen /
   artifacts) on the right; below 768px the two stack. Processing state is
@@ -8,7 +8,7 @@
   connectEvents' onEphemeral.
 -->
 <script lang="ts">
-  import { initClerk, getToken } from './lib/clerk';
+  import { initAuth, getToken } from './lib/auth';
   import { startPersistence, startSync } from './lib/store';
   import { connectEvents, type ServerEvent } from './lib/events';
   import { startSession, endSession, fetchHealth } from './lib/api';
@@ -40,7 +40,7 @@
 
   $effect(() => {
     (async () => {
-      await initClerk();
+      await initAuth();
       await startPersistence();
       sfxMuted = sfx.isMuted();
       booted = true;
@@ -48,7 +48,7 @@
   });
 
   // Authed connections start only after SetupScreen clears (signed in + no setup
-  // needed) — polling before then just 401s against the Clerk-gated server.
+  // needed) — polling before then just 401s against the auth-gated server.
   $effect(() => {
     if (!ready) return;
     const conn = connectEvents({ onEphemeral: handleEphemeral });

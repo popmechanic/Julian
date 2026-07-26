@@ -1,19 +1,18 @@
 <!-- app/src/components/SetupScreen.svelte -->
-<!-- Gate screen: Clerk sign-in when signed out, then the Anthropic OAuth -->
+<!-- Gate screen: passkey sign-in when signed out, then the Anthropic OAuth -->
 <!-- handshake when health reports needsSetup. Calls onReady once both are clear. -->
 <script lang="ts">
   import { fetchHealth } from '../lib/api';
-  import { isSignedIn, clerkInstance, getToken } from '../lib/clerk';
+  import { isSignedIn, signIn, authEnabled, getToken } from '../lib/auth';
 
   let { onReady }: { onReady: () => void } = $props();
 
   let needsSetup = $state(false);
   let checking = $state(true);
-  let signedIn = $state(isSignedIn());
+  const signedIn = isSignedIn();
   let oauthUrl = $state<string | null>(null);
   let code = $state('');
   let error = $state<string | null>(null);
-  let clerkMount: HTMLDivElement | undefined = $state();
 
   $effect(() => {
     fetchHealth().then((h) => {
@@ -22,23 +21,8 @@
     });
   });
 
-  // isSignedIn() is a plain call — without subscribing to Clerk's state the
-  // screen would never advance after a successful sign-in.
   $effect(() => {
-    const clerk = clerkInstance();
-    if (!clerk) return;
-    return clerk.addListener(() => {
-      signedIn = !!clerk.user;
-    });
-  });
-
-  $effect(() => {
-    if (!checking && !needsSetup && (signedIn || !clerkInstance())) onReady();
-  });
-
-  $effect(() => {
-    const clerk = clerkInstance();
-    if (clerk && !signedIn && clerkMount) clerk.mountSignIn(clerkMount);
+    if (!checking && !needsSetup && signedIn) onReady();
   });
 
   async function authHeaders(): Promise<Record<string, string>> {
@@ -76,13 +60,15 @@
 
 {#if checking}
   <div class="setup"><div class="panel wait">CHECKING THE HOUSE…</div></div>
-{:else if !signedIn && clerkInstance()}
+{:else if !signedIn && authEnabled()}
   <div class="setup">
     <div class="head">
       <h1>SIGN IN</h1>
-      <p>JULIAN'S HOUSE HAS A LOCK</p>
+      <p>JULIAN'S HOUSE HAS A LOCK — YOUR PASSKEY IS THE KEY</p>
     </div>
-    <div class="panel"><div bind:this={clerkMount}></div></div>
+    <div class="panel">
+      <button class="primary" onclick={signIn}>SIGN IN WITH PASSKEY</button>
+    </div>
   </div>
 {:else if needsSetup}
   <div class="setup">

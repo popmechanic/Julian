@@ -1,4 +1,4 @@
-// OIDC auth against the self-hosted Pocket ID issuer (replaces clerk.ts).
+// OIDC auth against the self-hosted Pocket ID issuer.
 // Auth code + PKCE, full-page redirect; refresh handled by oidc-client-ts.
 import { UserManager, WebStorageStateStore, type User } from 'oidc-client-ts';
 

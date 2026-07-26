@@ -12,7 +12,6 @@
     "tinybase": "^9.2.0",
     "julian-shared": "file:../shared",
     "reconnecting-websocket": "^4.4.0",
-    "@clerk/clerk-js": "^5.0.0",
     "oidc-client-ts": "^3.1.0",
     "svelte": "^5.0.0"
   },
