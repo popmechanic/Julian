@@ -1420,17 +1420,13 @@ const server = Bun.serve({
         await refreshTokenIfNeeded();
       }
 
-      // Parse previousTranscript, artifactCatalog, and demoMode from POST body (if any)
+      // Parse previousTranscript and demoMode from POST body (if any)
       let previousTranscript: Array<{ role: string; speakerType: string; speakerName: string; text: string }> = [];
-      let artifactCatalog: Array<{ filename: string; category: string; description: string; chapter?: string }> = [];
       let demoMode = false;
       try {
-        const body = await req.json() as { previousTranscript?: any[], artifactCatalog?: any[], demoMode?: boolean };
+        const body = await req.json() as { previousTranscript?: any[], demoMode?: boolean };
         if (Array.isArray(body.previousTranscript)) {
           previousTranscript = body.previousTranscript;
-        }
-        if (Array.isArray(body.artifactCatalog)) {
-          artifactCatalog = body.artifactCatalog;
         }
         if (body.demoMode === true || FORCE_DEMO_MODE) {
           demoMode = true;
@@ -1446,7 +1442,6 @@ const server = Bun.serve({
         type: 'user_session_start',
         demoMode,
         hasPreviousTranscript: previousTranscript.length > 0,
-        hasArtifactCatalog: artifactCatalog.length > 0,
       });
 
       spawnClaude(demoMode ? 'demo' : 'normal');
@@ -1460,14 +1455,6 @@ const server = Bun.serve({
       } else {
         // ── Normal mode: dynamic content only (stable instructions are in system prompt) ──
         wakeUpMessage = "";
-
-        // Artifact catalog from Fireproof
-        if (artifactCatalog.length > 0) {
-          const lines = artifactCatalog
-            .map((a: any) => `- ${a.filename} [${a.category}] — ${a.description}`)
-            .join("\n");
-          wakeUpMessage += `<memory category="catalog" document-count="${artifactCatalog.length}">\n${lines}\n</memory>\n\n`;
-        }
 
         if (previousTranscript.length > 0) {
           const ended = new Date().toISOString();
@@ -1512,21 +1499,6 @@ const server = Bun.serve({
       claudeProc = null;
       processAlive = false;
       sessionId = null;
-      return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
-    }
-
-    // Ledger reset: browser ledger was wiped, ask Julian for full agent state replay
-    if (url.pathname === "/api/ledger-reset" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
-      }
-      if (!processAlive || !claudeProc) {
-        return Response.json({ ok: true, note: "No active session" }, { headers: corsHeaders(ALLOWED_ORIGIN) });
-      }
-      const msg = '[LEDGER RESET] The browser ledger was wiped. ' +
-        'Re-emit an [ACTION] marker with target "agents", action "status", ' +
-        'and full identity data for all known agents, including individuationArtifact.';
-      writeToStdin(msg);
       return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
@@ -1828,9 +1800,16 @@ const server = Bun.serve({
     const requestedPath = decodeURIComponent(url.pathname);
 
     // Block sensitive files/directories from being served
-    const BLOCKED_PREFIXES = ['/.env', '/claude-auth.env', '/.git', '/server/', '/deploy/', '/node_modules/', '/CLAUDE.md', '/.claude/', '/docs/', '/julian-plugin/'];
+    const BLOCKED_PREFIXES = ['/.env', '/claude-auth.env', '/.git', '/server/', '/deploy/', '/node_modules/', '/CLAUDE.md', '/.claude/', '/docs/', '/julian-plugin/', '/chat.jsx', '/vibes.jsx'];
     if (BLOCKED_PREFIXES.some(p => requestedPath === p || requestedPath.startsWith(p))) {
       return new Response("Not Found", { status: 404 });
+    }
+
+    // Built SPA (app/dist) is the primary static root
+    const appDist = resolve(WORKING_DIR, "app", "dist");
+    const appAsset = Bun.file(resolve(appDist, requestedPath.slice(1) || "index.html"));
+    if (requestedPath !== "/" && (await appAsset.exists())) {
+      return new Response(appAsset);
     }
 
     const safePath = resolve(WORKING_DIR, requestedPath.slice(1)); // strip leading /
@@ -1846,8 +1825,8 @@ const server = Bun.serve({
       }
     }
 
-    // SPA fallback — serve index.html for client-side routes
-    const indexFile = Bun.file(join(WORKING_DIR, "index.html"));
+    // SPA fallback — serve the built app shell for client-side routes
+    const indexFile = Bun.file(join(appDist, "index.html"));
     if (await indexFile.exists()) {
       return new Response(indexFile);
     }
