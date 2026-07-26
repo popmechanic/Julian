@@ -1,6 +1,5 @@
 import { spawn } from "bun";
 import { join, resolve } from "path";
-import { createRemoteJWKSet, jwtVerify } from "jose";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, watch as fsWatch } from "fs";
 import { marked, Renderer } from "marked";
 import { homedir } from "os";
@@ -18,6 +17,7 @@ import {
   ServerEvent,
 } from "./lib";
 import { extractStructured } from "./extract";
+import { buildVerifier } from "./auth";
 
 const PORT = parseInt(process.env.PORT || "8000");
 const WORKING_DIR = process.env.WORKING_DIR || process.cwd();
@@ -188,31 +188,27 @@ function loadSculptorCredentials(): { access_token: string; expires_at_unix_ms: 
   }
 }
 
-// ── Clerk JWT verification ──────────────────────────────────────────────────
-// Decode frontend API domain from the publishable key
-const CLERK_PK = process.env.VITE_CLERK_PUBLISHABLE_KEY || "";
-const CLERK_FRONTEND_API = CLERK_PK
-  ? atob(CLERK_PK.replace(/^pk_(test|live)_/, "")).replace(/\$$/, "")
-  : "";
-const JWKS = CLERK_FRONTEND_API
-  ? createRemoteJWKSet(new URL(`https://${CLERK_FRONTEND_API}/.well-known/jwks.json`))
-  : null;
+// ── OIDC bearer verification (Pocket ID) ───────────────────────────────────
+const OIDC_ISSUER = process.env.OIDC_ISSUER || process.env.VITE_OIDC_ISSUER || "";
+const verifier = buildVerifier(
+  OIDC_ISSUER
+    ? {
+        issuer: OIDC_ISSUER,
+        audience: process.env.VITE_OIDC_CLIENT_ID || undefined,
+        jwksJson: process.env.OIDC_JWKS_JSON || undefined,
+      }
+    : null,
+);
 
-async function verifyClerkToken(req: Request): Promise<boolean> {
-  if (!JWKS) return true; // No Clerk config = skip auth (local dev)
+async function verifyToken(req: Request): Promise<boolean> {
+  if (!OIDC_ISSUER) return true; // No issuer configured = skip auth (local dev)
   // Check Authorization header, fall back to X-Authorization (exe.dev edge proxy strips Authorization)
   const auth = req.headers.get("Authorization") || req.headers.get("X-Authorization");
   if (!auth?.startsWith("Bearer ")) {
-    console.warn("[Clerk] No Authorization header in request");
+    console.warn("[auth] No Authorization header in request");
     return false;
   }
-  try {
-    await jwtVerify(auth.slice(7), JWKS, { clockTolerance: 60 });
-    return true;
-  } catch (err) {
-    console.error("[Clerk] JWT verification failed:", (err as Error).message);
-    return false;
-  }
+  return verifier.verify(auth.slice(7));
 }
 
 // ── Token refresh ───────────────────────────────────────────────────────
@@ -1173,9 +1169,9 @@ const server = Bun.serve({
       }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
-    // Setup endpoint: store auth token (requires Clerk auth)
+    // Setup endpoint: store auth token (requires OIDC auth)
     if (url.pathname === "/api/setup" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const body = (await req.json()) as { token?: string };
@@ -1200,7 +1196,7 @@ const server = Bun.serve({
 
     // OAuth start: generate PKCE auth URL directly (no subprocess)
     if (url.pathname === "/api/oauth/start" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const state = randomBytes(32).toString("hex");
@@ -1225,7 +1221,7 @@ const server = Bun.serve({
 
     // OAuth exchange: POST authorization code to token endpoint directly
     if (url.pathname === "/api/oauth/exchange" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const body = (await req.json()) as { code?: string; state?: string };
@@ -1284,7 +1280,7 @@ const server = Bun.serve({
 
     // ── Event stream endpoint (replaces per-request SSE) ─────────────────────
     if (url.pathname === "/api/events" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const afterParam = url.searchParams.get("after")
@@ -1344,7 +1340,7 @@ const server = Bun.serve({
 
     // ── Send message to Claude (fire-and-forget) ──────────────────────────────
     if (url.pathname === "/api/send" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       if (!processAlive || !claudeProc) {
@@ -1405,7 +1401,7 @@ const server = Bun.serve({
 
     // Session start: spawn Claude and send wake-up message (returns JSON, not SSE)
     if (url.pathname === "/api/session/start" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       if (processAlive && (claudeProc || REMOTE_SESSION)) {
@@ -1487,7 +1483,7 @@ const server = Bun.serve({
 
     // Session end: kill Claude process
     if (url.pathname === "/api/session/end" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       append({ sessionId, type: 'user_session_end' });
@@ -1504,7 +1500,7 @@ const server = Bun.serve({
 
     // Job Help (session-independent — uses Haiku subprocess, not Claude session)
     if (url.pathname === "/api/job-help" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const body = (await req.json()) as { formState?: Record<string, string> };
@@ -1521,7 +1517,7 @@ const server = Bun.serve({
 
     // Send message (legacy /api/chat path — redirects to /api/send)
     if (url.pathname === "/api/chat" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       if (!processAlive || !claudeProc) {
@@ -1563,7 +1559,7 @@ const server = Bun.serve({
 
     // Summon agents: send summon message to Claude
     if (url.pathname === "/api/agents/summon" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       if (!processAlive || !claudeProc) {
@@ -1597,7 +1593,7 @@ const server = Bun.serve({
 
     // List artifacts (authenticated) — recursive tree of memory/
     if (url.pathname === "/api/artifacts" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
 
@@ -1679,7 +1675,7 @@ const server = Bun.serve({
     // ── Skills endpoint ──────────────────────────────────────────────────
 
     if (url.pathname === "/api/skills" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       try {
@@ -1750,7 +1746,7 @@ const server = Bun.serve({
     // ── Agents endpoint ──────────────────────────────────────────────────
 
     if (url.pathname === "/api/agents" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const teamsDir = join(homedir(), ".claude", "teams");
