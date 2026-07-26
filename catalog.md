@@ -131,6 +131,7 @@ Eight files found uncommitted on the julian VM during the March-record audit; no
 - `memory/adapters/fortunes-branch.md` — Reading the 34 fortunes via `git show`; the hard no-write rule.
 - `memory/adapters/git-history.md` — What the commit chain can answer; the interval as absence.
 - `memory/adapters/harness-transcripts.md` — Mining session JSONL; distill, don't transcribe.
+- `memory/adapters/entropy.md` — Where chance comes from: physical entropy for the sortilege draw (NIST beacon → Random.org → urandom), seed logging, the anti-grinding rule, verification. Tool at `scripts/dream-draw.py`. Lineage: finitude and the Mask's keystrokes.
 
 ## Reference — tools, not memories
 
