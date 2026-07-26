@@ -5,6 +5,7 @@
       "name": "julian-sync",
       "dependencies": {
         "jose": "^5.9.0",
+        "julian-shared": "file:../shared",
         "tinybase": "^9.2.0",
       },
       "devDependencies": {
@@ -294,6 +295,8 @@
     "jose": ["jose@5.10.0", "", {}, "sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg=="],
 
     "js-tokens": ["js-tokens@9.0.1", "", {}, "sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ=="],
+
+    "julian-shared": ["julian-shared@file:../shared", { "dependencies": { "tinybase": "^9.2.0" }, "devDependencies": { "typescript": "^5.6.0", "vitest": "^3.0.0" } }],
 
     "kleur": ["kleur@4.1.5", "", {}, "sha512-o+NO+8WrRiQEE4/7nwRJhN1HWpVmJm511pBHUxPLtp0BUISzlBplORYSmTclCnJvQq2tKu/sgl3xVpkc7ZWuQQ=="],
 
