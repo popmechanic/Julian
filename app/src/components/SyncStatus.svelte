@@ -24,22 +24,14 @@
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    font-size: 0.75rem;
-    opacity: 0.75;
+    font-family: var(--font-terminal);
+    font-size: 0.85rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.5);
   }
-  .dot {
-    width: 0.5rem;
-    height: 0.5rem;
-    border-radius: 50%;
-    background: #888;
-  }
-  .synced .dot {
-    background: #4a4;
-  }
-  .connecting .dot {
-    background: #aa4;
-  }
-  .offline .dot {
-    background: #a44;
-  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--j-gray-666); }
+  .synced .dot { background: var(--j-green); box-shadow: 0 0 6px var(--j-green); }
+  .connecting .dot { background: var(--j-yellow); animation: pulse-warn 2s ease-in-out infinite; }
+  .offline .dot { background: var(--j-red); }
 </style>
