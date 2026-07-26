@@ -68,7 +68,7 @@
           <SyncStatus />
         </nav>
         {#if tab === 'screen'}
-          <ScreenEmbed />
+          <ScreenEmbed {sessionActive} />
         {:else}
           <ArtifactPanel />
         {/if}

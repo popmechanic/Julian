@@ -25,6 +25,9 @@
         initInput?: (canvas: HTMLCanvasElement) => void;
         enqueueCommands: (commands: ScreenCommand[]) => void;
         sendFeedback?: (event: Record<string, unknown>) => void;
+        setExternalTabBar?: (val: boolean) => void;
+        isMenuActive?: () => boolean;
+        exitMenu?: () => void;
       };
     }
   }
@@ -98,6 +101,7 @@
 </script>
 
 <script lang="ts">
+  let { sessionActive = false }: { sessionActive?: boolean } = $props();
   let canvas: HTMLCanvasElement | undefined = $state();
   let connected = $state(false);
 
@@ -130,6 +134,7 @@
         if (closed || !canvas || !window.JScreen) return;
         window.JScreen.init(canvas);
         window.JScreen.initInput?.(canvas);
+        window.JScreen.setExternalTabBar?.(true);
       })
       .catch((err) => console.error('[ScreenEmbed] engine load failed:', err));
 
@@ -137,6 +142,15 @@
       closed = true;
       ws.close();
     };
+  });
+
+  // Legacy JulianScreenEmbed behavior: once connected with an active session,
+  // leave the boot menu and make face mode home — the menu's small face icon
+  // is otherwise all that ever renders.
+  $effect(() => {
+    if (!connected || !sessionActive || !window.JScreen) return;
+    if (window.JScreen.isMenuActive?.()) window.JScreen.exitMenu?.();
+    window.JScreen.enqueueCommands([{ type: 'FACE', mode: 'on', state: 'idle' }]);
   });
 </script>
 
