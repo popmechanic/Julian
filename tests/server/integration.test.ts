@@ -20,15 +20,16 @@ async function waitForServer(url: string, timeoutMs = 10000): Promise<void> {
 }
 
 beforeAll(async () => {
-  // Set VITE_CLERK_PUBLISHABLE_KEY to empty to bypass Clerk auth
-  // (Bun auto-loads .env, so we must explicitly override it)
+  // Blank the OIDC issuer vars so the server runs in no-issuer (local dev) mode
+  // and skips bearer verification (Bun auto-loads .env, so we must override them)
   serverProc = Bun.spawn(["bun", "run", "server/server.ts"], {
     cwd: import.meta.dir + "/../..",
     env: {
       ...process.env,
       PORT: String(TEST_PORT),
       ALLOWED_ORIGIN,
-      VITE_CLERK_PUBLISHABLE_KEY: "",
+      OIDC_ISSUER: "",
+      VITE_OIDC_ISSUER: "",
     },
     stdout: "pipe",
     stderr: "pipe",
