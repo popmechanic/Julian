@@ -55,6 +55,16 @@ export class JulianSyncDO extends WsServerDurableObject {
     );
   }
 
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (request.method === 'GET' && url.pathname === '/export') {
+      return Response.json(this.exportContent());
+    }
+    // WebSocket sync path — WsServerDurableObject implements fetch at runtime,
+    // but types it as the optional DurableObject.fetch, so guard the call.
+    return super.fetch?.(request) ?? new Response('Expected WebSocket', { status: 426 });
+  }
+
   exportContent(): ExportedContent {
     const mergeableContent = this.store.getMergeableContent();
     return {
