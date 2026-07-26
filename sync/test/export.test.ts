@@ -3,26 +3,33 @@
 // Adaptation note (kept semantics-identical to the plan): `[vars]` bindings are
 // resolved by the workerd runtime, so mutating the `cloudflare:test` `env` facade
 // does NOT propagate to `SELF` — the deployed worker keeps reading the wrangler.toml
-// values, and `keySetFor` can never see a per-test `CLERK_JWKS_JSON` through `SELF`
+// values, and `keySetFor` can never see a per-test `OIDC_JWKS_JSON` through `SELF`
 // (verified: an authed `SELF.fetch` throws `Invalid URL string` on the placeholder
-// `CLERK_JWKS_URL`). The gate (401 without a token) is proven through `SELF`, which
+// `OIDC_JWKS_URL`). The gate (401 without a token) is proven through `SELF`, which
 // needs no env; the authed path is proven by invoking the worker's default handler
 // with the mutated `env` passed explicitly as the argument, so `keySetFor` receives
 // the injected JWKS while the real DO forwarding + export path still run end-to-end.
+// The fixture also injects `OIDC_AUDIENCE` and signs a matching `aud`, so this proves
+// the audience check end-to-end (and overrides the wrangler.toml deploy placeholder,
+// which would otherwise reject every aud-less token).
 import { describe, expect, test } from 'vitest';
 import { env, runInDurableObject, SELF } from 'cloudflare:test';
 import { SignJWT, generateKeyPair, exportJWK } from 'jose';
 import worker from '../src/index';
 import type { Env } from '../src/auth';
 
+const ISSUER = 'https://soul.test';
+const AUDIENCE = 'julian-app';
+
 async function authedEnv() {
   const { publicKey, privateKey } = await generateKeyPair('RS256');
   const jwk = { ...(await exportJWK(publicKey)), kid: 'k1', alg: 'RS256', use: 'sig' };
-  (env as unknown as Env).CLERK_JWKS_JSON = JSON.stringify({ keys: [jwk] });
-  (env as unknown as Env).CLERK_ISSUER = 'https://clerk.test';
+  (env as unknown as Env).OIDC_JWKS_JSON = JSON.stringify({ keys: [jwk] });
+  (env as unknown as Env).OIDC_ISSUER = ISSUER;
+  (env as unknown as Env).OIDC_AUDIENCE = AUDIENCE;
   const token = await new SignJWT({ sub: 'user_marcus' })
     .setProtectedHeader({ alg: 'RS256', kid: 'k1' })
-    .setIssuer('https://clerk.test').setIssuedAt()
+    .setIssuer(ISSUER).setAudience(AUDIENCE).setIssuedAt()
     .setExpirationTime(Math.floor(Date.now() / 1000) + 3600)
     .sign(privateKey);
   return token;
@@ -44,7 +51,7 @@ describe('export endpoint', () => {
       },
     );
 
-    // Authed: valid Clerk JWT → 200 with verified content. Direct handler
+    // Authed: valid OIDC JWT → 200 with verified content. Direct handler
     // invocation carries the injected env so keySetFor sees the test JWKS.
     const res = await worker.fetch(
       new Request('https://sync.test/test/exp1/export', { headers: { Authorization: `Bearer ${token}` } }),
