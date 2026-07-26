@@ -29,22 +29,19 @@
 </ul>
 
 <style>
-  ul {
-    list-style: none;
-    padding-left: 0.75rem;
-    margin: 0;
-  }
+  ul { list-style: none; padding-left: 0.75rem; margin: 0; }
   button {
     background: none;
     border: none;
     cursor: pointer;
-    padding: 0.15rem 0;
-    font: inherit;
-    color: inherit;
+    padding: 2px 0;
+    font-family: var(--font-terminal);
+    font-size: 1rem;
+    color: var(--j-yellow-dim);
     text-align: left;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
-  .file:hover,
-  .folder:hover {
-    text-decoration: underline;
-  }
+  .folder { color: var(--j-text-dim); }
+  .file:hover, .folder:hover { color: var(--j-yellow); }
 </style>
