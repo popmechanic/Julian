@@ -8,7 +8,7 @@
   connectEvents' onEphemeral.
 -->
 <script lang="ts">
-  import { initAuth, getToken } from './lib/auth';
+  import { initAuth, getToken, signOut, authEnabled } from './lib/auth';
   import { startPersistence, startSync } from './lib/store';
   import { connectEvents, type ServerEvent } from './lib/events';
   import { startSession, endSession, fetchHealth, fetchArtifactTree, type ArtifactEntry } from './lib/api';
@@ -123,6 +123,12 @@
           title={sfxMuted ? 'Sound off' : 'Sound on'}
           onclick={() => (sfxMuted = sfx.mute())}
         >{sfxMuted ? '🔇' : '🔊'}</button>
+        {#if authEnabled()}
+          <button
+            class="logout"
+            onclick={async () => { await signOut(); ready = false; }}
+          >LOGOUT</button>
+        {/if}
       </nav>
       <div class="console-body">
         {#if tab === 'screen'}
@@ -236,6 +242,26 @@
   }
   .mute.muted { color: rgba(255, 255, 255, 0.3); }
   .mute:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+  /* Legacy index.html LOGOUT pill: tab-pill geometry, red hover. */
+  .logout {
+    height: 32px;
+    padding: 0 14px;
+    border-radius: 9999px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-family: var(--font-ui);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: rgba(255, 255, 255, 0.5);
+    cursor: pointer;
+    transition: background 300ms ease, color 300ms ease, border-color 300ms ease;
+  }
+  .logout:hover { background: #ef4444; color: #fff; border-color: #ef4444; }
   .console-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
   /* Mobile: stacked machine, console content inline (legacy < 768px layout) */
