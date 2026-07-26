@@ -1,5 +1,5 @@
 import { createStreamStore, STORE_PATH } from 'julian-shared/schema';
-import { createIndexedDbPersister } from 'tinybase/persisters/persister-indexed-db';
+import { createOpfsPersister } from 'tinybase/persisters/persister-browser';
 import { createWsSynchronizer } from 'tinybase/synchronizers/synchronizer-ws-client';
 import ReconnectingWebSocket from 'reconnecting-websocket';
 import { getHash } from 'tinybase';
@@ -49,9 +49,25 @@ export function onSyncPhase(fn: (p: SyncPhase) => void): () => void {
   return () => phaseListeners.delete(fn);
 }
 
-export async function startPersistence(): Promise<Persister> {
-  const persister = createIndexedDbPersister(store, 'julian-chat');
-  await persister.startAutoPersisting(); // loads persisted content BEFORE starting autosave
+// OPFS, not IndexedDB: TinyBase's IndexedDB persister supports plain Stores
+// only — it saves content without CRDT stamps, so a reload re-stamps stale
+// data as fresh writes that beat newer server state on the next sync. The
+// OPFS persister persists the full MergeableStore, stamps included.
+// (`handle` is injectable for tests; the app default lives in OPFS.)
+export async function startPersistence(handle?: FileSystemFileHandle): Promise<Persister | null> {
+  if (!handle) {
+    if (typeof navigator === 'undefined' || !navigator.storage?.getDirectory) {
+      return null; // no OPFS (old browser): sync-only, no local cache — degraded, never wrong
+    }
+    const dir = await navigator.storage.getDirectory();
+    handle = await dir.getFileHandle('julian-chat.json', { create: true });
+  }
+  const persister = createOpfsPersister(store, handle);
+  // load() BEFORE startAutoSave(), or boot content overwrites the cache.
+  // Deliberately not startAutoPersisting(): its file-change listener needs
+  // FileSystemObserver (Chrome-only); cross-device consistency is sync's job.
+  await persister.load();
+  await persister.startAutoSave();
   return persister;
 }
 
