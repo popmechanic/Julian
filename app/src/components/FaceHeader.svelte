@@ -47,10 +47,17 @@
     color: var(--j-yellow-dim);
     letter-spacing: 0.2em;
   }
-  .status-dots { position: absolute; top: 10px; right: 12px; display: flex; gap: 4px; }
-  .sdot { width: 6px; height: 6px; border-radius: 50%; background: var(--j-gray-444); }
-  .status-dots.ok .sdot { background: var(--j-green); box-shadow: 0 0 4px var(--j-green); }
-  .status-dots:not(.ok) .sdot:first-child { background: var(--j-red); animation: pulse-warn 2s ease-in-out infinite; }
+  /* Legacy chat.jsx StatusDots: 8x8 SQUARES. Offline: all three red, staggered
+     warn pulse. Active: first yellow with glow pulse, rest #333. */
+  .status-dots { position: absolute; top: 10px; right: 12px; display: flex; gap: 4px; align-items: center; }
+  .sdot { width: 8px; height: 8px; }
+  .status-dots:not(.ok) .sdot { background: var(--j-red-soft); animation: pulse-warn 2s ease-in-out infinite; }
+  .status-dots:not(.ok) .sdot:nth-child(1) { box-shadow: 0 0 4px var(--j-red-soft); }
+  .status-dots:not(.ok) .sdot:nth-child(2) { opacity: 0.5; animation-delay: 0.2s; }
+  .status-dots:not(.ok) .sdot:nth-child(3) { opacity: 0.3; animation-delay: 0.4s; }
+  .status-dots.ok .sdot:nth-child(1) { background: var(--j-yellow); box-shadow: 0 0 5px var(--j-yellow); animation: pulse-dot 2s ease-in-out infinite; }
+  .status-dots.ok .sdot:nth-child(2),
+  .status-dots.ok .sdot:nth-child(3) { background: var(--j-gray-333); }
   .row { display: flex; align-items: center; gap: 12px; margin-top: 16px; width: 100%; }
   .who { flex: 1; }
   .name {

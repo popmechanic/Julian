@@ -84,9 +84,10 @@
         <SyncStatus />
         <button
           class="mute"
+          class:muted={sfxMuted}
           title={sfxMuted ? 'Sound off' : 'Sound on'}
           onclick={() => (sfxMuted = sfx.mute())}
-        >{sfxMuted ? '♪̸' : '♪'}</button>
+        >{sfxMuted ? '🔇' : '🔊'}</button>
       </nav>
       <div class="console-body">
         {#if tab === 'screen'}
@@ -180,15 +181,24 @@
     box-shadow: 0 0 15px rgba(0, 175, 209, 0.3);
   }
   .spacer { flex: 1; }
+  /* Legacy index.html mute button: 32px circle, speaker emoji, soft hover. */
   .mute {
     height: 32px;
     width: 32px;
+    padding: 0;
     border-radius: 9999px;
     border: 1px solid rgba(255, 255, 255, 0.1);
     background: transparent;
-    color: rgba(255, 255, 255, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.6);
     cursor: pointer;
+    transition: background 300ms ease, color 300ms ease, border-color 300ms ease;
   }
+  .mute.muted { color: rgba(255, 255, 255, 0.3); }
+  .mute:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
   .console-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
   /* Mobile: stacked machine, console content inline (legacy < 768px layout) */
