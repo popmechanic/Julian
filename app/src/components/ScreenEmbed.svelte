@@ -156,22 +156,46 @@
 
 <div class="screen" class:connected>
   <canvas bind:this={canvas} width="640" height="480"></canvas>
+  <div class="scanlines"></div>
+  <span class="dot" class:connected></span>
 </div>
 
 <style>
   .screen {
+    position: relative;
     aspect-ratio: 4 / 3;
-    background: #000;
-    border-radius: 0.5rem;
+    background: var(--j-crt-0);
+    border: 4px solid var(--j-bezel);
+    border-radius: 12px;
     overflow: hidden;
     opacity: 0.6;
   }
   .screen.connected {
     opacity: 1;
   }
+  .screen :global(.scanlines) {
+    border-radius: 12px;
+  }
   canvas {
     width: 100%;
     height: 100%;
     image-rendering: pixelated;
+  }
+  .dot {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    z-index: 10;
+    background: var(--j-red-soft);
+    box-shadow: 0 0 4px var(--j-red-soft);
+    animation: pulse-warn 2s ease-in-out infinite;
+  }
+  .dot.connected {
+    background: var(--j-yellow);
+    box-shadow: 0 0 6px var(--j-yellow);
+    animation: none;
   }
 </style>
