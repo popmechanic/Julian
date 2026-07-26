@@ -1,7 +1,7 @@
 # Docket
 
 ### #1: Design system port — legacy Julian UI into the Svelte app
-**State:** queued
+**State:** executed
 **Score:** 9 — pixel-for-pixel restoration of the visual identity, prerequisite for the auth work's SetupScreen restyle
 **Est-files:** app/src/app.css, app/public/fonts/*, app/src/App.svelte, app/src/components/*, app/src/lib/sfx.ts, app/src/lib/faces.ts, app/vite.config.ts, app/index.html
 **Plan:** docs/superpowers/plans/2026-07-26-design-system-port.md
