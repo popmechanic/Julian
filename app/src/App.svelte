@@ -11,13 +11,14 @@
   import { initAuth, getToken } from './lib/auth';
   import { startPersistence, startSync } from './lib/store';
   import { connectEvents, type ServerEvent } from './lib/events';
-  import { startSession, endSession, fetchHealth } from './lib/api';
+  import { startSession, endSession, fetchHealth, fetchArtifactTree, type ArtifactEntry } from './lib/api';
   import { sfx } from './lib/sfx';
   import SetupScreen from './components/SetupScreen.svelte';
   import FaceHeader from './components/FaceHeader.svelte';
   import PixelFace from './components/PixelFace.svelte';
   import ChatView from './components/ChatView.svelte';
-  import ArtifactPanel from './components/ArtifactPanel.svelte';
+  import BrowserPanel from './components/BrowserPanel.svelte';
+  import FilesPanel from './components/FilesPanel.svelte';
   import ScreenEmbed from './components/ScreenEmbed.svelte';
   import SyncStatus from './components/SyncStatus.svelte';
 
@@ -26,7 +27,32 @@
   let ready = $state(false);
   let sessionActive = $state(false);
   let processing = $state(false);
-  let tab = $state<'screen' | 'artifacts'>('screen');
+  let tab = $state<'screen' | 'browser' | 'files'>('screen');
+  let entries = $state<ArtifactEntry[]>([]);
+  let activeArtifact = $state<string | null>(null);
+
+  // BROWSER dropdown lists renderable files (legacy listed .html; letters are
+  // .md and render server-side, so both belong here).
+  const artifacts = $derived.by(() => {
+    const out: { name: string; modified?: number }[] = [];
+    const walk = (list: ArtifactEntry[], prefix: string) => {
+      for (const e of list) {
+        if (e.type === 'folder' && e.children) walk(e.children, prefix ? `${prefix}/${e.name}` : e.name);
+        else if (e.type === 'file' && (e.name.endsWith('.html') || e.name.endsWith('.md')))
+          out.push({ name: prefix ? `${prefix}/${e.name}` : e.name, modified: e.modified });
+      }
+    };
+    walk(entries, '');
+    return out;
+  });
+
+  // Legacy handleFileSelect: renderable files jump to the browser tab.
+  function handleFileSelect(path: string) {
+    if (path.endsWith('.html') || path.endsWith('.md')) {
+      activeArtifact = path;
+      tab = 'browser';
+    }
+  }
 
   function handleEphemeral(e: ServerEvent) {
     if (e.type === 'session_start') sessionActive = true;
@@ -56,6 +82,15 @@
     fetchHealth().then((h) => (sessionActive = h.sessionActive));
     return () => conn.stop();
   });
+
+  // The artifact tree feeds both BROWSER and FILES; refresh whenever either
+  // opens so newly written artifacts appear (legacy refreshed via menu data).
+  $effect(() => {
+    if (!ready || tab === 'screen') return;
+    fetchArtifactTree()
+      .then((e) => (entries = e))
+      .catch((err) => console.error('[artifacts] tree fetch failed:', err));
+  });
 </script>
 
 {#if !booted}
@@ -73,7 +108,7 @@
     </div>
     <aside class="console">
       <nav class="tabbar">
-        {#each ['screen', 'artifacts'] as const as t (t)}
+        {#each ['screen', 'browser', 'files'] as const as t (t)}
           <button
             class="pill"
             class:active={tab === t}
@@ -92,8 +127,10 @@
       <div class="console-body">
         {#if tab === 'screen'}
           <ScreenEmbed {sessionActive} />
+        {:else if tab === 'browser'}
+          <BrowserPanel {artifacts} active={activeArtifact} onSelect={(n) => (activeArtifact = n)} />
         {:else}
-          <ArtifactPanel />
+          <FilesPanel {entries} onFileSelect={handleFileSelect} />
         {/if}
       </div>
     </aside>
