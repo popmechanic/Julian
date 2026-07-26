@@ -11,6 +11,7 @@ export default defineConfig({
       '/api': 'http://localhost:8000',
       '/screen/ws': { target: 'ws://localhost:8000', ws: true },
       '/sprites': 'http://localhost:8000',
+      '/sfx': 'http://localhost:8000',
     },
   },
 });
