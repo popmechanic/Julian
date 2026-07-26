@@ -4,15 +4,21 @@
   const time = $derived(new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 </script>
 
-<div class="bubble {role}">
-  <div class="meta"><span class="speaker">{speakerName}</span><span class="time">{time}</span></div>
-  <div class="text">{text}</div>
+<div class="line {role} message-enter" title="{speakerName} · {time}">
+  <span class="prefix">{role === 'user' ? '// ' : '> '}</span><span class="text">{text}</span>
 </div>
 
 <style>
-  .bubble { max-width: 44rem; margin: 0.5rem 0; padding: 0.75rem 1rem; border-radius: 0.75rem; }
-  .bubble.user { margin-left: auto; background: var(--bubble-user, #2a2a2e); }
-  .bubble.assistant { margin-right: auto; background: var(--bubble-julian, #1e2430); }
-  .meta { display: flex; gap: 0.5rem; font-size: 0.75rem; opacity: 0.6; margin-bottom: 0.25rem; }
-  .text { white-space: pre-wrap; line-height: 1.5; }
+  .line {
+    padding: 4px 0;
+    font-family: var(--font-terminal);
+    font-size: 1.1rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+  }
+  .line.assistant { color: var(--j-yellow); text-shadow: 0 0 4px rgba(0, 0, 0, 0.3); }
+  .line.assistant .prefix { color: var(--j-yellow); }
+  .line.user { color: #fff; opacity: 0.8; }
+  .line.user .prefix { color: var(--j-gray-666); }
 </style>
