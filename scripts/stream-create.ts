@@ -12,7 +12,10 @@ if (!wsBase || !token) {
 
 const store = createStreamStore('creation-ceremony');
 const ws = new WebSocket(`${wsBase}/${STORE_PATH}?token=${encodeURIComponent(token)}`);
-const sync = await createWsSynchronizer(store, ws as never, 10);
+// Global constraint: every WebSocket synchronizer sets an explicit 256 KiB
+// fragment size — Cloudflare caps WS messages at ~1 MiB. (7th positional arg.)
+const FRAGMENT_SIZE = 262_144;
+const sync = await createWsSynchronizer(store, ws as never, 10, undefined, undefined, undefined, FRAGMENT_SIZE);
 await sync.startSync();
 await new Promise((r) => setTimeout(r, 2000)); // let the server's state arrive before the once-ever check
 

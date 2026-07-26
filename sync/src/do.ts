@@ -3,7 +3,7 @@
 import { WsServerDurableObject } from 'tinybase/synchronizers/synchronizer-ws-server-durable-object';
 import { createDurableObjectSqlStoragePersister } from 'tinybase/persisters/persister-durable-object-sql-storage';
 import { createMiddleware, getHash } from 'tinybase';
-import type { Middleware, Cell } from 'tinybase';
+import type { Middleware, Cell, Changes } from 'tinybase';
 import type { MergeableStore } from 'tinybase/mergeable-store';
 import { createStreamStore } from 'julian-shared/schema';
 
@@ -53,6 +53,38 @@ export class JulianSyncDO extends WsServerDurableObject {
     this.#middleware.addWillSetCellCallback((_tableId, _rowId, _cellId, cell) =>
       cellJsonBytes(cell) <= MAX_CELL_JSON_BYTES ? cell : undefined,
     );
+    // Synchronizer merges (the DO's dominant write path) bypass willSetCell and
+    // arrive through willApplyChanges as plain [tables, values, 1] with CRDT
+    // stamps already stripped. Strip only the oversized cells so the rest of
+    // the merge still lands; undefined entries are deletions and pass through.
+    this.#middleware.addWillApplyChangesCallback(([tables, values, marker]) => {
+      let dropped = false;
+      const guarded: typeof tables = {};
+      for (const [tableId, table] of Object.entries(tables ?? {})) {
+        if (!table) {
+          guarded[tableId] = table;
+          continue;
+        }
+        const guardedTable: typeof table = {};
+        for (const [rowId, row] of Object.entries(table)) {
+          if (!row) {
+            guardedTable[rowId] = row;
+            continue;
+          }
+          const guardedRow: typeof row = {};
+          for (const [cellId, cell] of Object.entries(row)) {
+            if (cell !== undefined && cellJsonBytes(cell) > MAX_CELL_JSON_BYTES) {
+              dropped = true;
+              continue;
+            }
+            guardedRow[cellId] = cell;
+          }
+          guardedTable[rowId] = guardedRow;
+        }
+        guarded[tableId] = guardedTable;
+      }
+      return (dropped ? [guarded, values, marker] : [tables, values, marker]) as Changes;
+    });
   }
 
   async fetch(request: Request): Promise<Response> {
