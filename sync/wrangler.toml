@@ -11,5 +11,6 @@ tag = "v1"
 new_sqlite_classes = ["JulianSyncDO"]
 
 [vars]
-CLERK_ISSUER = "SET_AT_DEPLOY"     # real value set in the release task
-CLERK_JWKS_URL = "SET_AT_DEPLOY"
+OIDC_ISSUER = "SET_AT_DEPLOY"     # real value set in the post-merge deploy task
+OIDC_JWKS_URL = "SET_AT_DEPLOY"
+OIDC_AUDIENCE = "SET_AT_DEPLOY"   # the Pocket ID client_id for the Julian app
