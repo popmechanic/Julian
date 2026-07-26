@@ -1,0 +1,7 @@
+{
+  "name": "julian-shared",
+  "private": true,
+  "type": "module",
+  "dependencies": { "tinybase": "^9.2.0" },
+  "devDependencies": { "vitest": "^3.0.0", "typescript": "^5.6.0" }
+}
