@@ -1,0 +1,15 @@
+name = "julian-sync"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+
+[[durable_objects.bindings]]
+name = "JULIAN_SYNC"
+class_name = "JulianSyncDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["JulianSyncDO"]
+
+[vars]
+CLERK_ISSUER = "SET_AT_DEPLOY"     # real value set in the release task
+CLERK_JWKS_URL = "SET_AT_DEPLOY"

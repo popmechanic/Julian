@@ -1,0 +1,37 @@
+import { verifyWithKeySet, keySetFor, type Env } from './auth';
+export { JulianSyncDO } from './do';
+
+const SEG = /^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$|^[a-z0-9]$/;
+
+export function parsePath(pathname: string): { store: string; context: string; isExport: boolean } | null {
+  const segs = pathname.split('/').filter(Boolean);
+  if (segs.length === 3 && segs[2] !== 'export') return null;
+  if (segs.length < 2 || segs.length > 3) return null;
+  const [store, context] = segs;
+  if (!SEG.test(store) || !SEG.test(context)) return null;
+  return { store, context, isExport: segs.length === 3 };
+}
+
+export default {
+  async fetch(req: Request, env: Env): Promise<Response> {
+    const url = new URL(req.url);
+    const parsed = parsePath(url.pathname);
+    if (!parsed) return new Response('Not found', { status: 404 });
+
+    // Default-deny: no valid Clerk JWT → nothing. No public mode exists.
+    const bearer = req.headers.get('Authorization');
+    const token = bearer?.startsWith('Bearer ') ? bearer.slice(7) : url.searchParams.get('token') ?? '';
+    const auth = token ? await verifyWithKeySet(token, keySetFor(env), env.CLERK_ISSUER) : null;
+    if (!auth) return new Response('Unauthorized', { status: 401 });
+
+    const stub = env.JULIAN_SYNC.get(env.JULIAN_SYNC.idFromName(`${parsed.store}/${parsed.context}`));
+    if (parsed.isExport) {
+      if (req.method !== 'GET') return new Response('Method not allowed', { status: 405 });
+      return stub.fetch(new Request(new URL('/export', req.url), { method: 'GET' }));
+    }
+    if (req.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+      return new Response('Expected WebSocket', { status: 426 });
+    }
+    return stub.fetch(req);
+  },
+};
