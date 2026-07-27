@@ -78,11 +78,18 @@ test("idempotent: already-registered callback exits 0 without writing", async ()
   server.stop();
   expect(r.exitCode).toBe(0);
   expect(state.puts.length).toBe(0);
+  // one read, no write, no second read
+  expect(state.gets).toBe(1);
 });
 
 test("no API key: exits 3 with manual instructions", async () => {
   const { server, issuer } = mockPocketId();
-  const r = await runScript(issuer, { POCKETID_API_KEY: undefined });
+  // Bun auto-loads the repo-root .env into spawned `bun` processes for any
+  // variable absent from the real environment. An empty real env var beats
+  // .env (the script's `|| ""` treats empty as absent), so this reliably
+  // exercises the no-key path even if the operator's local .env has
+  // POCKETID_API_KEY set.
+  const r = await runScript(issuer, { POCKETID_API_KEY: "" });
   server.stop();
   expect(r.exitCode).toBe(3);
   expect(r.stderr).toContain("https://julian-skilltest.exe.xyz/auth/callback");
@@ -95,4 +102,12 @@ test("silent-save failure: PUT returns 200 but does not persist -> exit 1", asyn
   server.stop();
   expect(r.exitCode).toBe(1);
   expect(r.stderr).toContain("did not stick");
+});
+
+test("HTTP error on GET: wrong client id -> exit 1", async () => {
+  const { server, issuer } = mockPocketId();
+  const r = await runScript(issuer, { POCKETID_CLIENT_ID: "wrong-client" });
+  server.stop();
+  expect(r.exitCode).toBe(1);
+  expect(r.stderr).toContain("GET client failed");
 });

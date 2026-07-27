@@ -35,7 +35,13 @@ const base = `${issuer}/api/oidc/clients/${clientId}`;
 const headers = { "X-API-KEY": apiKey, "Content-Type": "application/json" };
 
 async function getClient(): Promise<any> {
-  const res = await fetch(base, { headers });
+  let res: Response;
+  try {
+    res = await fetch(base, { headers });
+  } catch (err) {
+    console.error(`GET client failed: ${err}`);
+    process.exit(1);
+  }
   if (!res.ok) {
     console.error(`GET client failed: ${res.status} ${await res.text()}`);
     process.exit(1);
@@ -47,11 +53,17 @@ const before = await getClient();
 const urls: string[] = before.callbackURLs ?? [];
 
 if (!urls.includes(callback)) {
-  const res = await fetch(base, {
-    method: "PUT",
-    headers,
-    body: JSON.stringify({ ...before, callbackURLs: [...urls, callback] }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(base, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ ...before, callbackURLs: [...urls, callback] }),
+    });
+  } catch (err) {
+    console.error(`PUT client failed: ${err}`);
+    process.exit(1);
+  }
   if (!res.ok) {
     console.error(`PUT client failed: ${res.status} ${await res.text()}`);
     process.exit(1);
