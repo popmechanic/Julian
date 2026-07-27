@@ -106,7 +106,7 @@
   .dot.d3 { animation-delay: 0.4s; }
   .asleep-divider {
     text-align: center;
-    font-size: 10px;
+    font-size: 0.85rem;
     letter-spacing: 0.08em;
     color: var(--j-gray-555);
     padding: 14px 8px 6px;
