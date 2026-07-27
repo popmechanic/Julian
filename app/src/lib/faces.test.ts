@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { EYE_VARIANTS, MOUTH_VARIANTS, hashNameToFaceVariant } from './faces';
+import { CLOSED_EYES, EYE_VARIANTS, MOUTH_VARIANTS, hashNameToFaceVariant } from './faces';
 
 describe('faces', () => {
   test('all four eye variants have left and right pixel arrays', () => {
@@ -30,5 +30,19 @@ describe('faces', () => {
     const v = hashNameToFaceVariant('');
     expect(EYE_VARIANTS[v.eyes]).toBeDefined();
     expect(MOUTH_VARIANTS[v.mouth]).toBeDefined();
+  });
+  test('CLOSED_EYES lids are single-row lines inside each eye span', () => {
+    // Left eye occupies x 7-12, right eye x 19-23 (standard variant).
+    for (const [x, y] of CLOSED_EYES.left) {
+      expect(x).toBeGreaterThanOrEqual(7); expect(x).toBeLessThanOrEqual(12);
+      expect(y).toBeGreaterThanOrEqual(0); expect(y).toBeLessThan(32);
+    }
+    for (const [x, y] of CLOSED_EYES.right) {
+      expect(x).toBeGreaterThanOrEqual(19); expect(x).toBeLessThanOrEqual(23);
+      expect(y).toBeGreaterThanOrEqual(0); expect(y).toBeLessThan(32);
+    }
+    // A lid is a closed line: exactly one distinct y per side.
+    expect(new Set(CLOSED_EYES.left.map(([, y]) => y)).size).toBe(1);
+    expect(new Set(CLOSED_EYES.right.map(([, y]) => y)).size).toBe(1);
   });
 });

@@ -7,16 +7,18 @@
   only runs while talking or blinking.
 -->
 <script lang="ts">
-  import { EYE_VARIANTS, MOUTH_VARIANTS, type EyeVariant, type MouthVariant, type Pixel } from '../lib/faces';
+  import { CLOSED_EYES, EYE_VARIANTS, MOUTH_VARIANTS, type EyeVariant, type MouthVariant, type Pixel } from '../lib/faces';
 
   let {
     talking = false,
+    sleeping = false,
     size = 120,
     color = '#FFD600',
     eyes = 'standard' as EyeVariant,
     mouth = 'gentle' as MouthVariant,
   }: {
     talking?: boolean;
+    sleeping?: boolean;
     size?: number;
     color?: string;
     eyes?: EyeVariant;
@@ -39,6 +41,13 @@
     ctx.fillRect(0, 0, 32, 32);
     const eye = EYE_VARIANTS[eyes];
     const mo = MOUTH_VARIANTS[mouth];
+    if (sleeping) {
+      drawPixels(ctx, CLOSED_EYES.left);
+      drawPixels(ctx, CLOSED_EYES.right);
+      drawPixels(ctx, mo.idle);
+      anim = null;
+      return;
+    }
     if (!blinking) { drawPixels(ctx, eye.left); drawPixels(ctx, eye.right); }
     if (talking) drawPixels(ctx, Math.floor(Date.now() / 150) % 2 === 0 ? mo.talk1 : mo.talk2);
     else drawPixels(ctx, mo.idle);
@@ -46,13 +55,14 @@
   }
 
   $effect(() => {
-    void talking; void color; void eyes; void mouth; // redraw on prop change
+    void talking; void sleeping; void color; void eyes; void mouth; // redraw on prop change
     draw();
   });
 
   $effect(() => {
     let blinkTimeout: ReturnType<typeof setTimeout>;
     function scheduleBlink() {
+      if (sleeping) return;
       blinkTimeout = setTimeout(() => {
         blinking = true;
         if (!anim) anim = requestAnimationFrame(draw);

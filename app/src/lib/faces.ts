@@ -160,6 +160,15 @@ export const MOUTH_VARIANTS: Record<MouthVariant, { idle: Pixel[]; talk1: Pixel[
   },
 };
 
+// Closed lids for the sleeping face: a 1px line low in each eye's region
+// (the right eye sits one row higher than the left, mirroring EYE_VARIANTS).
+// Distinct from the blink state, which hides the eyes entirely — a sleeping
+// face must read as asleep, not eyeless.
+export const CLOSED_EYES: { left: Pixel[]; right: Pixel[] } = {
+  left: [[7, 14], [8, 14], [9, 14], [10, 14], [11, 14], [12, 14]],
+  right: [[19, 13], [20, 13], [21, 13], [22, 13], [23, 13]],
+};
+
 const EYE_KEYS = Object.keys(EYE_VARIANTS) as EyeVariant[];
 const MOUTH_KEYS = Object.keys(MOUTH_VARIANTS) as MouthVariant[];
 
