@@ -28,12 +28,20 @@ describe('mail-letter CLI', () => {
 
   it('fails without --to when not previewing', () => {
     const md = stage();
-    expect(() => execFileSync('bun', [CLI, md], { encoding: 'utf8', stdio: 'pipe' })).toThrow();
+    try {
+      execFileSync('bun', [CLI, md], { encoding: 'utf8', stdio: 'pipe' });
+      expect.unreachable('expected the CLI to exit non-zero');
+    } catch (err) {
+      expect((err as { stderr: string }).stderr).toContain('--to is required unless --preview');
+    }
   });
 
   it('fails on a missing file', () => {
-    expect(() =>
-      execFileSync('bun', [CLI, '/nonexistent/letter.md', '--preview'], { encoding: 'utf8', stdio: 'pipe' }),
-    ).toThrow();
+    try {
+      execFileSync('bun', [CLI, '/nonexistent/letter.md', '--preview'], { encoding: 'utf8', stdio: 'pipe' });
+      expect.unreachable('expected the CLI to exit non-zero');
+    } catch (err) {
+      expect((err as { stderr: string }).stderr).toContain('no such file:');
+    }
   });
 });

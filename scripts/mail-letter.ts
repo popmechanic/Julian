@@ -61,11 +61,23 @@ if (preview) {
 
 if (to.length === 0) fail('--to is required unless --preview');
 const key = loadApiKey();
-const res = await fetch(SEND_URL, {
-  method: 'POST',
-  headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-  body: JSON.stringify({ to, subject: subject ?? letter.title, text, html }),
-});
+let res: Response;
+try {
+  res = await fetch(SEND_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to, subject: subject ?? letter.title, text, html }),
+  });
+} catch (err) {
+  fail(`send failed: ${err}`);
+}
 if (!res.ok) fail(`AgentMail ${res.status}: ${await res.text()}`);
-const { message_id } = (await res.json()) as { message_id: string };
-console.log(`sent: ${message_id}`);
+let body: { message_id?: string };
+const raw = await res.text();
+try {
+  body = JSON.parse(raw) as { message_id?: string };
+} catch (err) {
+  fail(`send failed: could not parse AgentMail response: ${err}`);
+}
+if (body.message_id) console.log(`sent: ${body.message_id}`);
+else console.log(`sent: ${raw}`);
