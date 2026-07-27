@@ -33,10 +33,5 @@
     "url": "https://julian-new.exe.xyz",
     "provisioned": "2026-07-27T01:38:49Z",
     "branch": "ultra/docket-20260726-122411"
-  },
-  "julian-skilltest": {
-    "url": "https://julian-skilltest.exe.xyz",
-    "provisioned": "2026-07-27T05:19:21Z",
-    "branch": "ultra/docket-20260726-122411"
   }
 }
