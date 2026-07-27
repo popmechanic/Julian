@@ -1,5 +1,12 @@
 <!-- app/src/components/FaceHeader.svelte -->
 <!-- The face header of the chat machine (legacy index.html left-column header). -->
+<script module lang="ts">
+  export function statusFor(sessionActive: boolean, processing: boolean): string {
+    if (!sessionActive) return 'ASLEEP';
+    return processing ? 'PROCESSING...' : 'LISTENING';
+  }
+</script>
+
 <script lang="ts">
   import PixelFace from './PixelFace.svelte';
 
@@ -7,7 +14,7 @@
     sessionActive: boolean; processing?: boolean; onEnd: () => void;
   } = $props();
 
-  const status = $derived(!sessionActive ? 'OFFLINE' : processing ? 'PROCESSING...' : 'LISTENING');
+  const status = $derived(statusFor(sessionActive, processing));
 </script>
 
 <header class="face-header">
@@ -16,7 +23,7 @@
     <span class="sdot"></span><span class="sdot"></span><span class="sdot"></span>
   </span>
   <div class="row">
-    <PixelFace talking={processing} size={56} />
+    <PixelFace talking={processing} sleeping={!sessionActive} size={56} />
     <div class="who">
       <div class="name">JULIAN</div>
       <div class="state">{status}</div>
