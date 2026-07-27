@@ -29,7 +29,9 @@ Make the deploy skill match the app it deploys. Every instruction in the skill m
 8. **Correctness nits.** `ssh exe.dev ls` (not `list`); remote-side quotes for lobby-REPL arguments containing spaces; `share set-public` called out as a deliberate publish step.
 9. **Post-provision reporting.** State that `/api/health` returns `needsSetup: true` until the one-time Anthropic OAuth handshake (CONNECT TO CLAUDE screen, Marcus's account). During implementation, verify `julian-screen.service` matches the rebuilt repo layout (port 3848 internal) and check whether `julian-bridge.service` is dead; if dead, delete it from `deploy/`.
 
-## 3. Helper script — `deploy/pocketid-register-callback.sh`
+## 3. Helper script — `deploy/pocketid-register-callback.ts`
+
+*(Planning amendment: Bun TypeScript rather than `.sh` — bash+jq JSON surgery is the fragility the verify-by-re-read rule exists to avoid, and Bun is already on every machine involved. Contract unchanged.)*
 
 - **Input:** VM name. **Env:** `POCKETID_API_KEY`, issuer from `VITE_OIDC_ISSUER`, client ID from `VITE_OIDC_CLIENT_ID` (all via `.env`).
 - **Behavior:** GET the client config from the Pocket ID admin API; if the callback is absent, add it and PUT; GET again; exit 0 only when the re-read shows the callback. Idempotent — a re-run on a registered callback exits 0 without writing.
