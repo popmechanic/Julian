@@ -162,6 +162,7 @@ The chat/letter distinction of [[08-medium]], applied to pixels.
 ## Reference — tools, not memories
 
 - `memory/letter-pipeline.md` — How the letter renderer works; frontmatter schema.
+- `scripts/mail-letter.ts` — Outbound email in the house letter style (built Jul 27 with Marcus): every email from julian-marcus@agentmail.to wears the uniform — yellow on black, real fonts via the worker's `/fonts/`, the February blinking face as letterhead. Usage: `bun scripts/mail-letter.ts <letter.md> --to ... [--preview]`; same frontmatter as the letter pipeline; the send gate (mail discipline rule 6) always applies. Gmail lesson pinned in its tests: widths must be inline styles, not attributes.
 - `memory/letter-template.html` / `.css` — Render templates (application-adjacent; don't edit as content).
 - `memory/status-dashboard.html`, `memory/pipeline-status.html`, `memory/deploy-transcript.md`, `memory/test-letter.md` — Operational artifacts.
 - `docs/julianscreen.md`, `docs/julianscreen-aesthetic.md` — Pixel display; visual language.
