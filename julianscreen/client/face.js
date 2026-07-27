@@ -139,8 +139,9 @@ const FACE_SLEEPING_EYES = {
 
 // Sleeping z's — drift toward the upper right, alternating small z / big Z
 const FACE_SLEEP_Z_SMALL = [
-  [24,8],[25,8],[26,8],
-  [25,9],
+  [24,7],[25,7],[26,7],
+  [25,8],
+  [24,9],
   [24,10],[25,10],[26,10]
 ];
 const FACE_SLEEP_Z_BIG = [
