@@ -29,6 +29,10 @@ describe('auth', () => {
   });
 
   test('dev seam: no issuer → disabled, signed in, null token', async () => {
+    // The repo-root .env (envDir: '..') carries real issuer values on a
+    // configured machine; stub them empty so the dev seam is testable anywhere.
+    vi.stubEnv('VITE_OIDC_ISSUER', '');
+    vi.stubEnv('VITE_OIDC_CLIENT_ID', '');
     const auth = await import('./auth');
     expect(auth.authEnabled()).toBe(false);
     await auth.initAuth();
