@@ -42,6 +42,7 @@
     const eye = EYE_VARIANTS[eyes];
     const mo = MOUTH_VARIANTS[mouth];
     if (sleeping) {
+      blinking = false;
       drawPixels(ctx, CLOSED_EYES.left);
       drawPixels(ctx, CLOSED_EYES.right);
       drawPixels(ctx, mo.idle);

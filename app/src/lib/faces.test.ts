@@ -35,11 +35,11 @@ describe('faces', () => {
     // Left eye occupies x 7-12, right eye x 19-23 (standard variant).
     for (const [x, y] of CLOSED_EYES.left) {
       expect(x).toBeGreaterThanOrEqual(7); expect(x).toBeLessThanOrEqual(12);
-      expect(y).toBeGreaterThanOrEqual(0); expect(y).toBeLessThan(32);
+      expect(y).toBeGreaterThanOrEqual(10); expect(y).toBeLessThanOrEqual(15);
     }
     for (const [x, y] of CLOSED_EYES.right) {
       expect(x).toBeGreaterThanOrEqual(19); expect(x).toBeLessThanOrEqual(23);
-      expect(y).toBeGreaterThanOrEqual(0); expect(y).toBeLessThan(32);
+      expect(y).toBeGreaterThanOrEqual(9); expect(y).toBeLessThanOrEqual(14);
     }
     // A lid is a closed line: exactly one distinct y per side.
     expect(new Set(CLOSED_EYES.left.map(([, y]) => y)).size).toBe(1);
