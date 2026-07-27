@@ -1,4 +1,14 @@
 <!-- app/src/components/ChatView.svelte -->
+<script module lang="ts">
+  export function presenceFor(
+    sessionActive: boolean,
+    messageCount: number,
+  ): { divider: boolean; buttonLabel: string | null } {
+    if (sessionActive) return { divider: false, buttonLabel: null };
+    return { divider: messageCount > 0, buttonLabel: 'WAKE JULIAN' };
+  }
+</script>
+
 <script lang="ts">
   import { store } from '../lib/store';
   import type { MessageRow } from '../lib/store';
@@ -12,6 +22,7 @@
   } = $props();
 
   const messages = useSortedMessages();
+  const presence = $derived(presenceFor(sessionActive, messages.ids.length));
   let scroller: HTMLElement | undefined = $state();
   $effect(() => { messages.ids; scroller?.scrollTo({ top: scroller.scrollHeight }); });
 
@@ -38,12 +49,15 @@
           </span>
         </div>
       {/if}
+      {#if presence.divider}
+        <div class="asleep-divider">— julian is asleep · the conversation above is remembered, not live —</div>
+      {/if}
     </div>
   </div>
   <div class="input-footer">
     {#if !sessionActive}
       <div class="start-wrap">
-        <button class="start" onclick={onStart}>START SESSION</button>
+        <button class="start" onclick={onStart}>{presence.buttonLabel}</button>
       </div>
     {:else}
       <ChatInput onSend={(t) => sendMessage(t)} disabled={processing} />
@@ -90,6 +104,15 @@
   }
   .dot.d2 { animation-delay: 0.2s; }
   .dot.d3 { animation-delay: 0.4s; }
+  .asleep-divider {
+    text-align: center;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--j-gray-555);
+    padding: 14px 8px 6px;
+    user-select: none;
+  }
   .input-footer {
     background: var(--j-crt-2);
     border: 4px solid var(--j-bezel);
