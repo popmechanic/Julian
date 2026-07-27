@@ -108,7 +108,6 @@
     text-align: center;
     font-size: 10px;
     letter-spacing: 0.08em;
-    text-transform: uppercase;
     color: var(--j-gray-555);
     padding: 14px 8px 6px;
     user-select: none;
