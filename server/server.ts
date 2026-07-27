@@ -745,9 +745,11 @@ async function sendRemoteMessage(message: string) {
 // outliving the session that made it. Fire-and-forget: a missing screen server
 // must never affect the session lifecycle.
 function setScreenFace(state: 'sleeping' | 'on') {
+  // 'FACE on <state>' both enters face mode and sets the expression — a bare
+  // 'FACE <state>' is ignored when the client reloaded with face mode off.
   fetch('http://localhost:3848/cmd', {
     method: 'POST',
-    body: state === 'on' ? 'FACE on' : `FACE ${state}`,
+    body: state === 'on' ? 'FACE on' : 'FACE on sleeping',
   }).catch(() => {});
 }
 
