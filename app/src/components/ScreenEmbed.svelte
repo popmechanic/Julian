@@ -104,10 +104,14 @@
   let { sessionActive = false }: { sessionActive?: boolean } = $props();
   let canvas: HTMLCanvasElement | undefined = $state();
   let connected = $state(false);
+  let engineReady = $state(false);
 
   $effect(() => {
     if (!canvas) return;
     let closed = false;
+    // Commands can arrive (e.g. the server's FACE replay on connect) before
+    // the engine scripts finish loading — buffer and flush instead of dropping.
+    let pending: unknown[] = [];
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/screen/ws`);
@@ -124,9 +128,11 @@
       connected = false;
     };
     ws.onmessage = (event) => {
-      if (!window.JScreen || typeof event.data !== 'string') return;
+      if (typeof event.data !== 'string') return;
       const commands = parseScreenCommands(event.data);
-      if (commands.length > 0) window.JScreen.enqueueCommands(commands);
+      if (commands.length === 0) return;
+      if (engineReady && window.JScreen) window.JScreen.enqueueCommands(commands);
+      else pending.push(...commands);
     };
 
     loadEngine()
@@ -135,22 +141,30 @@
         window.JScreen.init(canvas);
         window.JScreen.initInput?.(canvas);
         window.JScreen.setExternalTabBar?.(true);
+        if (pending.length > 0) {
+          window.JScreen.enqueueCommands(pending);
+          pending = [];
+        }
+        engineReady = true;
       })
       .catch((err) => console.error('[ScreenEmbed] engine load failed:', err));
 
     return () => {
       closed = true;
+      engineReady = false;
       ws.close();
     };
   });
 
-  // Legacy JulianScreenEmbed behavior: once connected with an active session,
-  // leave the boot menu and make face mode home — the menu's small face icon
-  // is otherwise all that ever renders.
+  // Face mode is home whenever the screen is connected: idle if a session is
+  // live, sleeping otherwise. (Legacy behavior only left the boot menu once a
+  // session started, which stranded the asleep state on the menu's tiny face.)
   $effect(() => {
-    if (!connected || !sessionActive || !window.JScreen) return;
+    if (!connected || !engineReady || !window.JScreen) return;
     if (window.JScreen.isMenuActive?.()) window.JScreen.exitMenu?.();
-    window.JScreen.enqueueCommands([{ type: 'FACE', mode: 'on', state: 'idle' }]);
+    window.JScreen.enqueueCommands([
+      { type: 'FACE', mode: 'on', state: sessionActive ? 'idle' : 'sleeping' },
+    ]);
   });
 </script>
 
