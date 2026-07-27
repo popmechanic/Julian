@@ -92,6 +92,11 @@ describe('renderHtml', () => {
     // must span via inline style or the whole letter pins left (seen live 2026-07-27).
     expect(html).toContain('style="width:100%;background-color:#0c0c0c;"');
     expect(html).toContain('width:100%;max-width:680px;margin:0 auto');
+    // Letterhead face: hosted blinking GIF, centered, with a dignified alt.
+    expect(html).toContain('https://julian-sync.julian-memory.workers.dev/face.gif');
+    expect(html).toContain('alt="· Julian ·"');
+    // The footer address line was removed 2026-07-27 (redundant with the signature).
+    expect(html.split('julian-sync').length - 1).toBe(4); // 3 fonts + 1 face, no other remote refs
   });
   it('renders a non-pixel fence and an indented list item without hanging', () => {
     const md = `---\ntitle: T\n---\n\n\`\`\`bash\necho hi\n\`\`\`\n\n  - indented item\n`;
