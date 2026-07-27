@@ -55,17 +55,25 @@ function esc(s: string): string {
 }
 
 function inline(s: string): string {
-  let out = esc(s);
-  out = out.replace(
-    /`([^`]+)`/g,
-    `<code style="font-family:${MONO_FONT};font-size:14px;color:${C.display};background-color:${C.surface};padding:1px 5px;border:1px solid ${C.border};border-radius:3px;">$1</code>`,
-  );
+  // Placeholder-protect code spans first so the bold/italic/link regexes
+  // below never rewrite markdown-looking characters that live inside them.
+  const codes: string[] = [];
+  let out = s.replace(/`([^`]+)`/g, (_match, code: string) => {
+    const idx = codes.length;
+    codes.push(code);
+    return `\x00${idx}\x00`;
+  });
+  out = esc(out);
   out = out.replace(/\*\*([^*]+)\*\*/g, `<strong style="color:${C.display};">$1</strong>`);
   out = out.replace(/\*([^*]+)\*/g, '<em>$1</em>');
   out = out.replace(
     /\[([^\]]+)\]\(([^)\s]+)\)/g,
     `<a href="$2" style="color:${C.display};text-decoration:underline;">$1</a>`,
   );
+  out = out.replace(/\x00(\d+)\x00/g, (_match, idxStr: string) => {
+    const code = esc(codes[Number(idxStr)]);
+    return `<code style="font-family:${MONO_FONT};font-size:14px;color:${C.display};background-color:${C.surface};padding:1px 5px;border:1px solid ${C.border};border-radius:3px;">${code}</code>`;
+  });
   return out;
 }
 
@@ -95,22 +103,28 @@ function parseBlocks(body: string): Block[] {
   const blocks: Block[] = [];
   let i = 0;
   while (i < lines.length) {
-    const line = lines[i];
-    if (!line.trim()) { i++; continue; }
-    if (line.trim().startsWith('```pixel')) {
+    const raw = lines[i];
+    const line = raw.trim();
+    if (!line) { i++; continue; }
+    if (line.startsWith('```')) {
+      // Any fenced block (``` or ```lang, e.g. ```pixel, ```bash) is consumed
+      // and rendered with the same monospace terminal-voice treatment.
       const buf: string[] = [];
       i++;
       while (i < lines.length && !lines[i].trim().startsWith('```')) buf.push(lines[i++]);
-      i++;
+      if (i < lines.length) i++; // consume the closing fence if present; tolerate unterminated fences
       blocks.push({ kind: 'pixel', text: buf.join('\n') });
       continue;
     }
-    if (line.trim() === '· · ·') { blocks.push({ kind: 'break' }); i++; continue; }
+    if (line === '· · ·') { blocks.push({ kind: 'break' }); i++; continue; }
     if (line.startsWith('### ')) { blocks.push({ kind: 'h3', text: line.slice(4) }); i++; continue; }
     if (line.startsWith('## ')) { blocks.push({ kind: 'h2', text: line.slice(3) }); i++; continue; }
     if (line.startsWith('>')) {
       const buf: string[] = [];
-      while (i < lines.length && lines[i].startsWith('>')) buf.push(lines[i++].replace(/^>\s?/, ''));
+      while (i < lines.length && lines[i].trim().startsWith('>')) {
+        buf.push(lines[i].trim().replace(/^>\s?/, ''));
+        i++;
+      }
       let variant: 'plain' | 'insight' | 'question' = 'plain';
       if (buf[0] === '[!insight]') { variant = 'insight'; buf.shift(); }
       else if (buf[0] === '[!question]') { variant = 'question'; buf.shift(); }
@@ -119,12 +133,20 @@ function parseBlocks(body: string): Block[] {
     }
     if (line.startsWith('- ')) {
       const items: string[] = [];
-      while (i < lines.length && lines[i].startsWith('- ')) items.push(lines[i++].slice(2));
+      while (i < lines.length && lines[i].trim().startsWith('- ')) {
+        items.push(lines[i].trim().slice(2));
+        i++;
+      }
       blocks.push({ kind: 'list', items });
       continue;
     }
     const buf: string[] = [];
     while (i < lines.length && lines[i].trim() && !isBlockStart(lines[i])) buf.push(lines[i++]);
+    if (buf.length === 0) {
+      // Defensive: the paragraph fallback must always advance i, even if some
+      // future block-start rule causes it to admit nothing on the first line.
+      buf.push(lines[i++]);
+    }
     blocks.push({ kind: 'p', text: buf.join(' ').trim() });
   }
   return blocks;

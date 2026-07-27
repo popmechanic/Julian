@@ -77,6 +77,30 @@ describe('renderHtml', () => {
   it('stays far under the Gmail clip limit before body text', () => {
     expect(renderHtml(parseLetter('---\ntitle: T\n---\n\nHi.')).length).toBeLessThan(15360);
   });
+  it('carries the remaining house color tokens', () => {
+    expect(html).toContain('#d4b400');
+    expect(html).toContain('#9a7e00');
+    expect(html).toContain('#4a3e00');
+  });
+  it('declares exactly one style block', () => {
+    expect(html.match(/<style>/g)?.length).toBe(1);
+  });
+  it('constrains the single column to the house max-width', () => {
+    expect(html).toContain('max-width:640px');
+  });
+  it('renders a non-pixel fence and an indented list item without hanging', () => {
+    const md = `---\ntitle: T\n---\n\n\`\`\`bash\necho hi\n\`\`\`\n\n  - indented item\n`;
+    const out = renderHtml(parseLetter(md));
+    expect(out).toContain('echo hi');
+    expect(out).toContain('#0f0e0b');
+    expect(out).toContain('indented item');
+  });
+  it('keeps a literal ** inside a code span, unrewritten by the bold rule', () => {
+    const md = '---\ntitle: T\n---\n\nUse `a **b** c` here.';
+    const out = renderHtml(parseLetter(md));
+    expect(out).toContain('a **b** c');
+    expect(out).not.toContain('<strong style="color:#FFD600;">b</strong>');
+  });
 });
 
 describe('renderText', () => {
