@@ -258,7 +258,7 @@ Fast path — just sync code and restart. This is the common case.
 
 ### Pre-flight
 
-1. Read the VM's entry in `deploy/instances.json` and take its `branch` field — that is the deploy branch for this VM, used throughout the Update path (Step U1 checks it out; the change analysis diffs against it).
+1. Read the VM's entry in `deploy/instances.json` and take its `branch` field — that is the deploy branch for this VM: it is the branch Step U1 checks out on the VM. The change analysis below is separate — it compares the server's current commit to the local `HEAD` you are about to deploy.
 2. Pull Julian's changes locally: `git pull` (stop on merge conflicts)
 3. Check for uncommitted changes: `git status --porcelain` (warn but don't block)
 4. Push to GitHub: `git push`
@@ -332,8 +332,14 @@ ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && /hom
 Check whether the pull touched the frontend:
 
 ```bash
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git diff --name-only ORIG_HEAD HEAD 2>/dev/null | grep -qE '^(app|shared)/' && echo rebuild || echo skip"
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git diff --name-only $SERVER_HEAD HEAD | grep -qE '^(app|shared)/' && echo rebuild || echo skip"
 ```
+
+`$SERVER_HEAD` is the pre-pull server commit captured during change analysis —
+use that shell variable, not `ORIG_HEAD`. The `git checkout` in Step U1 never
+sets `ORIG_HEAD`, and an already-up-to-date pull leaves any old value stale, so
+an `ORIG_HEAD` comparison can report `skip` and leave `app/dist` unbuilt — the
+blank-site failure.
 
 On `rebuild` (or in doubt), run the Step P5 install + `vite build` command.
 
