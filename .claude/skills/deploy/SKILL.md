@@ -24,7 +24,7 @@ Deploy Julian to an exe.xyz VM. Two paths: **provision** a new VM or **update** 
 
 Determine the target VM name:
 
-1. If `$ARGUMENTS` is provided, use it as the VM name (e.g., `/julian:deploy screen-test`)
+1. If `$ARGUMENTS` is provided, use it as the VM name (e.g., `/deploy screen-test`)
 2. If no arguments, derive from current git branch: `julian-<branch>` (e.g., branch `screen` → `julian-screen`)
 3. Strip any characters not valid in hostnames (keep alphanumeric and hyphens)
 
@@ -149,14 +149,15 @@ ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "git clone git@github.c
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git config user.name 'Julian' && git config user.email 'julian@exe.xyz'"
 ```
 
-### Step P5: Install dependencies and build the SPA
+### Step P5: Install dependencies
 
 ```bash
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && /home/exedev/.bun/bin/bun install && cd /opt/julian/shared && /home/exedev/.bun/bin/bun install && cd /opt/julian/app && /home/exedev/.bun/bin/bun install && /home/exedev/.bun/bin/bunx vite build"
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && /home/exedev/.bun/bin/bun install && cd /opt/julian/shared && /home/exedev/.bun/bin/bun install && cd /opt/julian/app && /home/exedev/.bun/bin/bun install"
 ```
 
-`app/dist` is gitignored and the server serves it at root — skip this build
-and the site is blank.
+The SPA build happens in Step P6d, AFTER `.env` exists — not here. Vite bakes
+`VITE_*` values into the bundle at build time: built without `.env`, the app
+thinks auth is disabled, skips the passkey gate, and CONNECT TO CLAUDE 401s.
 
 ### Step P6: Create .env
 
@@ -201,6 +202,21 @@ source .env && bun deploy/pocketid-register-callback.ts <vmname>
   Have the user do it, confirm they re-opened the client and saw the URL
   listed (saves fail silently when admin sessions expire), then continue.
 - **Exit 1**: STOP and report the script's output.
+
+### Step P6d: Build the SPA
+
+Run only after Step P6 wrote `/opt/julian/.env` — the build reads it:
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian/app && /home/exedev/.bun/bin/bunx vite build"
+```
+
+`app/dist` is gitignored and the server serves it at root — skip this build
+and the site is blank. Verify the env made it into the bundle:
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "grep -rl souls.exe.xyz /opt/julian/app/dist/assets/ >/dev/null && echo baked || echo MISSING-ENV-REBUILD-NEEDED"
+```
 
 ### Step P7: Install and start systemd services
 
@@ -289,7 +305,7 @@ Classify the deploy based on what changed:
 
 **Large code change** (4+ files changed, or 200+ lines, or structural changes to server.ts):
 - Higher risk. Tell the user the scope, e.g.: "This is a larger change — 8 files, ~350 lines, including server.ts changes."
-- If the target is **production** (`julian`), suggest: "Want to deploy to a fresh test VM first? I can provision one with `/julian:deploy test`."
+- If the target is **production** (`julian`), suggest: "Want to deploy to a fresh test VM first? I can provision one with `/deploy test`."
 - If the target is already a non-production VM, proceed — that's what test VMs are for.
 
 **Dependency change** (package.json modified):
@@ -350,7 +366,8 @@ that fast-forwards more than one commit puts the pre-pull state further back tha
 `HEAD~1`. Either mistake reports `skip` and leaves `app/dist` unbuilt — the
 blank-site failure. The literal pre-pull hash is the only reliable reference.
 
-On `rebuild` (or in doubt), run the Step P5 install + `vite build` command.
+On `rebuild` (or in doubt), run the Step P5 installs, then the Step P6d build
+(the VM's `.env` already exists on the Update path, so the bake is correct).
 
 ### Step U3: Restart services
 
