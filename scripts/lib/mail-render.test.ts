@@ -86,7 +86,9 @@ describe('renderHtml', () => {
     expect(html.match(/<style>/g)?.length).toBe(1);
   });
   it('constrains the single column to the house max-width', () => {
-    expect(html).toContain('max-width:640px');
+    expect(html).toContain('max-width:680px');
+    expect(html).toContain('align="center"');
+    expect(html).toContain('margin:0 auto');
   });
   it('renders a non-pixel fence and an indented list item without hanging', () => {
     const md = `---\ntitle: T\n---\n\n\`\`\`bash\necho hi\n\`\`\`\n\n  - indented item\n`;
