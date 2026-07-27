@@ -9,6 +9,11 @@ const TICK_INTERVAL = parseInt(process.env.TICK_INTERVAL || '0'); // 0 = disable
 // Connected WebSocket clients
 const clients = new Set();
 
+// Last FACE command — replayed to newly connecting clients so face mode
+// (presence state) survives a browser reload instead of falling back to the
+// sprite avatar until the next lifecycle event.
+let lastFaceCmd = null;
+
 // Feedback queue (browser → agent via GET /feedback)
 let feedbackQueue = [];
 const MAX_FEEDBACK = 200;
@@ -76,7 +81,10 @@ const server = Bun.serve({
 
         for (const line of lines) {
           const cmd = parseCommand(line);
-          if (cmd) commands.push(cmd);
+          if (cmd) {
+            commands.push(cmd);
+            if (cmd.type === 'FACE') lastFaceCmd = cmd;
+          }
         }
 
         if (commands.length > 0) {
@@ -140,8 +148,9 @@ const server = Bun.serve({
     open(ws) {
       clients.add(ws);
       console.log(`[ws] Client connected (${clients.size} total)`);
-      // Send READY signal
+      // Send READY signal, then replay face state so reloads keep the face
       ws.send(JSON.stringify([{ type: 'READY' }]));
+      if (lastFaceCmd) ws.send(JSON.stringify([lastFaceCmd]));
     },
 
     message(ws, message) {
