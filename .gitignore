@@ -10,6 +10,7 @@ node_modules/
 # Build artifacts & backups
 *.bak.html
 index.*.bak.html
+*.preview.html
 
 # OS files
 .DS_Store
