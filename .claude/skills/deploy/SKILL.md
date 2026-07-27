@@ -274,6 +274,9 @@ git diff --stat $SERVER_HEAD HEAD
 git diff --name-only $SERVER_HEAD HEAD
 ```
 
+Run those three lines as one command so `$SERVER_HEAD` is set when the diffs run,
+and write the hash down — Step U2 needs you to paste it in literally.
+
 Classify the deploy based on what changed:
 
 **Content only** (soul/, memory/, catalog.xml, docs/):
@@ -317,10 +320,16 @@ If there are merge conflicts after stash pop, report them to the user.
 
 ### Step U2: Install dependencies and rebuild (if needed)
 
+Both checks below diff against `<server-head>`. Substitute it yourself with the
+pre-pull server commit hash captured during Change analysis (the `SERVER_HEAD`
+value), writing the actual hash into the command — never rely on a shell
+variable surviving between commands, since each Bash invocation starts a fresh
+shell and `$SERVER_HEAD` would expand to empty.
+
 Check if `package.json` changed in the pull:
 
 ```bash
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git diff HEAD~1 --name-only 2>/dev/null | grep -q package.json && echo changed || echo unchanged"
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git diff --name-only <server-head> 2>/dev/null | grep -q package.json && echo changed || echo unchanged"
 ```
 
 If changed (or if in doubt), run:
@@ -332,14 +341,14 @@ ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && /hom
 Check whether the pull touched the frontend:
 
 ```bash
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git diff --name-only $SERVER_HEAD HEAD | grep -qE '^(app|shared)/' && echo rebuild || echo skip"
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git diff --name-only <server-head> HEAD | grep -qE '^(app|shared)/' && echo rebuild || echo skip"
 ```
 
-`$SERVER_HEAD` is the pre-pull server commit captured during change analysis —
-use that shell variable, not `ORIG_HEAD`. The `git checkout` in Step U1 never
-sets `ORIG_HEAD`, and an already-up-to-date pull leaves any old value stale, so
-an `ORIG_HEAD` comparison can report `skip` and leave `app/dist` unbuilt — the
-blank-site failure.
+`HEAD~1` and `ORIG_HEAD` are both wrong here. The `git checkout` in Step U1 never
+sets `ORIG_HEAD` and an already-up-to-date pull leaves any old value stale; a pull
+that fast-forwards more than one commit puts the pre-pull state further back than
+`HEAD~1`. Either mistake reports `skip` and leaves `app/dist` unbuilt — the
+blank-site failure. The literal pre-pull hash is the only reliable reference.
 
 On `rebuild` (or in doubt), run the Step P5 install + `vite build` command.
 
