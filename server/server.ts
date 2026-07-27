@@ -739,6 +739,18 @@ async function sendRemoteMessage(message: string) {
   remoteProcessing = false;
 }
 
+// Session lifecycle drives the JulianScreen's presence claim: sleep on end,
+// idle face on start. Any awake Julian (CLI or web) can reclaim the screen at
+// any time by sending its own command — this only prevents a stale expression
+// outliving the session that made it. Fire-and-forget: a missing screen server
+// must never affect the session lifecycle.
+function setScreenFace(state: 'sleeping' | 'on') {
+  fetch('http://localhost:3848/cmd', {
+    method: 'POST',
+    body: state === 'on' ? 'FACE on' : `FACE ${state}`,
+  }).catch(() => {});
+}
+
 function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
   sessionId = `julian-${new Date().toISOString().slice(0, 10)}-${++sessionCounter}`;
   sessionCostUsd = 0;
@@ -758,6 +770,7 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
     console.log(`[Claude] Remote mode — session ${sessionId}, will spawn per-message`);
     append({ sessionId, type: 'session_start', pid: 0, model: actualModel, demoMode: FORCE_DEMO_MODE || mode === 'demo' });
     append({ sessionId, type: 'claude_system', claudeSessionId: '', model: actualModel, availableTools: [] });
+    setScreenFace('on');
     return null;
   }
 
@@ -903,6 +916,7 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
       : code === 0 ? 'user_ended'
       : 'process_crash';
     append({ sessionId, type: 'session_end', exitCode: code, reason });
+    setScreenFace('sleeping');
     processAlive = false;
     claudeProc = null;
     sessionId = null;
@@ -917,6 +931,7 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
     model: actualModel,
     demoMode: FORCE_DEMO_MODE || mode === 'demo',
   });
+  setScreenFace('on');
 
   return proc;
 }
@@ -1491,6 +1506,9 @@ const server = Bun.serve({
         claudeProc.kill();
         // Wait briefly for cleanup
         await new Promise(r => setTimeout(r, PROCESS_KILL_WAIT_MS));
+      } else {
+        // Remote mode has no process whose exit hook sleeps the screen
+        setScreenFace('sleeping');
       }
       claudeProc = null;
       processAlive = false;
