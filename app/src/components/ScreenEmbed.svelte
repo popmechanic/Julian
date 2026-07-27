@@ -111,7 +111,7 @@
     let closed = false;
     // Commands can arrive (e.g. the server's FACE replay on connect) before
     // the engine scripts finish loading — buffer and flush instead of dropping.
-    let pending: unknown[] = [];
+    let pending: ScreenCommand[] = [];
 
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/screen/ws`);
