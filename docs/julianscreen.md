@@ -99,6 +99,7 @@ Changes the face expression without toggling mode. Available states:
 | `talking` | Standard open eyes | Alternates open/closed (150ms) | Blink + mouth animation |
 | `thinking` | Looking up-left | Small pursed mouth | Animated dots (···) appear upper-right |
 | `happy` | Crescent (closed, smiling) | Wide upward curve | No blink (eyes already curved) |
+| `sleeping` | Closed lids (single row) | Gentle | No blink; small z always, big Z pulses every 800ms. Set automatically by the web server when a session ends; any awake Julian can reclaim the screen. |
 | `sad` | Drooped, downturned | Downward curve | Blink active |
 
 ```bash

@@ -126,6 +126,30 @@ const FACE_SAD_EYES = {
   ],
 };
 
+// Sleeping eyes — closed lids, same rows as the web app's small face
+// (left lid one row lower than right, mirroring the open eyes' offset)
+const FACE_SLEEPING_EYES = {
+  left: [
+    [7,14],[8,14],[9,14],[10,14],[11,14],[12,14]
+  ],
+  right: [
+    [19,13],[20,13],[21,13],[22,13],[23,13]
+  ],
+};
+
+// Sleeping z's — drift toward the upper right, alternating small z / big Z
+const FACE_SLEEP_Z_SMALL = [
+  [24,8],[25,8],[26,8],
+  [25,9],
+  [24,10],[25,10],[26,10]
+];
+const FACE_SLEEP_Z_BIG = [
+  [27,3],[28,3],[29,3],[30,3],
+  [29,4],
+  [28,5],
+  [27,6],[28,6],[29,6],[30,6]
+];
+
 // ── Face Mode State ────────────────────────────────────────────────────
 
 let faceActive = false;
@@ -153,6 +177,18 @@ function drawFacePixels(ctx, pixels, color) {
 
 function renderFace(ctx, timestamp) {
   const ON = '#FFD600';
+
+  // Sleeping: closed lids, gentle mouth, slow z's — no blink, nothing else
+  if (faceState === 'sleeping') {
+    drawFacePixels(ctx, FACE_SLEEPING_EYES.left, ON);
+    drawFacePixels(ctx, FACE_SLEEPING_EYES.right, ON);
+    drawFacePixels(ctx, FACE_MOUTH.idle, ON);
+    drawFacePixels(ctx, FACE_SLEEP_Z_SMALL, ON);
+    if (Math.floor(timestamp / 800) % 2 === 1) {
+      drawFacePixels(ctx, FACE_SLEEP_Z_BIG, ON);
+    }
+    return;
+  }
 
   // Choose eyes based on state
   let eyes = FACE_EYES;
