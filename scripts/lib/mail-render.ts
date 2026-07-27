@@ -229,9 +229,9 @@ export function renderHtml(letter: Letter): string {
 </style>
 </head>
 <body style="margin:0;padding:0;background-color:${C.bg};">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${C.bg};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:${C.bg};">
 <tr><td align="center" style="padding:40px 16px 8px;">
-<table role="presentation" align="center" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:680px;margin:0 auto;text-align:left;">
+<table role="presentation" align="center" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;margin:0 auto;text-align:left;">
 <tr><td>
 <h1 style="margin:0 0 8px;font-family:${BODY_FONT};font-weight:700;font-size:34px;line-height:1.1;letter-spacing:-0.02em;color:${C.display};">${inline(letter.title)}</h1>
 ${subtitle}

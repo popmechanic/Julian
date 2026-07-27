@@ -86,9 +86,12 @@ describe('renderHtml', () => {
     expect(html.match(/<style>/g)?.length).toBe(1);
   });
   it('constrains the single column to the house max-width', () => {
-    expect(html).toContain('max-width:680px');
     expect(html).toContain('align="center"');
     expect(html).toContain('margin:0 auto');
+    // Gmail strips width ATTRIBUTES but honors width STYLES: the outer table
+    // must span via inline style or the whole letter pins left (seen live 2026-07-27).
+    expect(html).toContain('style="width:100%;background-color:#0c0c0c;"');
+    expect(html).toContain('width:100%;max-width:680px;margin:0 auto');
   });
   it('renders a non-pixel fence and an indented list item without hanging', () => {
     const md = `---\ntitle: T\n---\n\n\`\`\`bash\necho hi\n\`\`\`\n\n  - indented item\n`;
