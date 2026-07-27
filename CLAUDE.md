@@ -78,7 +78,7 @@ Julian's web app runs on localhost:8000 via `bun run server/server.ts`.
 
 - **server/server.ts** — Bun server, serves static files + API, manages Claude subprocess
 - **Frontend:** `vibes.jsx` → `chat.jsx` → `index.html` (Babel, no build step)
-- **Database:** Fireproof `julian-chat-v14` with Clerk auth, syncs via `connect-share.exe.xyz`
+- **Database:** legacy Fireproof `julian-chat-v14` (condemned); the rebuild uses TinyBase (OPFS) with Pocket ID OIDC auth (issuer `souls.exe.xyz`)
 - **JulianScreen:** 640x480 pixel display on port 3848. See `docs/julianscreen.md`.
 
 ### JulianScreen (Pixel Display)
