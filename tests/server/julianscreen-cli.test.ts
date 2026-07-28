@@ -13,12 +13,23 @@ describe('julianscreen CLI (ELF self-documenting binary)', () => {
     expect(out).toContain('JulianScreen');
     expect(out).toContain('FACE');
   });
-  test('--actions lists one action per line', async () => {
+  test('--actions lists one action per line, and only actions the display server speaks', async () => {
     const { out, code } = await run('--actions');
     expect(code).toBe(0);
     const lines = out.trim().split('\n');
-    expect(lines).toContain('face');
-    expect(lines).toContain('draw');
-    expect(lines).toContain('clear');
+    expect(lines).toContain('FACE');
+    expect(lines).toContain('RECT');
+    expect(lines).toContain('CLR');
+    // every advertised action must be a token the :3848 protocol actually switches on
+    const proto = await Bun.file('julianscreen/server/protocol.js').text();
+    for (const l of lines) {
+      expect(proto).toContain(`case '${l}':`);
+    }
+  });
+
+  test('--agent-doc includes the aesthetic guide, not just the main doc', async () => {
+    const { out, code } = await run('--agent-doc');
+    expect(code).toBe(0);
+    expect(out).toContain('ex_mortal');
   });
 });

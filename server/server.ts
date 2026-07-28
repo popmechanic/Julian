@@ -11,6 +11,7 @@ import {
   parseEnvContent,
   corsHeaders,
   parseMarkersFromContent,
+  stripMarkersFromContent,
   createEventLog,
   parseClaudeCredentials,
   parseSculptorCredentials,
@@ -657,7 +658,8 @@ async function sendRemoteMessage(message: string) {
                 if (parsed.model) { actualModel = parsed.model; console.log(`[Remote] Model: ${actualModel}`); }
                 append({ sessionId, type: 'claude_system', claudeSessionId: parsed.session_id || '', model: parsed.model || null, availableTools: parsed.tools || [] });
               } else if (parsed.type === 'assistant' && parsed.message?.content) {
-                append({ sessionId, type: 'claude_text', messageId: parsed.message?.id || '', content: parsed.message.content });
+                // ELF §3: display gets stripped text; the raw blocks feed the parser
+                append({ sessionId, type: 'claude_text', messageId: parsed.message?.id || '', content: stripMarkersFromContent(parsed.message.content) });
                 parseMarkersFromContent(parsed.message.content, append, sessionId!);
               } else if (parsed.type === 'result') {
                 gotResult = true;
@@ -792,13 +794,13 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
                 availableTools: parsed.tools || [],
               });
             } else if (parsed.type === 'assistant' && parsed.message?.content) {
+              // ELF §3: display gets stripped text; the raw blocks feed the parser
               append({
                 sessionId,
                 type: 'claude_text',
                 messageId: parsed.message?.id || '',
-                content: parsed.message.content,
+                content: stripMarkersFromContent(parsed.message.content),
               });
-              // Parse markers from the content blocks
               parseMarkersFromContent(parsed.message.content, append, sessionId);
             } else if (parsed.type === 'result') {
               const usage = parsed.usage || {};

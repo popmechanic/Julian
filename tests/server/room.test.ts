@@ -1,7 +1,14 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { buildRoomDoc, registerUITarget, uiActionTargets } from '../../server/room';
 
+// The registry is a module-level singleton shared across every test file in
+// the run; restore it so synthetic targets never leak into other suites.
+const builtinCount = uiActionTargets.length;
+
 describe('room discovery document', () => {
+  afterEach(() => {
+    uiActionTargets.length = builtinCount;
+  });
   test('has frontmatter and the three ELF sections', () => {
     const doc = buildRoomDoc();
     expect(doc.startsWith('---\n')).toBe(true);

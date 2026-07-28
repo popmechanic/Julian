@@ -6,18 +6,35 @@ const ROOT = join(import.meta.dir, '..');
 const args = process.argv.slice(2);
 
 async function readDoc(rel: string): Promise<string> {
-  try { return await Bun.file(join(ROOT, rel)).text(); } catch { return ''; }
+  try {
+    return await Bun.file(join(ROOT, rel)).text();
+  } catch {
+    console.error(`warning: could not read ${rel}`);
+    return '';
+  }
 }
 
 if (args[0] === '--agent-doc') {
   const main = await readDoc('docs/julianscreen.md');
   const aesthetic = await readDoc('docs/julianscreen-aesthetic.md');
+  if (!main) {
+    console.error('cannot document myself: docs/julianscreen.md is missing or unreadable');
+    process.exit(2);
+  }
   console.log(`# JulianScreen\n\n${main}\n\n## Aesthetic guide\n\n${aesthetic}`);
   process.exit(0);
 }
 
 if (args[0] === '--actions') {
-  console.log(['face', 'draw', 'clear', 'text', 'animate'].join('\n'));
+  // Derived from the display server's own parser, so the advertised
+  // vocabulary can never drift from what :3848 actually speaks.
+  const proto = await readDoc('julianscreen/server/protocol.js');
+  const tokens = [...new Set([...proto.matchAll(/^\s*case '([A-Z_]+)':/gm)].map((m) => m[1]))];
+  if (tokens.length === 0) {
+    console.error('cannot derive actions: julianscreen/server/protocol.js is missing or unreadable');
+    process.exit(2);
+  }
+  console.log(tokens.join('\n'));
   process.exit(0);
 }
 

@@ -6,6 +6,8 @@ import {
   parseEnvContent,
   corsHeaders,
   parseMarkersFromContent,
+  stripMarkerLines,
+  stripMarkersFromContent,
   createEventLog,
   parseClaudeCredentials,
   parseSculptorCredentials,
@@ -444,6 +446,100 @@ describe("parseMarkersFromContent", () => {
     }];
     parseMarkersFromContent(content, mockAppend, null);
     expect(events[0].data.gender).toBe("man");
+  });
+});
+
+// ── marker anchoring (ELF §3: one line, one marker, the marker IS the line) ──
+
+describe("marker anchoring", () => {
+  let events: any[];
+  const mockAppend = (partial: any) => {
+    const event = { ...partial, id: events.length, ts: Date.now() };
+    events.push(event);
+    return event;
+  };
+
+  beforeEach(() => {
+    events = [];
+  });
+
+  test("[ACTION] quoted mid-prose does not fire", () => {
+    const content = [{
+      type: "text",
+      text: `For example, you could emit: [ACTION] {"target":"jobs","action":"post","data":{"title":"Gardener","postedBy":"julian"}}`,
+    }];
+    parseMarkersFromContent(content, mockAppend, "s1");
+    expect(events).toHaveLength(0);
+  });
+
+  test("[ACTION] with surrounding whitespace still fires", () => {
+    const content = [{
+      type: "text",
+      text: `  [ACTION] {"target":"custom-x","action":"ping","data":{}}  `,
+    }];
+    parseMarkersFromContent(content, mockAppend, "s1");
+    expect(events).toHaveLength(1);
+    expect(events[0].target).toBe("custom-x");
+  });
+
+  test("[ACTION] with trailing prose after the JSON does not fire", () => {
+    const content = [{
+      type: "text",
+      text: `[ACTION] {"target":"custom-x","action":"ping","data":{}} and then some prose`,
+    }];
+    parseMarkersFromContent(content, mockAppend, "s1");
+    expect(events).toHaveLength(0);
+  });
+
+  test("legacy markers are also anchored to line start", () => {
+    const content = [{
+      type: "text",
+      text: `see [AGENT_REGISTERED] {"name":"X","gridPosition":1} in the docs`,
+    }];
+    parseMarkersFromContent(content, mockAppend, "s1");
+    expect(events).toHaveLength(0);
+  });
+});
+
+// ── stripMarkerLines (ELF §3 rule: markers are stripped before display) ────
+
+describe("stripMarkerLines", () => {
+  test("removes a complete marker line, keeps surrounding prose", () => {
+    const text = `Opening the board now.\n[ACTION] {"target":"jobs","action":"list","data":{}}\nDone.`;
+    expect(stripMarkerLines(text)).toBe("Opening the board now.\nDone.");
+  });
+
+  test("preserves prose that merely mentions a marker mid-line", () => {
+    const text = `The format is: [ACTION] {"target":"x","action":"y"} as documented.`;
+    expect(stripMarkerLines(text)).toBe(text);
+  });
+
+  test("removes legacy marker lines too", () => {
+    const text = `hi\n[AGENT_STATUS] {"agents":[]}\n[UI_ACTION] {"target":"a","action":"b"}\nbye`;
+    expect(stripMarkerLines(text)).toBe("hi\nbye");
+  });
+
+  test("removes both halves of a marker split across two lines", () => {
+    const text = `before\n[ACTION] {"target":"jobs","action":"post",\n"data":{"title":"T","postedBy":"j"}}\nafter`;
+    expect(stripMarkerLines(text)).toBe("before\nafter");
+  });
+
+  test("plain text is unchanged", () => {
+    expect(stripMarkerLines("just words\non lines")).toBe("just words\non lines");
+  });
+});
+
+describe("stripMarkersFromContent", () => {
+  test("strips text blocks, leaves tool_use blocks alone", () => {
+    const content = [
+      { type: "text", text: `hello\n[ACTION] {"target":"jobs","action":"list","data":{}}` },
+      { type: "tool_use", name: "Write", input: { file_path: "/x" } },
+    ];
+    const out = stripMarkersFromContent(content);
+    expect(out[0].text).toBe("hello");
+    expect(out[1]).toBe(content[1]);
+    // original untouched
+    expect(content[0].text).toContain("[ACTION]");
   });
 });
 
