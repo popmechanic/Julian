@@ -2,6 +2,7 @@
 // ephemeral events (tool use, thinking, results) go to the caller's handler.
 import { writeMessage, store } from './store';
 import { getToken } from './auth';
+import { applyJobsAction } from './jobs';
 
 export interface ServerEvent { id: number; type: string; [k: string]: unknown }
 
@@ -31,6 +32,11 @@ export function applyServerEvent(e: ServerEvent): void {
       category: d.category ?? 'identity', description: d.description ?? '', chapter: d.chapter ?? '',
       modifiedAt: Date.now(), ...(existing ? {} : { createdAt: Date.now() }),
     } as never);
+  } else if (e.type === 'ui_action' && e.target === 'jobs') {
+    if (applyJobsAction(e as { action?: unknown; data?: unknown }) === 'list') {
+      window.dispatchEvent(new CustomEvent('julian:jobs-list'));
+    }
+    return;
   }
   // Everything else (claude_tool_result, claude_result, session_*, …) is ephemeral — handled by the UI layer.
 }

@@ -21,6 +21,7 @@
   import FilesPanel from './components/FilesPanel.svelte';
   import ScreenEmbed from './components/ScreenEmbed.svelte';
   import SyncStatus from './components/SyncStatus.svelte';
+  import JobsBoard from './components/JobsBoard.svelte';
 
   let booted = $state(false);
   let sfxMuted = $state(false);
@@ -30,6 +31,7 @@
   let tab = $state<'screen' | 'browser' | 'files'>('screen');
   let entries = $state<ArtifactEntry[]>([]);
   let activeArtifact = $state<string | null>(null);
+  let showBoard = $state(false);
 
   // BROWSER dropdown lists renderable files (legacy listed .html; letters are
   // .md and render server-side, so both belong here).
@@ -71,6 +73,13 @@
       sfxMuted = sfx.isMuted();
       booted = true;
     })();
+  });
+
+  // The jobs board opens itself on a `list` marker — pull-only (design spec §3).
+  $effect(() => {
+    const open = () => { showBoard = true; };
+    window.addEventListener('julian:jobs-list', open);
+    return () => window.removeEventListener('julian:jobs-list', open);
   });
 
   // Authed connections start only after SetupScreen clears (signed in + no setup
@@ -115,6 +124,11 @@
             onclick={() => { if (tab !== t) { sfx.play('tab'); tab = t; } }}
           >{t.toUpperCase()}</button>
         {/each}
+        <button
+          class="pill"
+          class:active={showBoard}
+          onclick={() => (showBoard = !showBoard)}
+        >BOARD</button>
         <span class="spacer"></span>
         <SyncStatus />
         <button
@@ -140,6 +154,11 @@
         {/if}
       </div>
     </aside>
+    {#if showBoard}
+      <aside class="console board-panel">
+        <JobsBoard />
+      </aside>
+    {/if}
   </div>
 {/if}
 
@@ -263,11 +282,13 @@
   }
   .logout:hover { background: #ef4444; color: #fff; border-color: #ef4444; }
   .console-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .board-panel { flex: 0 0 320px; width: 320px; }
 
   /* Mobile: stacked machine, console content inline (legacy < 768px layout) */
   @media (max-width: 767px) {
     .room { flex-direction: column; padding: 8px; gap: 8px; }
     .machine { width: 100%; min-width: 0; flex: 1; min-height: 0; }
     .console { flex: none; height: 40vh; }
+    .board-panel { width: 100%; flex-basis: auto; }
   }
 </style>

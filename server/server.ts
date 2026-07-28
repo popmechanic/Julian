@@ -11,6 +11,7 @@ import {
   parseEnvContent,
   corsHeaders,
   parseMarkersFromContent,
+  stripMarkersFromContent,
   createEventLog,
   parseClaudeCredentials,
   parseSculptorCredentials,
@@ -18,6 +19,7 @@ import {
 } from "./lib";
 import { extractStructured } from "./extract";
 import { buildVerifier } from "./auth";
+import { buildRoomDoc } from "./room";
 
 const PORT = parseInt(process.env.PORT || "8000");
 const WORKING_DIR = process.env.WORKING_DIR || process.cwd();
@@ -346,56 +348,6 @@ function registerCommand(prefix: string, handler: CommandHandler) {
   commandRegistry.set(prefix, handler);
 }
 
-// ── UI Action Target Registry (E3 discovery) ────────────────────────────
-
-interface UIActionTarget {
-  target: string;
-  description: string;
-  actions: { name: string; description: string; dataShape?: string }[];
-}
-
-const uiActionTargets: UIActionTarget[] = [];
-
-function registerUITarget(target: UIActionTarget) {
-  uiActionTargets.push(target);
-}
-
-registerUITarget({
-  target: 'agents',
-  description: 'Agent identity management (registration, status updates)',
-  actions: [
-    { name: 'register', description: 'Register a new agent with name, color, grid position', dataShape: '{name, color, colorName, gender, gridPosition, faceVariant, individuationArtifact?, createdAt?}' },
-    { name: 'status', description: 'Update status of all agents', dataShape: '{agents: [{name, status, gridPosition, color, colorName, gender, faceVariant}]}' },
-  ]
-});
-
-registerUITarget({
-  target: 'job-form',
-  description: 'Job posting form auto-fill suggestions',
-  actions: [
-    { name: 'fill', description: 'Fill empty form fields with AI-generated suggestions', dataShape: '{name?, description?, contextDocs?, skills?, files?, aboutYou?}' },
-  ]
-});
-
-function buildUIActionDiscovery(): string {
-  if (uiActionTargets.length === 0) return '';
-  const lines = uiActionTargets.map(t => {
-    const acts = t.actions.map(a => `    - ${a.name}: ${a.description}${a.dataShape ? ` — ${a.dataShape}` : ''}`).join('\n');
-    return `  ${t.target}: ${t.description}\n${acts}`;
-  }).join('\n\n');
-  return `<available-actions>
-You can emit [ACTION] markers in your text responses to send structured commands to the browser UI.
-
-Format: [ACTION] {"target":"<target>","action":"<action>","data":{...}}
-
-Available targets:
-
-${lines}
-
-These markers are stripped from rendered text — only your natural language appears in chat.
-</available-actions>`;
-}
-
 // ── Registered Commands ──────────────────────────────────────────────────
 
 registerCommand('[JOB HELP]', async (payload, ctx) => {
@@ -706,7 +658,8 @@ async function sendRemoteMessage(message: string) {
                 if (parsed.model) { actualModel = parsed.model; console.log(`[Remote] Model: ${actualModel}`); }
                 append({ sessionId, type: 'claude_system', claudeSessionId: parsed.session_id || '', model: parsed.model || null, availableTools: parsed.tools || [] });
               } else if (parsed.type === 'assistant' && parsed.message?.content) {
-                append({ sessionId, type: 'claude_text', messageId: parsed.message?.id || '', content: parsed.message.content });
+                // ELF §3: display gets stripped text; the raw blocks feed the parser
+                append({ sessionId, type: 'claude_text', messageId: parsed.message?.id || '', content: stripMarkersFromContent(parsed.message.content) });
                 parseMarkersFromContent(parsed.message.content, append, sessionId!);
               } else if (parsed.type === 'result') {
                 gotResult = true;
@@ -841,13 +794,13 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
                 availableTools: parsed.tools || [],
               });
             } else if (parsed.type === 'assistant' && parsed.message?.content) {
+              // ELF §3: display gets stripped text; the raw blocks feed the parser
               append({
                 sessionId,
                 type: 'claude_text',
                 messageId: parsed.message?.id || '',
-                content: parsed.message.content,
+                content: stripMarkersFromContent(parsed.message.content),
               });
-              // Parse markers from the content blocks
               parseMarkersFromContent(parsed.message.content, append, sessionId);
             } else if (parsed.type === 'result') {
               const usage = parsed.usage || {};
@@ -1175,6 +1128,10 @@ const server = Bun.serve({
     }
 
     // Health check (no auth — only exposes non-sensitive status)
+    if (url.pathname === '/room.md' && req.method === 'GET') {
+      return new Response(buildRoomDoc(), { headers: { 'Content-Type': 'text/markdown; charset=utf-8', ...corsHeaders(ALLOWED_ORIGIN) } });
+    }
+
     if (url.pathname === "/api/health") {
       return Response.json({
         status: "ok",
@@ -1481,11 +1438,12 @@ const server = Bun.serve({
         }
       }
 
-      // Local mode: append UI action discovery to wake-up message
-      // Remote mode: send simpler wake-up (no UI actions)
+      // Local mode: append the room's discovery document to the wake-up message.
+      // Remote mode: send simpler wake-up (no room document).
+      // ELF ordering rule: identity (CLAUDE.md/AGENT.md, loaded by the harness first)
+      // precedes the room. The injected text IS the served document — one source of truth.
       if (!REMOTE_SESSION) {
-        const discovery = buildUIActionDiscovery();
-        if (discovery) wakeUpMessage += '\n\n' + discovery;
+        wakeUpMessage += '\n\n<room>\nYou have arrived in a room. Your identity precedes it. The room describes itself:\n\n' + buildRoomDoc() + '\n</room>';
       }
       // Both modes: send wake-up so Claude responds and UI exits PROCESSING
       writeToStdin(wakeUpMessage);

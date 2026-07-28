@@ -36,6 +36,6 @@ describe('stream schema', () => {
 
   test('constants', () => {
     expect(STORE_PATH).toBe('julian/chat');
-    expect(SCHEMA_VERSION).toBe(1);
+    expect(SCHEMA_VERSION).toBe(2);
   });
 });

@@ -3,7 +3,7 @@ import { createMergeableStore } from 'tinybase/mergeable-store';
 import type { MergeableStore } from 'tinybase/mergeable-store';
 
 export const STORE_PATH = 'julian/chat';
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 // Tables: messages keyed by harness message id / `evt-<id>`; artifacts keyed by relative filename.
 export const TABLES_SCHEMA = {
@@ -22,6 +22,20 @@ export const TABLES_SCHEMA = {
     description: { type: 'string', default: '' },
     createdAt: { type: 'number' },
     modifiedAt: { type: 'number' },
+  },
+  jobs: {
+    title: { type: 'string' },
+    description: { type: 'string', default: '' },
+    postedBy: { type: 'string' },
+    postedAt: { type: 'number' },
+    status: { type: 'string', default: 'open' }, // 'open' | 'taken' | 'closed' | 'withdrawn'
+    contextDocs: { type: 'string', default: '' }, // newline-separated paths/URLs
+  },
+  jobInterest: {
+    jobId: { type: 'string' },
+    agentName: { type: 'string' },
+    statement: { type: 'string' }, // the why — interest is always applied-for with a statement
+    at: { type: 'number' },
   },
 } as const;
 
