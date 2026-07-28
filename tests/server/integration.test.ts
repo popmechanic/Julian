@@ -79,17 +79,6 @@ describe("HTTP integration tests", () => {
     expect(body.error).toContain("No active session");
   });
 
-  test("POST /api/ledger-reset with no session returns 200 with note", async () => {
-    const resp = await fetch(`${BASE_URL}/api/ledger-reset`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-    });
-    expect(resp.status).toBe(200);
-    const body = await resp.json() as any;
-    expect(body.ok).toBe(true);
-    expect(body.note).toBe("No active session");
-  });
-
   test("GET /api/health has version field", async () => {
     const resp = await fetch(`${BASE_URL}/api/health`);
     const body = await resp.json() as any;

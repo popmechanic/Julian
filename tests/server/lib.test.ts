@@ -259,9 +259,11 @@ describe("parseMarkersFromContent", () => {
     }];
     parseMarkersFromContent(content, mockAppend, "session-1");
     expect(events).toHaveLength(1);
-    expect(events[0].type).toBe("agent_registered");
-    expect(events[0].agent.name).toBe("Lyra");
-    expect(events[0].agent.gridPosition).toBe(0);
+    expect(events[0].type).toBe("ui_action");
+    expect(events[0].target).toBe("agents");
+    expect(events[0].action).toBe("register");
+    expect(events[0].data.name).toBe("Lyra");
+    expect(events[0].data.gridPosition).toBe(0);
     expect(events[0].sessionId).toBe("session-1");
   });
 
@@ -299,8 +301,10 @@ describe("parseMarkersFromContent", () => {
     }];
     parseMarkersFromContent(content, mockAppend, "s1");
     expect(events).toHaveLength(1);
-    expect(events[0].type).toBe("agent_status");
-    expect(events[0].agents).toHaveLength(1);
+    expect(events[0].type).toBe("ui_action");
+    expect(events[0].target).toBe("agents");
+    expect(events[0].action).toBe("status");
+    expect(events[0].data.agents).toHaveLength(1);
   });
 
   test("[AGENT_STATUS] with malformed JSON does not crash", () => {
@@ -341,12 +345,27 @@ describe("parseMarkersFromContent", () => {
     expect(events).toHaveLength(0);
   });
 
-  test("tool_use Write to memory/ but not .html produces no event", () => {
+  test("tool_use Write to memory/notes.md triggers artifact_written (letter pipeline)", () => {
     const content = [{
       type: "tool_use",
       name: "Write",
       input: {
         file_path: "/opt/julian/memory/notes.md",
+        content: "text",
+      },
+    }];
+    parseMarkersFromContent(content, mockAppend, "s1");
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("artifact_written");
+    expect(events[0].filename).toBe("notes.md");
+  });
+
+  test("tool_use Write to memory/ non-letter extension produces no event", () => {
+    const content = [{
+      type: "tool_use",
+      name: "Write",
+      input: {
+        file_path: "/opt/julian/memory/notes.txt",
         content: "text",
       },
     }];
@@ -404,11 +423,13 @@ describe("parseMarkersFromContent", () => {
     parseMarkersFromContent(content, mockAppend, "s1");
     expect(events).toHaveLength(4);
     expect(events.map(e => e.type)).toEqual([
-      "agent_registered",
+      "ui_action",
       "artifact_written",
       "screen_command",
-      "agent_status",
+      "ui_action",
     ]);
+    expect(events[0].action).toBe("register");
+    expect(events[3].action).toBe("status");
   });
 
   test("empty content array does not crash", () => {
@@ -422,7 +443,7 @@ describe("parseMarkersFromContent", () => {
       text: `[AGENT_REGISTERED] {"name":"Test","gridPosition":5}`,
     }];
     parseMarkersFromContent(content, mockAppend, null);
-    expect(events[0].agent.gender).toBe("man");
+    expect(events[0].data.gender).toBe("man");
   });
 });
 
