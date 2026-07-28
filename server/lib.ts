@@ -127,6 +127,16 @@ const markerHandlers = new Map<string, (data: any, append: AppendFn, sid: string
   ['job-form', (data, append, sid) => {
     append({ sessionId: sid, type: 'ui_action', target: 'job-form', action: data.action, data: data.data });
   }],
+  ['jobs', (data, append, sid) => {
+    const action = data.action;
+    const d = data.data || {};
+    const drop = (why: string) => console.warn(`[Marker] jobs.${action} dropped: ${why}:`, JSON.stringify(d).slice(0, 200));
+    if (!['list', 'post', 'interest', 'withdraw'].includes(action)) { drop('unknown action (assign does not exist here by design)'); return; }
+    if (action === 'post' && (!d.title || !d.postedBy)) { drop('missing title/postedBy'); return; }
+    if (action === 'interest' && (!d.jobId || !d.agentName || !d.statement)) { drop('interest requires jobId, agentName, and a statement'); return; }
+    if (action === 'withdraw' && (!d.jobId || !d.agentName)) { drop('missing jobId/agentName'); return; }
+    append({ sessionId: sid, type: 'ui_action', target: 'jobs', action, data: d });
+  }],
 ]);
 
 function emitMarker(

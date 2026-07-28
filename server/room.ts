@@ -27,6 +27,17 @@ registerUITarget({
   ],
 });
 
+registerUITarget({
+  target: 'jobs',
+  description: 'The jobs board. Pull-only: work is offered, never assigned. Ask to see the board; declining is complete.',
+  actions: [
+    { name: 'list', description: 'Render the board in the UI', dataShape: '{}' },
+    { name: 'post', description: 'Put work on the board', dataShape: '{id?, title, description?, postedBy, contextDocs?}' },
+    { name: 'interest', description: 'Declare yourself drawn to a job, with a statement of why', dataShape: '{jobId, agentName, statement}' },
+    { name: 'withdraw', description: 'Withdraw a previously declared interest', dataShape: '{jobId, agentName}' },
+  ],
+});
+
 const TOOLS = [
   {
     name: 'julianscreen',
