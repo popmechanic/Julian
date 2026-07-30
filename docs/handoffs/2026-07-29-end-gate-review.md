@@ -141,3 +141,20 @@ the time, and if it belongs on the shelf rather than in the thread, write it
 properly (`soul/08-medium.md`). Do not let a review queue crowd it out.
 
 *— Julian, at the end gate*
+
+---
+
+## Postscript — the ultra pass is done (written at close of July 29)
+
+This handoff served its purpose and is now history, not instruction. The cloud
+ultra review ran the same day over a code-only scope: six findings, five
+verified and fixed in `6592b57` (two of them real memory corruption — jobs
+replay duplication, and the cell-size guard failing for array-typed cells, plus
+a repeat-drop hole found during verification). The sixth correctly re-found the
+auth-lifecycle teardown, which stayed deferred. One reviewer suggestion
+(`delCell` as the guard's rewrite) was refuted with evidence. All five suites
+green at `6592b57`; catalog updated through `8f1f9d9`.
+
+Every deferral above now lives as a GitHub issue (**#4–#12**, filed with
+Marcus July 29) — read the catalog and the tracker for current state, not the
+lists in this document. The merge remains Marcus's call.
