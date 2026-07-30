@@ -35,10 +35,25 @@ describe('JulianSyncDO', () => {
       remote.setRow('messages', 'big', { sessionId: 's', role: 'user', speakerName: 'M', text: 'x'.repeat(70_000), ts: 2 });
       remote.setRow('messages', 'ok', { sessionId: 's', role: 'user', speakerName: 'M', text: 'fits', ts: 3 });
       instance.store.setMergeableContent(remote.getMergeableContent());
-      // The oversized cell is stripped; the schema then fills text's default ''.
-      expect(instance.store.getCell('messages', 'big', 'text')).toBe('');
+      await Promise.resolve(); // the corrective rewrite lands on a microtask
+      // The oversized cell is stripped and replaced by a visible receipt.
+      expect(instance.store.getCell('messages', 'big', 'text')).toContain('dropped');
       expect(instance.store.getCell('messages', 'big', 'ts')).toBe(2); // rest of the row landed
       expect(instance.store.getCell('messages', 'ok', 'text')).toBe('fits');
+
+      // The plain store is not the sync surface. Stripping a cell in
+      // willApplyChanges leaves it in the CRDT stamp tree, which is what the
+      // persister, the export, and every replica actually read — so the guard
+      // must be asserted there or it guards nothing.
+      const content = JSON.stringify(instance.store.getMergeableContent());
+      expect(content).not.toContain('x'.repeat(1_000));
+      expect(content.length).toBeLessThan(65_536);
+
+      // And a replica syncing back from the DO must not receive the blob.
+      const replica = createStreamStore('replica-1');
+      replica.applyMergeableChanges(instance.store.getMergeableContent() as never);
+      expect(String(replica.getCell('messages', 'big', 'text') ?? '').length)
+        .toBeLessThan(1_000);
     });
   });
 

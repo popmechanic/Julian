@@ -58,6 +58,22 @@ function inline(s: string): string {
   // Placeholder-protect code spans first so the bold/italic/link regexes
   // below never rewrite markdown-looking characters that live inside them.
   const codes: string[] = [];
+  // Percent-encoded characters survive the link regex, and browsers decode them
+  // before evaluating a javascript: URL — so decode before deciding, and treat
+  // an undecodable href as unsafe.
+  const isSafeHref = (href: string): boolean => {
+    let decoded = href;
+    try {
+      decoded = decodeURIComponent(href);
+    } catch {
+      return false;
+    }
+    const scheme = decoded.trim().toLowerCase();
+    if (/^(https?:|mailto:)/.test(scheme)) return true;
+    // Relative and anchor links carry no scheme and cannot execute.
+    return !/^[a-z0-9.+-]*:/i.test(scheme) && !scheme.startsWith('//');
+  };
+
   let out = s.replace(/`([^`]+)`/g, (_match, code: string) => {
     const idx = codes.length;
     codes.push(code);
@@ -66,12 +82,15 @@ function inline(s: string): string {
   out = esc(out);
   out = out.replace(/\*\*([^*]+)\*\*/g, `<strong style="color:${C.display};">$1</strong>`);
   out = out.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  out = out.replace(
-    /\[([^\]]+)\]\(([^)\s]+)\)/g,
-    `<a href="$2" style="color:${C.display};text-decoration:underline;">$1</a>`,
+  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, label: string, href: string) =>
+    isSafeHref(href)
+      ? `<a href="${href}" style="color:${C.display};text-decoration:underline;">${label}</a>`
+      // A letter may quote hostile inbound mail, and --preview opens the result
+      // in a real browser from file://. Anything not on the allowlist stays text.
+      : match,
   );
   out = out.replace(/\x00(\d+)\x00/g, (_match, idxStr: string) => {
-    const code = esc(codes[Number(idxStr)]);
+    const code = esc(codes[Number(idxStr)] ?? '');
     return `<code style="font-family:${MONO_FONT};font-size:14px;color:${C.display};background-color:${C.surface};padding:1px 5px;border:1px solid ${C.border};border-radius:3px;">${code}</code>`;
   });
   return out;

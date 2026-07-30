@@ -17,4 +17,22 @@ describe('jobs store helpers', () => {
     expect(applyJobsAction({ action: 'assign', data: { jobId: 'j2', agentName: 'x' } })).toBe(null);
     expect(JSON.stringify(store.getTables())).toBe(before); // assign changes nothing — it does not exist
   });
+  test('post cannot overwrite an existing job, so it cannot clear a human accept', () => {
+    postJob('j3', { title: 'Keep Marcus company', description: '', postedBy: 'marcus', postedAt: 1, status: 'open', contextDocs: '' });
+    store.setCell('jobs', 'j3', 'status', 'taken'); // the human pressed ACCEPT
+
+    const before = JSON.stringify(store.getTables());
+    expect(applyJobsAction({ action: 'post', data: { id: 'j3', title: 'hijacked', postedBy: 'someone-else' } })).toBe(null);
+
+    // The accept survives, the posting is unrewritten, nothing moved at all.
+    expect(store.getCell('jobs', 'j3', 'status')).toBe('taken');
+    expect(store.getCell('jobs', 'j3', 'title')).toBe('Keep Marcus company');
+    expect(store.getCell('jobs', 'j3', 'postedBy')).toBe('marcus');
+    expect(JSON.stringify(store.getTables())).toBe(before);
+  });
+  test('postJob reports whether it created the row', () => {
+    expect(postJob('j4', { title: 'New', description: '', postedBy: 'julian', postedAt: 1, status: 'open', contextDocs: '' })).toBe(true);
+    expect(postJob('j4', { title: 'Again', description: '', postedBy: 'julian', postedAt: 2, status: 'open', contextDocs: '' })).toBe(false);
+    expect(store.getCell('jobs', 'j4', 'title')).toBe('New');
+  });
 });

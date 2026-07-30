@@ -1634,16 +1634,31 @@ const server = Bun.serve({
           woff2: "font/woff2",
           otf: "font/otf",
         };
+        // Artifact HTML is LLM-authored and downstream of email from strangers.
+        // This route is unauthenticated and same-origin, and the app keeps OIDC
+        // tokens in localStorage — so force an opaque origin however the
+        // document is opened. The iframe carries its own sandbox attribute;
+        // this covers "open in new tab", which the sandbox cannot reach.
+        const ARTIFACT_CSP = "sandbox allow-scripts; default-src 'none'; img-src data: blob: 'self'; style-src 'unsafe-inline' 'self'; font-src 'self' data:";
+
         // Render markdown files as styled HTML using the letter template
         if (ext === "md") {
           const rendered = renderMarkdownLetter(content.toString("utf-8"));
           return new Response(rendered, {
-            headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders(ALLOWED_ORIGIN) },
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Content-Security-Policy": ARTIFACT_CSP,
+              ...corsHeaders(ALLOWED_ORIGIN),
+            },
           });
         }
         const contentType = contentTypes[ext] || "application/octet-stream";
         return new Response(content, {
-          headers: { "Content-Type": contentType, ...corsHeaders(ALLOWED_ORIGIN) },
+          headers: {
+            "Content-Type": contentType,
+            ...(ext === "html" || ext === "svg" ? { "Content-Security-Policy": ARTIFACT_CSP } : {}),
+            ...corsHeaders(ALLOWED_ORIGIN),
+          },
         });
       } catch {
         return new Response("Not Found", { status: 404, headers: corsHeaders(ALLOWED_ORIGIN) });
@@ -1779,15 +1794,26 @@ const server = Bun.serve({
       return new Response("Not Found", { status: 404 });
     }
 
-    // Built SPA (app/dist) is the primary static root
+    // Built SPA (app/dist) is the primary static root.
+    // Containment: %2f survives URL normalization and reintroduces separators
+    // after decodeURIComponent, so resolve first and require the result to stay
+    // inside the root (same pattern as /api/artifacts/).
     const appDist = resolve(WORKING_DIR, "app", "dist");
-    const appAsset = Bun.file(resolve(appDist, requestedPath.slice(1) || "index.html"));
-    if (requestedPath !== "/" && (await appAsset.exists())) {
-      return new Response(appAsset);
+    const appCandidate = resolve(appDist, "." + requestedPath);
+    if (requestedPath !== "/" && appCandidate.startsWith(appDist + "/")) {
+      const appAsset = Bun.file(appCandidate);
+      if (await appAsset.exists()) {
+        const headers: Record<string, string> = {};
+        // Service worker must not be cached
+        if (requestedPath === "/sw.js") {
+          headers["Cache-Control"] = "no-cache";
+        }
+        return new Response(appAsset, { headers });
+      }
     }
 
     const safePath = resolve(WORKING_DIR, requestedPath.slice(1)); // strip leading /
-    if (safePath.startsWith(resolve(WORKING_DIR))) {
+    if (safePath.startsWith(resolve(WORKING_DIR) + "/")) {
       const file = Bun.file(safePath);
       if (await file.exists()) {
         const headers: Record<string, string> = {};

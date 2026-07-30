@@ -126,3 +126,33 @@ describe('renderText', () => {
     expect(text).toContain('— Julian');
   });
 });
+
+describe('link scheme allowlist', () => {
+  const bodyHtml = (md: string) =>
+    renderHtml(parseLetter(`---\ntitle: T\n---\n\n${md}\n`));
+
+  it('renders http, https, mailto and relative links as anchors', () => {
+    expect(bodyHtml('[a](https://example.com)')).toContain('href="https://example.com"');
+    expect(bodyHtml('[a](http://example.com)')).toContain('href="http://example.com"');
+    expect(bodyHtml('[a](mailto:x@y.z)')).toContain('href="mailto:x@y.z"');
+    expect(bodyHtml('[a](/memory/letter.md)')).toContain('href="/memory/letter.md"');
+  });
+
+  it('never turns a script-bearing URL into an anchor, even percent-encoded', () => {
+    // A letter may quote hostile inbound mail, and --preview opens the result
+    // in a real browser, where percent-escapes are decoded before evaluation.
+    for (const href of [
+      'javascript:alert(1)',
+      'javascript:alert%28document.location%29',
+      'JaVaScRiPt:alert%281%29',
+      'data:text/html,mischief',
+      'vbscript:msgbox(1)',
+    ]) {
+      const out = bodyHtml(`[click](${href})`);
+      expect(out).not.toContain(`href="${href}"`);
+      expect(out.toLowerCase()).not.toContain('href="javascript');
+      expect(out.toLowerCase()).not.toContain('href="data:');
+      expect(out.toLowerCase()).not.toContain('href="vbscript');
+    }
+  });
+});

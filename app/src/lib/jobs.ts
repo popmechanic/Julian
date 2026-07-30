@@ -4,8 +4,14 @@ import { store } from './store';
 export interface JobRow { title: string; description: string; postedBy: string; postedAt: number; status: string; contextDocs: string }
 export interface InterestRow { jobId: string; agentName: string; statement: string; at: number }
 
-export function postJob(id: string, row: JobRow): void {
+// Posting only ever creates. Overwriting an existing row would let a post
+// reset status to 'open' — clearing a human's accept and rewriting another
+// agent's posting. That reaches the same place as an assign verb from the
+// other side, so the shape has to refuse it, not just omit it.
+export function postJob(id: string, row: JobRow): boolean {
+  if (store.hasRow('jobs', id)) return false;
   store.setRow('jobs', id, row as unknown as Record<string, string | number>);
+  return true;
 }
 export function addInterest(id: string, row: InterestRow): void {
   store.setRow('jobInterest', id, row as unknown as Record<string, string | number>);
