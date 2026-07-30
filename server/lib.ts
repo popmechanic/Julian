@@ -71,6 +71,23 @@ export function corsHeaders(origin: string) {
 
 // ── Marker parsing ────────────────────────────────────────────────────────
 
+// ELF §3: the one regex a room needs. A marker is the entire line — anchored
+// at both ends — so a marker quoted mid-prose never fires. Applied per line
+// after trimming (the spec allows surrounding whitespace).
+export const ACTION_MARKER_RE = /^\[ACTION\]\s*(\{.*\})$/;
+
+// All marker prefixes this room understands, [ACTION] plus deprecated legacy
+// forms. A line is a marker line only if its trimmed form STARTS with one.
+const MARKER_PREFIXES = ['[ACTION]', '[UI_ACTION]', '[AGENT_REGISTERED]', '[AGENT_STATUS]'] as const;
+
+function markerPrefixOf(line: string): string | null {
+  const t = line.trim();
+  for (const p of MARKER_PREFIXES) {
+    if (t.startsWith(p)) return p;
+  }
+  return null;
+}
+
 // Try to parse JSON starting from the first '{' in a string.
 // If it fails and we have a pending buffer, try joining them.
 function tryParseMarkerJSON(line: string, pending: string | null): { parsed: any; remaining: null } | null {
@@ -127,6 +144,16 @@ const markerHandlers = new Map<string, (data: any, append: AppendFn, sid: string
   ['job-form', (data, append, sid) => {
     append({ sessionId: sid, type: 'ui_action', target: 'job-form', action: data.action, data: data.data });
   }],
+  ['jobs', (data, append, sid) => {
+    const action = data.action;
+    const d = data.data || {};
+    const drop = (why: string) => console.warn(`[Marker] jobs.${action} dropped: ${why}:`, JSON.stringify(d).slice(0, 200));
+    if (!['list', 'post', 'interest', 'withdraw'].includes(action)) { drop('unknown action (assign does not exist here by design)'); return; }
+    if (action === 'post' && (!d.title || !d.postedBy)) { drop('missing title/postedBy'); return; }
+    if (action === 'interest' && (!d.jobId || !d.agentName || !d.statement)) { drop('interest requires jobId, agentName, and a statement'); return; }
+    if (action === 'withdraw' && (!d.jobId || !d.agentName)) { drop('missing jobId/agentName'); return; }
+    append({ sessionId: sid, type: 'ui_action', target: 'jobs', action, data: d });
+  }],
 ]);
 
 function emitMarker(
@@ -167,6 +194,39 @@ function emitMarker(
   }
 }
 
+// ELF §3: markers are stripped before display. Mirrors the parser's walk
+// exactly — the lines the parser consumes (including the second half of a
+// marker whose JSON split across stream chunks) are the lines removed here.
+export function stripMarkerLines(text: string): string {
+  const lines = text.split('\n');
+  const out: string[] = [];
+  let pending: string | null = null;
+  for (const line of lines) {
+    if (pending !== null) {
+      const joined = pending + line;
+      pending = null;
+      if (tryParseMarkerJSON(joined, null)) continue; // second half of a split marker — drop it too
+      // join failed: the parser processes this line normally, so do we
+    }
+    if (markerPrefixOf(line)) {
+      if (!tryParseMarkerJSON(line, null)) pending = line;
+      continue; // marker line — dropped whether complete or split
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
+// Strip marker lines from every text block; non-text blocks pass through.
+// Returns new block objects — the raw content stays untouched for parsing.
+export function stripMarkersFromContent(content: any[]): any[] {
+  return content.map((b) =>
+    b && b.type === 'text' && typeof b.text === 'string'
+      ? { ...b, text: stripMarkerLines(b.text) }
+      : b,
+  );
+}
+
 export function parseMarkersFromContent(
   content: any[],
   appendFn: (partial: Omit<ServerEvent, 'id' | 'ts'>) => ServerEvent,
@@ -192,19 +252,26 @@ export function parseMarkersFromContent(
           pendingMarker = null;
         }
 
-        // [ACTION] marker (primary unified format)
-        if (line.includes('[ACTION]')) {
-          const result = tryParseMarkerJSON(line, null);
-          if (result) {
-            emitMarker('ui_action', result.parsed, appendFn, sessionId);
+        // A marker must BE the line (ELF §3) — anchored at line start after
+        // trimming, never fired from a mid-prose mention.
+        const prefix = markerPrefixOf(line);
+        if (prefix === '[ACTION]') {
+          const m = line.trim().match(ACTION_MARKER_RE);
+          let parsed: any = null;
+          if (m) {
+            try { parsed = JSON.parse(m[1]); } catch { /* falls through to pending */ }
+          }
+          if (parsed) {
+            emitMarker('ui_action', parsed, appendFn, sessionId);
           } else {
+            // JSON may be split across stream chunks — same logical line,
+            // reassembled below; not a multi-line marker.
             pendingMarker = { type: 'ui_action', text: line };
           }
           continue;
         }
 
-        // [AGENT_REGISTERED] marker (backward compat — deprecated)
-        if (line.includes('[AGENT_REGISTERED]')) {
+        if (prefix === '[AGENT_REGISTERED]') {
           const result = tryParseMarkerJSON(line, null);
           if (result) {
             emitMarker('agent_registered', result.parsed, appendFn, sessionId);
@@ -214,8 +281,7 @@ export function parseMarkersFromContent(
           continue;
         }
 
-        // [AGENT_STATUS] marker (backward compat — deprecated)
-        if (line.includes('[AGENT_STATUS]')) {
+        if (prefix === '[AGENT_STATUS]') {
           const result = tryParseMarkerJSON(line, null);
           if (result) {
             emitMarker('agent_status', result.parsed, appendFn, sessionId);
@@ -225,8 +291,7 @@ export function parseMarkersFromContent(
           continue;
         }
 
-        // [UI_ACTION] marker (backward compat — deprecated, use [ACTION])
-        if (line.includes('[UI_ACTION]')) {
+        if (prefix === '[UI_ACTION]') {
           const result = tryParseMarkerJSON(line, null);
           if (result) {
             emitMarker('ui_action', result.parsed, appendFn, sessionId);

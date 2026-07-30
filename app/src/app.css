@@ -1,0 +1,140 @@
+/* app/src/app.css — Julian design system, ported pixel-for-pixel from the
+   legacy UI (index.html + chat.jsx). Token names are the contract every
+   component styles against. */
+
+@font-face {
+  font-family: 'VT323';
+  src: url('/fonts/VT323-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/InterVariable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+
+  /* Yellow family — Julian's color */
+  --j-yellow: #FFD600;
+  --j-yellow-key: #C8A800;
+  --j-yellow-dim: #AA8800;
+  --j-yellow-black: #1A1A00;
+
+  /* CRT blacks */
+  --j-crt-0: #0A0A0A;
+  --j-crt-1: #0C0C0C;
+  --j-crt-2: #0F0F0F;
+  --j-bezel: #2A2A2A;
+
+  /* Accents & status */
+  --j-cyan: #00AFD1;
+  --j-red: #FF4444;
+  --j-red-soft: #FF6B6B;
+  --j-red-black: #1A0000;
+  --j-green: #22C55E;
+  --j-green-soft: #4ADE80;
+  --j-amber: #F59E0B;
+
+  /* Grays */
+  --j-gray-333: #333;
+  --j-gray-444: #444;
+  --j-gray-555: #555;
+  --j-gray-666: #666;
+  --j-gray-999: #999;
+  --j-text: #E5E5E5;
+  --j-text-dim: #CCC;
+
+  /* Type */
+  --font-terminal: 'VT323', monospace;
+  --font-ui: 'Inter', sans-serif;
+
+  /* Motion (legacy index.html tokens) */
+  --ease-out: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --ease-out-quart: cubic-bezier(0.165, 0.84, 0.44, 1);
+  --duration-fast: 100ms;
+  --duration-standard: 150ms;
+  --duration-slow: 250ms;
+
+  /* Back-compat aliases used by pre-port component css */
+  --border: var(--j-gray-333);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-terminal);
+  background-color: var(--j-yellow);
+  color: #000;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* × corner marks on the yellow shell (legacy body::before/::after) */
+body::before,
+body::after {
+  content: '\00D7';
+  position: fixed;
+  top: 4px;
+  font-size: 28px;
+  color: rgba(0, 0, 0, 0.2);
+  font-weight: 900;
+  z-index: 50;
+  pointer-events: none;
+  user-select: none;
+}
+body::before { left: 8px; }
+body::after { right: 8px; }
+
+::selection { background: rgba(255, 214, 0, 0.3); color: #000; }
+
+/* Scrollbars (legacy) */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--j-crt-2); }
+::-webkit-scrollbar-thumb { background: var(--j-gray-333); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--j-yellow); }
+
+/* Button press feedback (legacy) */
+button {
+  touch-action: manipulation;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+button:active { transform: scale(0.97); }
+button:focus-visible { outline: 2px solid var(--j-yellow); outline-offset: 2px; }
+
+/* CRT scanline overlay — apply to a position:absolute inset:0 child of any panel */
+.scanlines {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%),
+    linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+  background-size: 100% 2px, 3px 100%;
+  opacity: 0.1;
+  pointer-events: none;
+  z-index: 5;
+}
+
+@keyframes message-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.message-enter { animation: message-enter 200ms var(--ease-out-quart); }
+
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes thinking-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+@keyframes pulse-warn { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+@keyframes pulse-dot { 0%, 80%, 100% { opacity: 0.6; } 40% { opacity: 1; } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.app-state-enter { animation: fadeIn var(--duration-slow) var(--ease-out); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

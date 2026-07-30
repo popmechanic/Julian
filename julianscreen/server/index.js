@@ -2,12 +2,18 @@
 // Agent sends commands via POST /cmd, browser renders via WebSocket
 
 import { parseCommand } from './protocol.js';
+import { createFaceState, recordFaceCmd, faceReplayCmd } from './face-state.js';
 
 const PORT = parseInt(process.env.JULIANSCREEN_PORT || '3848');
 const TICK_INTERVAL = parseInt(process.env.TICK_INTERVAL || '0'); // 0 = disabled
 
 // Connected WebSocket clients
 const clients = new Set();
+
+// Face state mirrored from the client's state machine, replayed to newly
+// connecting clients so face mode survives a browser reload. See face-state.js
+// for why the last command cannot simply be replayed verbatim.
+const faceMode = createFaceState();
 
 // Feedback queue (browser → agent via GET /feedback)
 let feedbackQueue = [];
@@ -76,7 +82,10 @@ const server = Bun.serve({
 
         for (const line of lines) {
           const cmd = parseCommand(line);
-          if (cmd) commands.push(cmd);
+          if (cmd) {
+            commands.push(cmd);
+            if (cmd.type === 'FACE') recordFaceCmd(faceMode, cmd);
+          }
         }
 
         if (commands.length > 0) {
@@ -140,8 +149,10 @@ const server = Bun.serve({
     open(ws) {
       clients.add(ws);
       console.log(`[ws] Client connected (${clients.size} total)`);
-      // Send READY signal
+      // Send READY signal, then replay face state so reloads keep the face
       ws.send(JSON.stringify([{ type: 'READY' }]));
+      const replay = faceReplayCmd(faceMode);
+      if (replay) ws.send(JSON.stringify([replay]));
     },
 
     message(ws, message) {

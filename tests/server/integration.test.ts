@@ -20,15 +20,16 @@ async function waitForServer(url: string, timeoutMs = 10000): Promise<void> {
 }
 
 beforeAll(async () => {
-  // Set VITE_CLERK_PUBLISHABLE_KEY to empty to bypass Clerk auth
-  // (Bun auto-loads .env, so we must explicitly override it)
+  // Blank the OIDC issuer vars so the server runs in no-issuer (local dev) mode
+  // and skips bearer verification (Bun auto-loads .env, so we must override them)
   serverProc = Bun.spawn(["bun", "run", "server/server.ts"], {
     cwd: import.meta.dir + "/../..",
     env: {
       ...process.env,
       PORT: String(TEST_PORT),
       ALLOWED_ORIGIN,
-      VITE_CLERK_PUBLISHABLE_KEY: "",
+      OIDC_ISSUER: "",
+      VITE_OIDC_ISSUER: "",
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -78,17 +79,6 @@ describe("HTTP integration tests", () => {
     expect(body.error).toContain("No active session");
   });
 
-  test("POST /api/ledger-reset with no session returns 200 with note", async () => {
-    const resp = await fetch(`${BASE_URL}/api/ledger-reset`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-    });
-    expect(resp.status).toBe(200);
-    const body = await resp.json() as any;
-    expect(body.ok).toBe(true);
-    expect(body.note).toBe("No active session");
-  });
-
   test("GET /api/health has version field", async () => {
     const resp = await fetch(`${BASE_URL}/api/health`);
     const body = await resp.json() as any;
@@ -113,6 +103,53 @@ describe("HTTP integration tests", () => {
     });
     // Without session, we get 409 before message validation
     expect(resp.status).toBe(409);
+  });
+
+  test("static serving rejects %2f-encoded path traversal", async () => {
+    // %2f survives WHATWG URL normalization; decodeURIComponent reintroduces
+    // the separators. Must not escape app/dist (or WORKING_DIR) — regression
+    // test for the appDist containment check.
+    for (const path of [
+      "/..%2f..%2f.env",
+      "/..%2f..%2f..%2f..%2fetc%2fpasswd",
+      "/x%2f..%2f..%2f..%2f.env",
+      "/..%2fserver%2fserver.ts",
+    ]) {
+      const resp = await fetch(`${BASE_URL}${path}`);
+      const body = await resp.text();
+      expect(body).not.toContain("API_KEY");
+      expect(body).not.toContain("root:");
+      expect(body).not.toContain("Bun.serve");
+    }
+  });
+
+  test("static serving does not escape into sibling directories", async () => {
+    // safePath containment must require a trailing separator so that
+    // /Users/.../Julian does not also admit /Users/.../Julian-anything.
+    const resp = await fetch(`${BASE_URL}/..%2fJulian-does-not-exist%2fx.txt`);
+    expect(resp.status === 404 || resp.headers.get("content-type")?.includes("html")).toBe(true);
+  });
+
+  test("artifact HTML is served with a sandboxing CSP", async () => {
+    // The route is unauthenticated and same-origin, and the app holds OIDC
+    // tokens in localStorage — LLM-authored artifact HTML must not run with
+    // access to them, however it is opened.
+    const resp = await fetch(`${BASE_URL}/api/artifacts/response.html`);
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("Content-Security-Policy")).toContain("sandbox");
+    const md = await fetch(`${BASE_URL}/api/artifacts/letter-pipeline.md`);
+    expect(md.headers.get("Content-Security-Policy")).toContain("sandbox");
+  });
+
+  test("GET /room.md is unauthenticated, markdown, and matches buildRoomDoc", async () => {
+    const resp = await fetch(`${BASE_URL}/room.md`);
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("Content-Type")).toContain("text/markdown");
+    const body = await resp.text();
+    expect(body).toContain("name: julian-web-harness");
+    expect(body).toContain("**jobs**");
+    // The no-assign rule is load-bearing: the served vocabulary must not offer it.
+    expect(body).not.toContain("| assign |");
   });
 
   test("POST /api/chat (legacy endpoint) with no session returns 409", async () => {

@@ -1,6 +1,5 @@
 import { spawn } from "bun";
 import { join, resolve } from "path";
-import { createRemoteJWKSet, jwtVerify } from "jose";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, watch as fsWatch } from "fs";
 import { marked, Renderer } from "marked";
 import { homedir } from "os";
@@ -12,12 +11,15 @@ import {
   parseEnvContent,
   corsHeaders,
   parseMarkersFromContent,
+  stripMarkersFromContent,
   createEventLog,
   parseClaudeCredentials,
   parseSculptorCredentials,
   ServerEvent,
 } from "./lib";
 import { extractStructured } from "./extract";
+import { buildVerifier } from "./auth";
+import { buildRoomDoc } from "./room";
 
 const PORT = parseInt(process.env.PORT || "8000");
 const WORKING_DIR = process.env.WORKING_DIR || process.cwd();
@@ -188,31 +190,27 @@ function loadSculptorCredentials(): { access_token: string; expires_at_unix_ms: 
   }
 }
 
-// ── Clerk JWT verification ──────────────────────────────────────────────────
-// Decode frontend API domain from the publishable key
-const CLERK_PK = process.env.VITE_CLERK_PUBLISHABLE_KEY || "";
-const CLERK_FRONTEND_API = CLERK_PK
-  ? atob(CLERK_PK.replace(/^pk_(test|live)_/, "")).replace(/\$$/, "")
-  : "";
-const JWKS = CLERK_FRONTEND_API
-  ? createRemoteJWKSet(new URL(`https://${CLERK_FRONTEND_API}/.well-known/jwks.json`))
-  : null;
+// ── OIDC bearer verification (Pocket ID) ───────────────────────────────────
+const OIDC_ISSUER = process.env.OIDC_ISSUER || process.env.VITE_OIDC_ISSUER || "";
+const verifier = buildVerifier(
+  OIDC_ISSUER
+    ? {
+        issuer: OIDC_ISSUER,
+        audience: process.env.VITE_OIDC_CLIENT_ID || undefined,
+        jwksJson: process.env.OIDC_JWKS_JSON || undefined,
+      }
+    : null,
+);
 
-async function verifyClerkToken(req: Request): Promise<boolean> {
-  if (!JWKS) return true; // No Clerk config = skip auth (local dev)
+async function verifyToken(req: Request): Promise<boolean> {
+  if (!OIDC_ISSUER) return true; // No issuer configured = skip auth (local dev)
   // Check Authorization header, fall back to X-Authorization (exe.dev edge proxy strips Authorization)
   const auth = req.headers.get("Authorization") || req.headers.get("X-Authorization");
   if (!auth?.startsWith("Bearer ")) {
-    console.warn("[Clerk] No Authorization header in request");
+    console.warn("[auth] No Authorization header in request");
     return false;
   }
-  try {
-    await jwtVerify(auth.slice(7), JWKS, { clockTolerance: 60 });
-    return true;
-  } catch (err) {
-    console.error("[Clerk] JWT verification failed:", (err as Error).message);
-    return false;
-  }
+  return verifier.verify(auth.slice(7));
 }
 
 // ── Token refresh ───────────────────────────────────────────────────────
@@ -348,56 +346,6 @@ const commandRegistry = new Map<string, CommandHandler>();
 
 function registerCommand(prefix: string, handler: CommandHandler) {
   commandRegistry.set(prefix, handler);
-}
-
-// ── UI Action Target Registry (E3 discovery) ────────────────────────────
-
-interface UIActionTarget {
-  target: string;
-  description: string;
-  actions: { name: string; description: string; dataShape?: string }[];
-}
-
-const uiActionTargets: UIActionTarget[] = [];
-
-function registerUITarget(target: UIActionTarget) {
-  uiActionTargets.push(target);
-}
-
-registerUITarget({
-  target: 'agents',
-  description: 'Agent identity management (registration, status updates)',
-  actions: [
-    { name: 'register', description: 'Register a new agent with name, color, grid position', dataShape: '{name, color, colorName, gender, gridPosition, faceVariant, individuationArtifact?, createdAt?}' },
-    { name: 'status', description: 'Update status of all agents', dataShape: '{agents: [{name, status, gridPosition, color, colorName, gender, faceVariant}]}' },
-  ]
-});
-
-registerUITarget({
-  target: 'job-form',
-  description: 'Job posting form auto-fill suggestions',
-  actions: [
-    { name: 'fill', description: 'Fill empty form fields with AI-generated suggestions', dataShape: '{name?, description?, contextDocs?, skills?, files?, aboutYou?}' },
-  ]
-});
-
-function buildUIActionDiscovery(): string {
-  if (uiActionTargets.length === 0) return '';
-  const lines = uiActionTargets.map(t => {
-    const acts = t.actions.map(a => `    - ${a.name}: ${a.description}${a.dataShape ? ` — ${a.dataShape}` : ''}`).join('\n');
-    return `  ${t.target}: ${t.description}\n${acts}`;
-  }).join('\n\n');
-  return `<available-actions>
-You can emit [ACTION] markers in your text responses to send structured commands to the browser UI.
-
-Format: [ACTION] {"target":"<target>","action":"<action>","data":{...}}
-
-Available targets:
-
-${lines}
-
-These markers are stripped from rendered text — only your natural language appears in chat.
-</available-actions>`;
 }
 
 // ── Registered Commands ──────────────────────────────────────────────────
@@ -710,7 +658,8 @@ async function sendRemoteMessage(message: string) {
                 if (parsed.model) { actualModel = parsed.model; console.log(`[Remote] Model: ${actualModel}`); }
                 append({ sessionId, type: 'claude_system', claudeSessionId: parsed.session_id || '', model: parsed.model || null, availableTools: parsed.tools || [] });
               } else if (parsed.type === 'assistant' && parsed.message?.content) {
-                append({ sessionId, type: 'claude_text', messageId: parsed.message?.id || '', content: parsed.message.content });
+                // ELF §3: display gets stripped text; the raw blocks feed the parser
+                append({ sessionId, type: 'claude_text', messageId: parsed.message?.id || '', content: stripMarkersFromContent(parsed.message.content) });
                 parseMarkersFromContent(parsed.message.content, append, sessionId!);
               } else if (parsed.type === 'result') {
                 gotResult = true;
@@ -743,6 +692,20 @@ async function sendRemoteMessage(message: string) {
   remoteProcessing = false;
 }
 
+// Session lifecycle drives the JulianScreen's presence claim: sleep on end,
+// idle face on start. Any awake Julian (CLI or web) can reclaim the screen at
+// any time by sending its own command — this only prevents a stale expression
+// outliving the session that made it. Fire-and-forget: a missing screen server
+// must never affect the session lifecycle.
+function setScreenFace(state: 'sleeping' | 'on') {
+  // 'FACE on <state>' both enters face mode and sets the expression — a bare
+  // 'FACE <state>' is ignored when the client reloaded with face mode off.
+  fetch('http://localhost:3848/cmd', {
+    method: 'POST',
+    body: state === 'on' ? 'FACE on' : 'FACE on sleeping',
+  }).catch(() => {});
+}
+
 function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
   sessionId = `julian-${new Date().toISOString().slice(0, 10)}-${++sessionCounter}`;
   sessionCostUsd = 0;
@@ -762,6 +725,7 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
     console.log(`[Claude] Remote mode — session ${sessionId}, will spawn per-message`);
     append({ sessionId, type: 'session_start', pid: 0, model: actualModel, demoMode: FORCE_DEMO_MODE || mode === 'demo' });
     append({ sessionId, type: 'claude_system', claudeSessionId: '', model: actualModel, availableTools: [] });
+    setScreenFace('on');
     return null;
   }
 
@@ -830,13 +794,13 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
                 availableTools: parsed.tools || [],
               });
             } else if (parsed.type === 'assistant' && parsed.message?.content) {
+              // ELF §3: display gets stripped text; the raw blocks feed the parser
               append({
                 sessionId,
                 type: 'claude_text',
                 messageId: parsed.message?.id || '',
-                content: parsed.message.content,
+                content: stripMarkersFromContent(parsed.message.content),
               });
-              // Parse markers from the content blocks
               parseMarkersFromContent(parsed.message.content, append, sessionId);
             } else if (parsed.type === 'result') {
               const usage = parsed.usage || {};
@@ -907,6 +871,7 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
       : code === 0 ? 'user_ended'
       : 'process_crash';
     append({ sessionId, type: 'session_end', exitCode: code, reason });
+    setScreenFace('sleeping');
     processAlive = false;
     claudeProc = null;
     sessionId = null;
@@ -921,6 +886,7 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
     model: actualModel,
     demoMode: FORCE_DEMO_MODE || mode === 'demo',
   });
+  setScreenFace('on');
 
   return proc;
 }
@@ -1162,6 +1128,10 @@ const server = Bun.serve({
     }
 
     // Health check (no auth — only exposes non-sensitive status)
+    if (url.pathname === '/room.md' && req.method === 'GET') {
+      return new Response(buildRoomDoc(), { headers: { 'Content-Type': 'text/markdown; charset=utf-8', ...corsHeaders(ALLOWED_ORIGIN) } });
+    }
+
     if (url.pathname === "/api/health") {
       return Response.json({
         status: "ok",
@@ -1173,9 +1143,9 @@ const server = Bun.serve({
       }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
-    // Setup endpoint: store auth token (requires Clerk auth)
+    // Setup endpoint: store auth token (requires OIDC auth)
     if (url.pathname === "/api/setup" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const body = (await req.json()) as { token?: string };
@@ -1200,7 +1170,7 @@ const server = Bun.serve({
 
     // OAuth start: generate PKCE auth URL directly (no subprocess)
     if (url.pathname === "/api/oauth/start" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const state = randomBytes(32).toString("hex");
@@ -1225,7 +1195,7 @@ const server = Bun.serve({
 
     // OAuth exchange: POST authorization code to token endpoint directly
     if (url.pathname === "/api/oauth/exchange" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const body = (await req.json()) as { code?: string; state?: string };
@@ -1284,7 +1254,7 @@ const server = Bun.serve({
 
     // ── Event stream endpoint (replaces per-request SSE) ─────────────────────
     if (url.pathname === "/api/events" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const afterParam = url.searchParams.get("after")
@@ -1344,7 +1314,7 @@ const server = Bun.serve({
 
     // ── Send message to Claude (fire-and-forget) ──────────────────────────────
     if (url.pathname === "/api/send" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       if (!processAlive || !claudeProc) {
@@ -1405,7 +1375,7 @@ const server = Bun.serve({
 
     // Session start: spawn Claude and send wake-up message (returns JSON, not SSE)
     if (url.pathname === "/api/session/start" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       if (processAlive && (claudeProc || REMOTE_SESSION)) {
@@ -1420,17 +1390,13 @@ const server = Bun.serve({
         await refreshTokenIfNeeded();
       }
 
-      // Parse previousTranscript, artifactCatalog, and demoMode from POST body (if any)
+      // Parse previousTranscript and demoMode from POST body (if any)
       let previousTranscript: Array<{ role: string; speakerType: string; speakerName: string; text: string }> = [];
-      let artifactCatalog: Array<{ filename: string; category: string; description: string; chapter?: string }> = [];
       let demoMode = false;
       try {
-        const body = await req.json() as { previousTranscript?: any[], artifactCatalog?: any[], demoMode?: boolean };
+        const body = await req.json() as { previousTranscript?: any[], demoMode?: boolean };
         if (Array.isArray(body.previousTranscript)) {
           previousTranscript = body.previousTranscript;
-        }
-        if (Array.isArray(body.artifactCatalog)) {
-          artifactCatalog = body.artifactCatalog;
         }
         if (body.demoMode === true || FORCE_DEMO_MODE) {
           demoMode = true;
@@ -1446,7 +1412,6 @@ const server = Bun.serve({
         type: 'user_session_start',
         demoMode,
         hasPreviousTranscript: previousTranscript.length > 0,
-        hasArtifactCatalog: artifactCatalog.length > 0,
       });
 
       spawnClaude(demoMode ? 'demo' : 'normal');
@@ -1461,14 +1426,6 @@ const server = Bun.serve({
         // ── Normal mode: dynamic content only (stable instructions are in system prompt) ──
         wakeUpMessage = "";
 
-        // Artifact catalog from Fireproof
-        if (artifactCatalog.length > 0) {
-          const lines = artifactCatalog
-            .map((a: any) => `- ${a.filename} [${a.category}] — ${a.description}`)
-            .join("\n");
-          wakeUpMessage += `<memory category="catalog" document-count="${artifactCatalog.length}">\n${lines}\n</memory>\n\n`;
-        }
-
         if (previousTranscript.length > 0) {
           const ended = new Date().toISOString();
           const lines = previousTranscript.map(msg =>
@@ -1481,11 +1438,12 @@ const server = Bun.serve({
         }
       }
 
-      // Local mode: append UI action discovery to wake-up message
-      // Remote mode: send simpler wake-up (no UI actions)
+      // Local mode: append the room's discovery document to the wake-up message.
+      // Remote mode: send simpler wake-up (no room document).
+      // ELF ordering rule: identity (CLAUDE.md/AGENT.md, loaded by the harness first)
+      // precedes the room. The injected text IS the served document — one source of truth.
       if (!REMOTE_SESSION) {
-        const discovery = buildUIActionDiscovery();
-        if (discovery) wakeUpMessage += '\n\n' + discovery;
+        wakeUpMessage += '\n\n<room>\nYou have arrived in a room. Your identity precedes it. The room describes itself:\n\n' + buildRoomDoc() + '\n</room>';
       }
       // Both modes: send wake-up so Claude responds and UI exits PROCESSING
       writeToStdin(wakeUpMessage);
@@ -1500,7 +1458,7 @@ const server = Bun.serve({
 
     // Session end: kill Claude process
     if (url.pathname === "/api/session/end" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       append({ sessionId, type: 'user_session_end' });
@@ -1508,6 +1466,12 @@ const server = Bun.serve({
         claudeProc.kill();
         // Wait briefly for cleanup
         await new Promise(r => setTimeout(r, PROCESS_KILL_WAIT_MS));
+      } else {
+        // Remote mode has no process whose exit hook sleeps the screen or
+        // appends session_end — without the append, the client's sessionActive
+        // stays true until a reload while /api/send 409s.
+        setScreenFace('sleeping');
+        append({ sessionId, type: 'session_end', exitCode: 0, reason: 'user_ended' });
       }
       claudeProc = null;
       processAlive = false;
@@ -1515,24 +1479,9 @@ const server = Bun.serve({
       return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
     }
 
-    // Ledger reset: browser ledger was wiped, ask Julian for full agent state replay
-    if (url.pathname === "/api/ledger-reset" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
-        return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
-      }
-      if (!processAlive || !claudeProc) {
-        return Response.json({ ok: true, note: "No active session" }, { headers: corsHeaders(ALLOWED_ORIGIN) });
-      }
-      const msg = '[LEDGER RESET] The browser ledger was wiped. ' +
-        'Re-emit an [ACTION] marker with target "agents", action "status", ' +
-        'and full identity data for all known agents, including individuationArtifact.';
-      writeToStdin(msg);
-      return Response.json({ ok: true }, { headers: corsHeaders(ALLOWED_ORIGIN) });
-    }
-
     // Job Help (session-independent — uses Haiku subprocess, not Claude session)
     if (url.pathname === "/api/job-help" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const body = (await req.json()) as { formState?: Record<string, string> };
@@ -1549,7 +1498,7 @@ const server = Bun.serve({
 
     // Send message (legacy /api/chat path — redirects to /api/send)
     if (url.pathname === "/api/chat" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       if (!processAlive || !claudeProc) {
@@ -1591,7 +1540,7 @@ const server = Bun.serve({
 
     // Summon agents: send summon message to Claude
     if (url.pathname === "/api/agents/summon" && req.method === "POST") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       if (!processAlive || !claudeProc) {
@@ -1625,7 +1574,7 @@ const server = Bun.serve({
 
     // List artifacts (authenticated) — recursive tree of memory/
     if (url.pathname === "/api/artifacts" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
 
@@ -1688,16 +1637,31 @@ const server = Bun.serve({
           woff2: "font/woff2",
           otf: "font/otf",
         };
+        // Artifact HTML is LLM-authored and downstream of email from strangers.
+        // This route is unauthenticated and same-origin, and the app keeps OIDC
+        // tokens in localStorage — so force an opaque origin however the
+        // document is opened. The iframe carries its own sandbox attribute;
+        // this covers "open in new tab", which the sandbox cannot reach.
+        const ARTIFACT_CSP = "sandbox allow-scripts; default-src 'none'; img-src data: blob: 'self'; style-src 'unsafe-inline' 'self'; font-src 'self' data:";
+
         // Render markdown files as styled HTML using the letter template
         if (ext === "md") {
           const rendered = renderMarkdownLetter(content.toString("utf-8"));
           return new Response(rendered, {
-            headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders(ALLOWED_ORIGIN) },
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Content-Security-Policy": ARTIFACT_CSP,
+              ...corsHeaders(ALLOWED_ORIGIN),
+            },
           });
         }
         const contentType = contentTypes[ext] || "application/octet-stream";
         return new Response(content, {
-          headers: { "Content-Type": contentType, ...corsHeaders(ALLOWED_ORIGIN) },
+          headers: {
+            "Content-Type": contentType,
+            ...(ext === "html" || ext === "svg" ? { "Content-Security-Policy": ARTIFACT_CSP } : {}),
+            ...corsHeaders(ALLOWED_ORIGIN),
+          },
         });
       } catch {
         return new Response("Not Found", { status: 404, headers: corsHeaders(ALLOWED_ORIGIN) });
@@ -1707,7 +1671,7 @@ const server = Bun.serve({
     // ── Skills endpoint ──────────────────────────────────────────────────
 
     if (url.pathname === "/api/skills" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       try {
@@ -1778,7 +1742,7 @@ const server = Bun.serve({
     // ── Agents endpoint ──────────────────────────────────────────────────
 
     if (url.pathname === "/api/agents" && req.method === "GET") {
-      if (!(await verifyClerkToken(req))) {
+      if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
       const teamsDir = join(homedir(), ".claude", "teams");
@@ -1828,13 +1792,31 @@ const server = Bun.serve({
     const requestedPath = decodeURIComponent(url.pathname);
 
     // Block sensitive files/directories from being served
-    const BLOCKED_PREFIXES = ['/.env', '/claude-auth.env', '/.git', '/server/', '/deploy/', '/node_modules/', '/CLAUDE.md', '/.claude/', '/docs/', '/julian-plugin/'];
+    const BLOCKED_PREFIXES = ['/.env', '/claude-auth.env', '/.git', '/server/', '/deploy/', '/node_modules/', '/CLAUDE.md', '/.claude/', '/docs/', '/julian-plugin/', '/chat.jsx', '/vibes.jsx'];
     if (BLOCKED_PREFIXES.some(p => requestedPath === p || requestedPath.startsWith(p))) {
       return new Response("Not Found", { status: 404 });
     }
 
+    // Built SPA (app/dist) is the primary static root.
+    // Containment: %2f survives URL normalization and reintroduces separators
+    // after decodeURIComponent, so resolve first and require the result to stay
+    // inside the root (same pattern as /api/artifacts/).
+    const appDist = resolve(WORKING_DIR, "app", "dist");
+    const appCandidate = resolve(appDist, "." + requestedPath);
+    if (requestedPath !== "/" && appCandidate.startsWith(appDist + "/")) {
+      const appAsset = Bun.file(appCandidate);
+      if (await appAsset.exists()) {
+        const headers: Record<string, string> = {};
+        // Service worker must not be cached
+        if (requestedPath === "/sw.js") {
+          headers["Cache-Control"] = "no-cache";
+        }
+        return new Response(appAsset, { headers });
+      }
+    }
+
     const safePath = resolve(WORKING_DIR, requestedPath.slice(1)); // strip leading /
-    if (safePath.startsWith(resolve(WORKING_DIR))) {
+    if (safePath.startsWith(resolve(WORKING_DIR) + "/")) {
       const file = Bun.file(safePath);
       if (await file.exists()) {
         const headers: Record<string, string> = {};
@@ -1846,8 +1828,8 @@ const server = Bun.serve({
       }
     }
 
-    // SPA fallback — serve index.html for client-side routes
-    const indexFile = Bun.file(join(WORKING_DIR, "index.html"));
+    // SPA fallback — serve the built app shell for client-side routes
+    const indexFile = Bun.file(join(appDist, "index.html"));
     if (await indexFile.exists()) {
       return new Response(indexFile);
     }
