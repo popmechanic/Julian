@@ -23,20 +23,26 @@ export function withdrawInterest(jobId: string, agentName: string): void {
   }
 }
 
-export function applyJobsAction(e: { action?: unknown; data?: any }): 'list' | null {
+export function applyJobsAction(e: { id?: unknown; sessionId?: unknown; ts?: unknown; action?: unknown; data?: any }): 'list' | null {
   const d = e.data ?? {};
+  // The SSE bridge replays the whole ring buffer on every connect, so this
+  // runs more than once per event. Row identity and timestamps must come from
+  // the event — a fresh UUID or Date.now() per application duplicates rows and
+  // races doors on the merge, the same way bare `evt-<id>` keys once did.
+  const evtKey = typeof e.id === 'number' ? `${String(e.sessionId ?? 'nosession')}-${e.id}` : null;
+  const ts = typeof e.ts === 'number' ? e.ts : Date.now();
   switch (e.action) {
     case 'post':
-      postJob(String(d.id ?? crypto.randomUUID()), {
+      postJob(String(d.id ?? (evtKey ? `job-${evtKey}` : crypto.randomUUID())), {
         title: String(d.title ?? ''), description: String(d.description ?? ''),
-        postedBy: String(d.postedBy ?? ''), postedAt: Date.now(),
+        postedBy: String(d.postedBy ?? ''), postedAt: ts,
         status: 'open', contextDocs: String(d.contextDocs ?? ''),
       });
       return null;
     case 'interest':
-      addInterest(crypto.randomUUID(), {
+      addInterest(evtKey ? `intr-${evtKey}` : crypto.randomUUID(), {
         jobId: String(d.jobId ?? ''), agentName: String(d.agentName ?? ''),
-        statement: String(d.statement ?? ''), at: Date.now(),
+        statement: String(d.statement ?? ''), at: ts,
       });
       return null;
     case 'withdraw':

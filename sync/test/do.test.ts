@@ -57,6 +57,44 @@ describe('JulianSyncDO', () => {
     });
   });
 
+  test('oversized array cell (messages.content) is converged away, not just number/boolean/string', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { createStreamStore } = await import('julian-shared/schema');
+      const remote = createStreamStore('remote-arr');
+      remote.setRow('messages', 'bigarr', { sessionId: 's', role: 'assistant', speakerName: 'J', text: 'ok', ts: 4 });
+      // content is schema-typed 'array' — the flush sentinel must be type-valid
+      // or the schema rejects it, no stamp lands, and the blob stays in the tree.
+      remote.setCell('messages', 'bigarr', 'content', [{ type: 'text', text: 'x'.repeat(70_000) }] as never);
+      instance.store.setMergeableContent(remote.getMergeableContent());
+      await Promise.resolve();
+      const content = JSON.stringify(instance.store.getMergeableContent());
+      expect(content).not.toContain('x'.repeat(1_000));
+      const replica = createStreamStore('replica-arr');
+      replica.applyMergeableChanges(instance.store.getMergeableContent() as never);
+      expect(JSON.stringify(replica.getCell('messages', 'bigarr', 'content') ?? '')).not.toContain('x'.repeat(1_000));
+    });
+  });
+
+  test('a second oversized value on an already-dropped cell is also converged away', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { createStreamStore } = await import('julian-shared/schema');
+      const remote = createStreamStore('remote-2x');
+      remote.setRow('messages', 'big2', { sessionId: 's', role: 'user', speakerName: 'M', text: 'y'.repeat(70_000), ts: 5 });
+      instance.store.setMergeableContent(remote.getMergeableContent());
+      await Promise.resolve();
+      expect(JSON.stringify(instance.store.getMergeableContent())).not.toContain('y'.repeat(1_000));
+      // The replica syncs back (sees the receipt), then overflows the same cell
+      // again. The corrective rewrite must differ from the sentinel already in
+      // place, or it is a stampless no-op and the second blob survives.
+      remote.applyMergeableChanges(instance.store.getMergeableContent() as never);
+      remote.setCell('messages', 'big2', 'text', 'z'.repeat(70_000));
+      instance.store.applyMergeableChanges(remote.getMergeableContent() as never);
+      await Promise.resolve();
+      const content = JSON.stringify(instance.store.getMergeableContent());
+      expect(content).not.toContain('z'.repeat(1_000));
+    });
+  });
+
   test('exportContent returns content + recomputable hash', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       instance.store.setRow('messages', 'm1', { sessionId: 's', role: 'user', speakerName: 'M', text: 'hello', ts: 1 });

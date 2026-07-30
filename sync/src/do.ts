@@ -125,14 +125,25 @@ export class JulianSyncDO extends WsServerDurableObject {
       this.store.transaction(() => {
         for (const [coord, cellType] of pending) {
           const [tableId, rowId, cellId] = JSON.parse(coord) as [string, string, string];
-          // Must differ from the value the stripped merge left behind: the
-          // schema refills a declared default, and a write equal to the current
-          // value is a no-op producing no stamp — which would leave the blob in
-          // the stamp tree. The marker also leaves a visible receipt.
-          this.store.setCell(
-            tableId, rowId, cellId,
-            cellType === 'number' ? 0 : cellType === 'boolean' ? false : DROPPED_MARKER,
-          );
+          // Must be schema-valid for the cell (arrays report typeof 'object';
+          // a string write to an array-typed cell is rejected and stamps
+          // nothing) AND differ from the value the stripped merge left behind:
+          // a write equal to the current value is a no-op producing no stamp —
+          // either way the blob would stay in the stamp tree. The marker also
+          // leaves a visible receipt.
+          const sentinel: Cell =
+            cellType === 'number' ? 0
+            : cellType === 'boolean' ? false
+            : cellType === 'object' ? ([DROPPED_MARKER] as unknown as Cell)
+            : DROPPED_MARKER;
+          if (JSON.stringify(this.store.getCell(tableId, rowId, cellId)) === JSON.stringify(sentinel)) {
+            // A prior drop already left the sentinel here; writing it again
+            // would be stampless. Deleting is a change, so it stamps — and the
+            // next drop can write the sentinel again.
+            this.store.delCell(tableId, rowId, cellId);
+          } else {
+            this.store.setCell(tableId, rowId, cellId, sentinel);
+          }
         }
       });
     } finally {

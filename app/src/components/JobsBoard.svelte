@@ -9,8 +9,13 @@
 
   let jobs = $state(store.getTable('jobs'));
   let interest = $state(store.getTable('jobInterest'));
-  store.addTableListener('jobs', () => { jobs = store.getTable('jobs'); });
-  store.addTableListener('jobInterest', () => { interest = store.getTable('jobInterest'); });
+  // The board mounts/unmounts on every BOARD toggle — listeners registered
+  // without cleanup stack a pair per cycle for the life of the tab.
+  $effect(() => {
+    const a = store.addTableListener('jobs', () => { jobs = store.getTable('jobs'); });
+    const b = store.addTableListener('jobInterest', () => { interest = store.getTable('jobInterest'); });
+    return () => { store.delListener(a); store.delListener(b); };
+  });
 
   const interestsFor = (jobId: string) =>
     Object.entries(interest).filter(([, r]) => r.jobId === jobId);

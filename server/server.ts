@@ -1467,8 +1467,11 @@ const server = Bun.serve({
         // Wait briefly for cleanup
         await new Promise(r => setTimeout(r, PROCESS_KILL_WAIT_MS));
       } else {
-        // Remote mode has no process whose exit hook sleeps the screen
+        // Remote mode has no process whose exit hook sleeps the screen or
+        // appends session_end — without the append, the client's sessionActive
+        // stays true until a reload while /api/send 409s.
         setScreenFace('sleeping');
+        append({ sessionId, type: 'session_end', exitCode: 0, reason: 'user_ended' });
       }
       claudeProc = null;
       processAlive = false;

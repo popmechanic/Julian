@@ -116,13 +116,16 @@
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/screen/ws`);
 
+    // Installed from whichever of socket-open / engine-load finishes second —
+    // on a cold cache the socket reliably opens before the eight engine
+    // scripts, so installing only in onopen left taps/buttons silently dead.
+    const sendFeedback = (event: Record<string, unknown>) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(event));
+    };
+
     ws.onopen = () => {
       connected = true;
-      if (window.JScreen) {
-        window.JScreen.sendFeedback = (event) => {
-          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(event));
-        };
-      }
+      if (window.JScreen) window.JScreen.sendFeedback = sendFeedback;
     };
     ws.onclose = () => {
       connected = false;
@@ -140,6 +143,7 @@
         if (closed || !canvas || !window.JScreen) return;
         window.JScreen.init(canvas);
         window.JScreen.initInput?.(canvas);
+        window.JScreen.sendFeedback = sendFeedback;
         window.JScreen.setExternalTabBar?.(true);
         if (pending.length > 0) {
           window.JScreen.enqueueCommands(pending);

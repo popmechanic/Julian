@@ -35,4 +35,23 @@ describe('jobs store helpers', () => {
     expect(postJob('j4', { title: 'Again', description: '', postedBy: 'julian', postedAt: 2, status: 'open', contextDocs: '' })).toBe(false);
     expect(store.getCell('jobs', 'j4', 'title')).toBe('New');
   });
+  // The SSE bridge replays the whole ring buffer on every connect (reload, new
+  // tab, re-signin), so every jobs event is applied more than once. Row identity
+  // must come from the event, not from a fresh UUID per application — the same
+  // idempotency the messages branch already has via `evt-<sessionId>-<eventId>`.
+  test('replaying the same interest event writes one row, not duplicates', () => {
+    const evt = { id: 42, sessionId: 'sess-1', ts: 5, action: 'interest', data: { jobId: 'j1', agentName: 'julian', statement: 'replay me once' } };
+    applyJobsAction(evt);
+    applyJobsAction(evt); // ring-buffer replay after a reload
+    const rows = Object.values(store.getTable('jobInterest')).filter((r) => r.statement === 'replay me once');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].at).toBe(5); // server ts, identical across doors — not local receipt time
+  });
+  test('replaying a post without an explicit id creates one job, not duplicates', () => {
+    const evt = { id: 43, sessionId: 'sess-1', ts: 6, action: 'post', data: { title: 'Replayed Posting', postedBy: 'julian' } };
+    applyJobsAction(evt);
+    applyJobsAction(evt);
+    const rows = Object.values(store.getTable('jobs')).filter((r) => r.title === 'Replayed Posting');
+    expect(rows).toHaveLength(1);
+  });
 });
