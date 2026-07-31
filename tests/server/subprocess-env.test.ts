@@ -82,33 +82,43 @@ describe('bearerToken', () => {
 // only inside the body-parse try block fails OPEN: the deployment spawns a
 // NORMAL session and hands the operator's live bearer to an anonymous kiosk
 // visitor's subprocess. This exercises the real handler to prove it does not.
-const TEST_PORT = 18010;
-const BASE_URL = `http://localhost:${TEST_PORT}`;
 
-let serverProc: Subprocess | null = null;
+// Bind port 0 so the OS picks a free port, then release it for the server.
+function freePort(): number {
+  const probe = Bun.serve({ port: 0, fetch: () => new Response('') });
+  const { port } = probe;
+  probe.stop(true);
+  return port;
+}
 
 async function waitForServer(url: string, timeoutMs = 10000): Promise<void> {
   const start = Date.now();
+  let lastFailure: unknown = 'no attempt completed';
   while (Date.now() - start < timeoutMs) {
     try {
-      if ((await fetch(url)).ok) return;
-    } catch {}
+      const resp = await fetch(url);
+      if (resp.ok) return;
+      lastFailure = `HTTP ${resp.status}`;
+    } catch (e) {
+      lastFailure = e;
+    }
     await Bun.sleep(200);
   }
-  throw new Error(`Server did not start within ${timeoutMs}ms`);
+  throw new Error(`Server did not start within ${timeoutMs}ms (last failure: ${lastFailure})`);
 }
 
 // Collect the replayed SSE events, then hang up. Buffered events are flushed
-// on connect, so one read pass is enough.
-async function replayedEvents(timeoutMs = 5000): Promise<any[]> {
+// on connect, so one read pass is enough. Failures throw with their cause: a
+// red run must say whether the guard broke or the transport did.
+async function replayedEvents(baseUrl: string, timeoutMs = 5000): Promise<any[]> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  const events: any[] = [];
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);
+  let buffer = '';
   try {
-    const resp = await fetch(`${BASE_URL}/api/events?after=-1`, { signal: ctrl.signal });
+    const resp = await fetch(`${baseUrl}/api/events?after=-1`, { signal: ctrl.signal });
     const reader = (resp.body as ReadableStream<Uint8Array>).getReader();
     const decoder = new TextDecoder();
-    let buffer = '';
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -116,62 +126,82 @@ async function replayedEvents(timeoutMs = 5000): Promise<any[]> {
       // The replay is one write; once a session-start event is in hand, stop.
       if (buffer.includes('"user_session_start"')) break;
     }
+    // Deliberate hangup on a live stream — a cancel error is expected noise.
     await reader.cancel().catch(() => {});
-    for (const line of buffer.split('\n')) {
-      if (line.startsWith('data: ')) {
-        try { events.push(JSON.parse(line.slice(6))); } catch {}
-      }
-    }
-  } catch {} finally {
+  } catch (e) {
+    throw timedOut
+      ? new Error(`SSE replay: no user_session_start within ${timeoutMs}ms`, { cause: e })
+      : new Error(`SSE replay transport failed: ${e}`, { cause: e });
+  } finally {
     clearTimeout(timer);
     ctrl.abort();
+  }
+  const lines = buffer.split('\n');
+  // The read stops as soon as the marker appears, so the tail may be a
+  // partial line; complete SSE data lines are always newline-terminated.
+  lines.pop();
+  const events: any[] = [];
+  for (const line of lines) {
+    if (!line.startsWith('data: ')) continue;
+    try {
+      events.push(JSON.parse(line.slice(6)));
+    } catch (e) {
+      throw new Error(`SSE replay: unparseable data line ${JSON.stringify(line)}`, { cause: e });
+    }
   }
   return events;
 }
 
-beforeAll(async () => {
-  // A stub `claude` first on PATH: remote mode shells out to it for the
-  // wake-up message, and no test may launch the real CLI.
-  const stubDir = mkdtempSync(join(tmpdir(), 'julian-claude-stub-'));
-  const stub = join(stubDir, 'claude');
-  writeFileSync(stub, '#!/bin/sh\nexit 0\n');
-  chmodSync(stub, 0o755);
-
-  serverProc = Bun.spawn([process.execPath, 'run', 'server/server.ts'], {
-    cwd: join(import.meta.dir, '..', '..'),
-    env: {
-      ...process.env,
-      PORT: String(TEST_PORT),
-      ALLOWED_ORIGIN: BASE_URL,
-      // No issuer → local dev mode, bearer verification skipped (Bun auto-loads
-      // .env, so these must be blanked explicitly).
-      OIDC_ISSUER: '',
-      VITE_OIDC_ISSUER: '',
-      DEMO_MODE: '1',
-      // Remote mode: spawnClaude takes the no-subprocess path, so the handler
-      // is exercised without a local Claude process.
-      REMOTE_SESSION: 'kiosk-lock-test',
-      PATH: `${stubDir}:${process.env.PATH ?? ''}`,
-    },
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  await waitForServer(`${BASE_URL}/api/health`);
-});
-
-afterAll(async () => {
-  if (serverProc) {
-    serverProc.kill();
-    await serverProc.exited;
-    serverProc = null;
-  }
-});
-
 describe('POST /api/session/start under the kiosk lock', () => {
+  let serverProc: Subprocess | null = null;
+  let baseUrl = '';
+
+  beforeAll(async () => {
+    // A stub `claude` first on PATH: remote mode shells out to it for the
+    // wake-up message, and no test may launch the real CLI.
+    const stubDir = mkdtempSync(join(tmpdir(), 'julian-claude-stub-'));
+    const stub = join(stubDir, 'claude');
+    writeFileSync(stub, '#!/bin/sh\nexit 0\n');
+    chmodSync(stub, 0o755);
+
+    const port = freePort();
+    baseUrl = `http://localhost:${port}`;
+
+    // The env is an explicit allowlist, not an inherited spread: the test
+    // process's ambient env carries the repo .env (real AGENTMAIL_API_KEY and
+    // friends), and none of it belongs in a spawned server. --env-file=/dev/null
+    // stops the child's own .env auto-load too, so absence here is absence
+    // there — no issuer → local dev mode, bearer verification skipped.
+    serverProc = Bun.spawn([process.execPath, '--env-file=/dev/null', 'run', 'server/server.ts'], {
+      cwd: join(import.meta.dir, '..', '..'),
+      env: {
+        PATH: `${stubDir}:${process.env.PATH ?? ''}`,
+        HOME: process.env.HOME ?? '',
+        PORT: String(port),
+        ALLOWED_ORIGIN: baseUrl,
+        DEMO_MODE: '1',
+        // Remote mode: spawnClaude takes the no-subprocess path, so the handler
+        // is exercised without a local Claude process.
+        REMOTE_SESSION: 'kiosk-lock-test',
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    await waitForServer(`${baseUrl}/api/health`);
+  });
+
+  afterAll(async () => {
+    if (serverProc) {
+      serverProc.kill();
+      await serverProc.exited;
+      serverProc = null;
+    }
+  });
+
   test('a bodyless POST on a DEMO_MODE=1 deployment still starts a demo session', async () => {
-    const resp = await fetch(`${BASE_URL}/api/session/start`, { method: 'POST' });
+    const resp = await fetch(`${baseUrl}/api/session/start`, { method: 'POST' });
     expect(resp.status).toBe(200);
-    const events = await replayedEvents();
+    const events = await replayedEvents(baseUrl);
     const started = events.find(e => e.type === 'user_session_start');
     expect(started).toBeDefined();
     // false here means the handler would have spawned a normal session and

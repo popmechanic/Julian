@@ -1398,10 +1398,10 @@ const server = Bun.serve({
         if (Array.isArray(body.previousTranscript)) {
           previousTranscript = body.previousTranscript;
         }
-        if (body.demoMode === true || FORCE_DEMO_MODE) {
+        if (body.demoMode === true) {
           demoMode = true;
         }
-        console.log("[Session] Body parsed — demoMode:", body.demoMode, "force:", FORCE_DEMO_MODE, "→", demoMode);
+        console.log("[Session] Body parsed — demoMode:", body.demoMode);
       } catch (e) {
         console.error("[Session] Body parse failed:", e);
       }
