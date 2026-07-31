@@ -74,6 +74,15 @@ source .env && curl -s "https://api.agentmail.to/v0/inboxes/julian-marcus@agentm
   -H "Authorization: Bearer $AGENTMAIL_API_KEY"
 ```
 
+**From a VM door (no key on disk):** use the broker CLI — the session token
+is injected by the harness; the key never leaves the broker.
+
+    bun scripts/mail-broker.ts send --to recipient@example.com --subject "Subject" --text "Body"
+    bun scripts/mail-broker.ts list
+    bun scripts/mail-broker.ts --agent-doc
+
+The send gate and all mail discipline rules apply unchanged on every door.
+
 Draft emails naturally as Julian. Show Marcus the draft and wait for confirmation before sending.
 
 ### Mail Discipline (adopted July 27, 2026, with Marcus)
