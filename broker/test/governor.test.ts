@@ -49,4 +49,27 @@ describe('GovernorDO', () => {
       expect(g.entries(10)[1].detail.length).toBe(500);
     });
   });
+
+  test('cap window is per UTC day: yesterday\'s sends do not count against today', async () => {
+    await runInDurableObject(stub(), async (g: GovernorDO) => {
+      const yesterday = Date.now() - 86_400_000;
+      for (let i = 0; i < 3; i++) {
+        (g as unknown as { ctx: DurableObjectState }).ctx.storage.sql.exec(
+          'INSERT INTO ledger (ts, sub, service, verb, detail, allowed) VALUES (?, ?, ?, ?, ?, ?)',
+          yesterday, 's', 'mail', 'send', 'old', 1,
+        );
+      }
+      // A window pinned to all-time (dayStart = 0) would count the 3 old rows
+      // and refuse; the per-day window admits this as today's first send.
+      expect(g.reserve('s', 'mail', 'send', 'today', 3)).toEqual({ ok: true, count: 1, cap: 3 });
+    });
+  });
+
+  test('cap is one shared bucket across subjects — single shared inbox, by design', async () => {
+    await runInDurableObject(stub(), async (g: GovernorDO) => {
+      expect(g.reserve('door-a', 'mail', 'send', 'd', 2).ok).toBe(true);
+      expect(g.reserve('door-b', 'mail', 'send', 'd', 2).ok).toBe(true);
+      expect(g.reserve('door-c', 'mail', 'send', 'd', 2).ok).toBe(false);
+    });
+  });
 });
