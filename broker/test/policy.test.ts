@@ -17,4 +17,10 @@ describe('policy table', () => {
   test('every policy key is service.verb shaped', () => {
     for (const k of Object.keys(POLICY)) expect(k).toMatch(/^[a-z]+\.[a-z]+$/);
   });
+  test('POLICY is frozen — runtime mutation cannot defeat a cap', () => {
+    expect(Object.isFrozen(POLICY)).toBe(true);
+    expect(Object.isFrozen(POLICY['mail.send'])).toBe(true);
+    expect(() => { (POLICY as any)['mail.send'] = { capPerDay: null }; }).toThrow();
+    expect(POLICY['mail.send'].capPerDay).toBe(20);
+  });
 });
