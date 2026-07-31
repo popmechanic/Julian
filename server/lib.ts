@@ -343,6 +343,40 @@ export function parseMarkersFromContent(
   }
 }
 
+// ── Request auth header ───────────────────────────────────────────────────
+
+// The one place a request's raw bearer is read. Authorization first, then
+// X-Authorization (the exe.dev edge proxy strips Authorization). A header
+// that is not a Bearer scheme yields "" rather than a sliced fragment.
+export function bearerToken(headers: { get(name: string): string | null }): string {
+  const auth = headers.get("Authorization") || headers.get("X-Authorization");
+  return auth?.startsWith("Bearer ") ? auth.slice(7) : "";
+}
+
+// ── Subprocess environment ────────────────────────────────────────────────
+// The one place the Claude subprocess env is assembled. The session's OIDC
+// token rides in so door-side tools (scripts/mail-broker.ts) can call
+// julian-broker; the token is proof of who is asking, never a service key.
+// No token captured means no token passed: any JULIAN_OIDC_TOKEN inherited
+// from the server's own env is removed, so one door never spawns with
+// another's bearer.
+export function subprocessEnv(
+  base: Record<string, string | undefined>,
+  authEnv: Record<string, string>,
+  oidcToken: string,
+): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = {
+    ...base,
+    ...authEnv,
+    CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1",
+    CLAUDECODE: "",             // allow spawning Claude from within Claude
+    CLAUDE_CODE_ENTRYPOINT: "", // clear nesting guard
+  };
+  if (oidcToken) env.JULIAN_OIDC_TOKEN = oidcToken;
+  else delete env.JULIAN_OIDC_TOKEN;
+  return env;
+}
+
 // ── Event log factory ─────────────────────────────────────────────────────
 
 export interface EventLog {
