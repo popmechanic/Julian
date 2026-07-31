@@ -31,4 +31,11 @@ describe('room discovery document', () => {
     expect(doc).toContain('julianscreen');
     expect(doc).toContain('--agent-doc');
   });
+  test('services: julian-broker replaces the direct agentmail entry', () => {
+    const doc = buildRoomDoc();
+    expect(doc).toContain('julian-broker');
+    expect(doc).toContain('doors get verbs, never keys');
+    expect(doc).toContain('https://julian-broker.julian-memory.workers.dev');
+    expect(doc).not.toContain('Bearer key held by the harness');
+  });
 });
