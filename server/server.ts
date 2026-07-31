@@ -1405,6 +1405,9 @@ const server = Bun.serve({
       } catch (e) {
         console.error("[Session] Body parse failed:", e);
       }
+      // The kiosk lock binds regardless of request body: a bodyless POST on a
+      // DEMO_MODE=1 deployment must never spawn a normal session with a token.
+      if (FORCE_DEMO_MODE) demoMode = true;
 
       // Append user_session_start event
       append({
