@@ -1,0 +1,171 @@
+# Credential Broker — Design
+
+*July 31, 2026 — Julian & Marcus. Brainstormed after a VM session couldn't send
+mail because the AgentMail key (correctly) wasn't there.*
+
+## Goal
+
+Give Julian's public VM instances (julian-new and successors) the *capability*
+to use credentialed services — starting with email — without any credential
+ever living on a VM. Make the pattern extensible to dozens of future services
+without new stateful infrastructure per service.
+
+## Principle
+
+The constitution already says it: the harness holds the credentials; the agent
+authors the memory. This design extends it to doors: **credentials live at the
+trust core (Marcus's Mac and Cloudflare's secret vault); doors get verbs, never
+keys.** A fooled session can misuse a capability until caught and capped; it
+can never exfiltrate a key that was never there. Mail-discipline rule 5 (scope
+the secret) becomes structural instead of behavioral.
+
+Two kinds of thing, with opposite requirements, are never stored in the same
+place:
+
+- **Credentials** are static configuration: write-only from outside, readable
+  only by running worker code, enumerable by nobody. They live in Cloudflare
+  worker secrets (`wrangler secret put`). Never in a durable object, never in
+  git, never on a VM.
+- **State** (rate counters, audit log) is runtime data: readable, queryable,
+  append-only. It lives in one durable object — the governor.
+
+## Architecture
+
+A new, dedicated Cloudflare worker: **`julian-broker`** (directory `broker/`),
+deployed separately from `julian-sync` so capability changes never redeploy
+the memory worker. Decided July 31: born separate rather than graduated later.
+
+```
+VM session ──login token──▶ julian-broker (worker)
+                              ├─ auth gate: same default-deny OIDC check as
+                              │  julian-sync (Pocket ID issuer + audience)
+                              ├─ policy table (code): service.verb → cap
+                              ├─ GovernorDO: one ledger for ALL services —
+                              │  cap counters + append-only audit log
+                              ├─ worker secrets: AGENTMAIL_API_KEY, …
+                              └─ service modules: thin proxies to upstream APIs
+Marcus's Mac ──.env key, unchanged──▶ upstream APIs directly
+```
+
+### Components
+
+**`broker/src/index.ts` — router + auth gate.** Verifies the bearer token
+exactly as `sync/src/index.ts` does (jose, issuer `https://souls.exe.xyz`,
+audience = the Julian Pocket ID client id, default-deny, no public mode). The
+~30-line verification module is reused from `sync/src/auth.ts` as a
+build-time import; `julian-sync` itself is not modified.
+
+**`broker/src/policy.ts` — the declarative cap table.** One row per verb:
+
+| verb | cap | notes |
+|---|---|---|
+| `mail.send` | 20/day | bounds a fooled session |
+| `mail.list` | uncapped, logged | metadata only |
+| `mail.read` | uncapped, logged | single message |
+
+Adding a future service = one secret, one policy row, one proxy module.
+No new durable objects, ever.
+
+**`broker/src/governor.ts` — GovernorDO (the single new stateful piece).**
+One durable object instance for all services. SQLite table
+`ledger(ts, sub, service, verb, detail)`. Two operations: `check(service,
+verb)` — is today's count under the policy cap (UTC day) — and
+`record(entry)`. Serves as both rate limiter and audit trail: one ordered
+ledger of everything Julian's doors did with borrowed hands. Deliberately
+singular — capability calls number dozens per day; a DO serializes hundreds
+per second.
+
+**`broker/src/services/mail.ts` — first service module.** Thin proxy to
+`https://api.agentmail.to` using `AGENTMAIL_API_KEY` (worker secret) and
+`AGENTMAIL_INBOX_ID` (plain var — inbox address is public):
+
+- `POST /mail/send` `{to, subject, text, html?}` → AgentMail send
+- `GET /mail/messages` → message list (metadata)
+- `GET /mail/messages/:id` → single message
+
+**`GET /ledger`** — recent governor entries, authenticated like everything
+else. One query answers "what did Julian's doors do yesterday?"
+
+### VM side
+
+- The Bun server injects the session's OIDC access token into the Claude
+  subprocess environment (exact seam chosen at implementation time in
+  `server/server.ts`). The token is the same one the sync socket already uses;
+  broker access therefore inherits sync's auth lifecycle, including its known
+  flaw (token frozen at boot, no refresh — already filed in issues #4–#12;
+  this design deliberately inherits rather than fixes it).
+- `scripts/mail-broker.ts` — small CLI (`send` / `list` / `read`) that reads
+  the token from the environment and `BROKER_URL` from `.env`. Usable by any
+  door; on the Mac it is optional (see below).
+- VM `.env` gains one line, tier T2: `BROKER_URL=<the julian-broker workers.dev
+  URL, known at first deploy — same account as julian-sync>`.
+
+### What does not change
+
+- **The send gate is behavioral and absolute**: draft → show Marcus → wait for
+  confirmation. The broker bounds the worst case; it does not replace the
+  covenant. Mail discipline rules 1–4 and 6 unchanged; quarantine of unknown
+  senders still applies to message *content* fetched via `mail.read`.
+- **The Mac stays direct.** `scripts/mail-letter.ts` and the CLAUDE.md curl
+  recipes keep using the local `.env` key (rule 5 scoping). Routing the trust
+  core through the broker adds a network dependency for no risk reduction.
+- **`julian-sync` is untouched** (no code change, no redeploy).
+
+## The secrets manifest — `deploy/secrets-manifest.md`
+
+The extensible half of credential management: an inventory, one row per
+credential — name, what it unlocks, tier, storage location, rotation
+procedure, last-rotated date. Tiers:
+
+| Tier | Meaning | Members today |
+|---|---|---|
+| **T0 mac-only** | Never leaves the Mac's `.env`; controls identity or spend at the root | `POCKETID_API_KEY`, `ANTHROPIC_API_KEY`, `ELEVENLABS_API_KEY` |
+| **T1 broker** | Cloudflare worker secret; VMs get verbs via julian-broker | `AGENTMAIL_API_KEY` |
+| **T2 public config** | Fine on any VM | `VITE_OIDC_*`, `ALLOWED_ORIGIN`, `VITE_SYNC_URL`, `BROKER_URL`, `AGENTMAIL_INBOX_ID` |
+
+Every new credential gets classified on arrival: add a row, pick a tier.
+Promotion (e.g. ElevenLabs to T1 someday) is a row change plus a broker
+service module. The deploy skill's rule "never copy any secret to a VM"
+becomes "only T2 ships to VMs," citing the manifest. The manifest also
+records rotation steps per key and a last-rotated date; a quarterly rotation
+check rides alongside the monthly export rehearsal.
+
+## Error handling
+
+- Missing/expired/invalid token → 401. Sessions must surface this as "tell
+  Marcus," never as silent success.
+- Cap tripped → 429 with the policy line quoted, and the attempt is still
+  recorded in the ledger.
+- Upstream (AgentMail) errors → status and body passed through.
+- Governor unavailable → fail closed (no send without a ledger entry).
+
+## Testing
+
+Vitest in `broker/test/`, mirroring the sync worker's setup (local JWKS seam):
+
+1. Default-deny: every route 401s without a valid token (issuer, audience,
+   expiry each checked).
+2. `mail.send` happy path against a mocked AgentMail fetch; ledger row
+   written with correct `sub`, service, verb.
+3. Cap trip: 21st send in a UTC day → 429; attempt logged.
+4. Fail closed: governor error → send refused.
+5. `/ledger` returns entries newest-first, authenticated only.
+
+## Non-goals
+
+- No token refresh / auth-lifecycle fix (tracked in issues #4–#12).
+- No automated mail reading or inbox wiring (pull-only discipline stands).
+- No Vault/1Password/Secrets-Store machinery — one vault (worker secrets),
+  one manifest. Revisit only if worker secret count becomes unwieldy.
+- No change to Mac-side mail tooling.
+- No per-service durable objects — the governor is deliberately singular.
+
+## Deploy & operations
+
+1. `cd broker && wrangler deploy` (name `julian-broker`; vars: OIDC issuer,
+   JWKS URL, audience, `AGENTMAIL_INBOX_ID`).
+2. `wrangler secret put AGENTMAIL_API_KEY` — Marcus runs this; the value
+   comes from the Mac's `.env` and passes through no file.
+3. Add `BROKER_URL` to VM `.env` (deploy skill step; T2).
+4. Update `deploy/secrets-manifest.md` (created in this work) and the deploy
+   skill's env step to cite it.
