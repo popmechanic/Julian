@@ -168,10 +168,13 @@ ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cat > /opt/julian/.env
 VITE_OIDC_ISSUER=<value from local .env>
 VITE_OIDC_CLIENT_ID=<value from local .env>
 ALLOWED_ORIGIN=https://<vmname>.exe.xyz
+BROKER_URL=https://julian-broker.julian-memory.workers.dev
 ENVEOF"
 ```
 
-Never copy `POCKETID_API_KEY` (or any other local secret) to a VM.
+Only tier T2 (public config) variables ship to a VM — see
+`deploy/secrets-manifest.md` for every credential's tier. Never any secret:
+T1 capabilities reach VMs as broker verbs, T0 keys never leave the Mac.
 
 ### Step P6b: Configure Claude Code settings
 
