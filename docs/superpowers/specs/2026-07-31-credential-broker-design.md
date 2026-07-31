@@ -160,6 +160,35 @@ Vitest in `broker/test/`, mirroring the sync worker's setup (local JWKS seam):
 - No change to Mac-side mail tooling.
 - No per-service durable objects — the governor is deliberately singular.
 
+## Spec interactions (ELF)
+
+This design is the first implementation of the Broker pattern sketched in
+ELF's `PATTERNS.md` (design principle 4: the agent is the least-privileged
+participant). No normative ELF change is needed or proposed. Three
+interactions, recorded July 31 with Marcus:
+
+- **`room.md` must change with the deploy** (deliverable of this work): the
+  Services section's agentmail entry currently reads "Bearer key held by the
+  harness, never by the agent." Once the broker exists, the key is held by
+  neither — the honest entry points at `julian-broker` (endpoint, verbs,
+  auth: session token). `SPEC.md` §2's illustrative example can wait for
+  v0.3; the live room tells the truth on day one.
+- **Two kinds of credential**, a distinction ELF doesn't yet name: an
+  **identity token** (proof of who is asking — short-lived, room-issued; the
+  session token a door carries) versus an **environment credential** (the
+  power to act on a third-party service — long-lived, operator-issued). The
+  agent may carry the first, never the second. Candidate sentence for the
+  post-implementation PATTERNS revision, alongside the credential/state
+  separation (vault vs governor) and the singular-ledger learning.
+- **The broker is a Service, not a Surface** — doors call it directly with
+  their token rather than emitting `[ACTION] mail.send` markers, because
+  markers degrade to silence and have no reply path (the exact friction the
+  conformance runbook recorded), and a send needs its message id back.
+
+PATTERNS.md itself gets only a one-line pointer now; the full amendment
+waits until the broker is proven (tests green, first real send from a door),
+per the changelog discipline of absorbing proven learnings only.
+
 ## Deploy & operations
 
 1. `cd broker && wrangler deploy` (name `julian-broker`; vars: OIDC issuer,
