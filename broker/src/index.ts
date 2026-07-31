@@ -68,7 +68,9 @@ export default {
 
     const readMatch = url.pathname.match(/^\/mail\/messages\/([^/]+)$/);
     if (readMatch && req.method === 'GET') {
-      const id = decodeURIComponent(readMatch[1]);
+      // Malformed percent-encoding must be the caller's error, not a worker crash.
+      let id: string;
+      try { id = decodeURIComponent(readMatch[1]); } catch { return json({ error: 'invalid message id' }, 400); }
       const refusal = await reserve(env, auth.sub, 'mail', 'read', `id=${id}`);
       if (refusal) return refusal;
       return passthrough(await mailRead(env, id));

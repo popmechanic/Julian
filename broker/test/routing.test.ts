@@ -109,6 +109,28 @@ describe('mail routes', () => {
     expect(sends[0].sub).toBe('user_marcus');
   });
 
+  test('list and read: authed passthrough with reservation logged', async () => {
+    const { token, testEnv } = await authedEnv();
+    fetchMock.get('https://api.agentmail.to')
+      .intercept({ method: 'GET', path: `${INBOX_PATH}/messages` })
+      .reply(200, JSON.stringify({ messages: [] }), { headers: { 'content-type': 'application/json' } });
+    const list = await worker.fetch(authed(token, '/mail/messages'), testEnv);
+    expect(list.status).toBe(200);
+
+    fetchMock.get('https://api.agentmail.to')
+      .intercept({ method: 'GET', path: `${INBOX_PATH}/messages/msg_7` })
+      .reply(200, JSON.stringify({ message_id: 'msg_7' }), { headers: { 'content-type': 'application/json' } });
+    const read = await worker.fetch(authed(token, '/mail/messages/msg_7'), testEnv);
+    expect(read.status).toBe(200);
+    expect((await read.json() as { message_id: string }).message_id).toBe('msg_7');
+  });
+
+  test('read: malformed percent-encoding in id -> 400, not 500', async () => {
+    const { token, testEnv } = await authedEnv();
+    const res = await worker.fetch(authed(token, '/mail/messages/%zz'), testEnv);
+    expect(res.status).toBe(400);
+  });
+
   test('health: reports the mail trichotomy and contains no key material', async () => {
     const { token, testEnv } = await authedEnv();
     fetchMock.get('https://api.agentmail.to')
