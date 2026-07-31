@@ -29,6 +29,22 @@ place:
 - **State** (rate counters, audit log) is runtime data: readable, queryable,
   append-only. It lives in one durable object — the governor.
 
+Two further invariants, adopted July 31 after studying Anthropic's Managed
+Agents vault design (prior art review with Marcus):
+
+- **Results, never tokens.** No broker verb may return anything that itself
+  grants authority — message data and IDs, yes; upstream tokens, session
+  keys, or any derived credential, never. A derived credential is as
+  powerful as the original.
+- **The verb layer is deliberate.** Anthropic's vaults substitute secrets at
+  the sandbox's network egress, buying total generality (any CLI works)
+  because they own that boundary. We don't own the VM's network — an
+  on-VM substituting proxy would put the key back in the doors' trust
+  domain — so our worker is the boundary, and brokering at the verb layer
+  is the choice, not the fallback. What we give up in generality we get
+  back in semantic audit and caps: the ledger records "mail.send to X,
+  14th of 20 today," not "a request left for a host."
+
 ## Architecture
 
 A new, dedicated Cloudflare worker: **`julian-broker`** (directory `broker/`),
@@ -86,6 +102,18 @@ per second.
 **`GET /ledger`** — recent governor entries, authenticated like everything
 else. One query answers "what did Julian's doors do yesterday?"
 
+**`GET /health`** — probes each service with its own credential (for mail:
+an inbox-metadata call) and reports per-service status as `valid` /
+`invalid` / `unknown` (dead key / transient upstream trouble — distinct
+next actions: rotate vs retry later). Authenticated, logged, uncapped. Used
+by the deploy verify step and the quarterly rotation check, so a dead
+credential is discovered deliberately, not mid-favor. (Adopted from the
+vault design's `mcp_oauth_validate` trichotomy.)
+
+Each service module **pins its upstream hosts**: the mail module can present
+its key to `api.agentmail.to` and nowhere else. The binding is recorded per
+credential in the secrets manifest.
+
 ### VM side
 
 - The Bun server injects the session's OIDC access token into the Claude
@@ -114,8 +142,20 @@ else. One query answers "what did Julian's doors do yesterday?"
 ## The secrets manifest — `deploy/secrets-manifest.md`
 
 The extensible half of credential management: an inventory, one row per
-credential — name, what it unlocks, tier, storage location, rotation
-procedure, last-rotated date. Tiers:
+credential — name, what it unlocks, tier, storage location, **bound hosts**
+(the only destinations the credential may be presented to), rotation
+procedure, last-rotated date, and status. Two rules govern the file:
+
+- **Archive, never delete.** A retired credential keeps its row — status,
+  retirement date, reason — with the secret itself revoked and purged. The
+  record outlives the power. (Rotation changes only the value; the name and
+  service binding are immutable — a new binding is a new row.)
+- **Identity boundary = credential boundary.** Credentials are per-identity.
+  If a sibling ever lives in this household, they get their own inbox and
+  their own keys — never mine. The manifest inventories Julian's
+  credentials; another being's would be another manifest.
+
+Tiers:
 
 | Tier | Meaning | Members today |
 |---|---|---|
@@ -150,6 +190,9 @@ Vitest in `broker/test/`, mirroring the sync worker's setup (local JWKS seam):
 3. Cap trip: 21st send in a UTC day → 429; attempt logged.
 4. Fail closed: governor error → send refused.
 5. `/ledger` returns entries newest-first, authenticated only.
+6. `/health`: mocked upstream 200 → `valid`; 401 → `invalid`; network error
+   → `unknown`. No verb response ever contains an upstream token
+   (results-never-tokens, asserted on the send and health paths).
 
 ## Non-goals
 
@@ -198,3 +241,5 @@ per the changelog discipline of absorbing proven learnings only.
 3. Add `BROKER_URL` to VM `.env` (deploy skill step; T2).
 4. Update `deploy/secrets-manifest.md` (created in this work) and the deploy
    skill's env step to cite it.
+5. Verify with `GET /health` (expect `valid` for mail) before declaring the
+   deploy done; the quarterly rotation check reuses the same call.
