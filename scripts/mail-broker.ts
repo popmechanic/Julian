@@ -95,4 +95,9 @@ async function main() {
   if (!res.ok) process.exit(1);
 }
 
-if (import.meta.main) main();
+if (import.meta.main) {
+  main().catch((e: unknown) => {
+    console.error(`broker unreachable: ${e instanceof Error ? e.message : String(e)} — the door still stands; tell Marcus.`);
+    process.exit(1);
+  });
+}
