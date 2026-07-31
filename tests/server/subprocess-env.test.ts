@@ -16,11 +16,14 @@ describe('subprocessEnv', () => {
     const env = subprocessEnv({}, {}, '');
     expect('JULIAN_OIDC_TOKEN' in env).toBe(false);
   });
-  test('empty token drops a JULIAN_OIDC_TOKEN inherited from the base env', () => {
+  test('demo sessions carry no token: empty token also scrubs an inherited one', () => {
     // The server's own env must never hand a previous door's token to a new
-    // subprocess: no token captured means no token passed, full stop.
-    const env = subprocessEnv({ JULIAN_OIDC_TOKEN: 'someone-elses-token' }, {}, '');
-    expect('JULIAN_OIDC_TOKEN' in env).toBe(false);
+    // subprocess: no token captured means no token passed, full stop. This is
+    // what makes the demo call site safe — /api/session/start passes '' for a
+    // demo session, so an anonymous kiosk visitor's subprocess has no bearer
+    // to spend at the broker, whatever the server process inherited.
+    expect('JULIAN_OIDC_TOKEN' in subprocessEnv({ JULIAN_OIDC_TOKEN: 'someone-elses-token' }, {}, '')).toBe(false);
+    expect('JULIAN_OIDC_TOKEN' in subprocessEnv({ JULIAN_OIDC_TOKEN: 'stale-from-server-env' }, {}, '')).toBe(false);
   });
   test('the captured token wins over one inherited from the base env', () => {
     const env = subprocessEnv({ JULIAN_OIDC_TOKEN: 'stale' }, {}, 'fresh');

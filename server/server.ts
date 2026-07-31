@@ -1374,8 +1374,9 @@ const server = Bun.serve({
       if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      // The verified bearer, captured raw: it rides into the subprocess env so
-      // door-side tools can prove to julian-broker who is asking.
+      // The verified bearer, captured raw: it rides into the subprocess env of
+      // a normal session so door-side tools can prove to julian-broker who is
+      // asking. Demo sessions are spawned without it (see the call below).
       const oidcToken = bearerToken(req.headers);
       if (processAlive && (claudeProc || REMOTE_SESSION)) {
         return Response.json({ error: "Session already active", sessionId }, { status: 409, headers: corsHeaders(ALLOWED_ORIGIN) });
@@ -1413,7 +1414,10 @@ const server = Bun.serve({
         hasPreviousTranscript: previousTranscript.length > 0,
       });
 
-      spawnClaude(demoMode ? 'demo' : 'normal', oidcToken);
+      // Demo mode is the visitor-facing path: an anonymous kiosk session must
+      // never inherit the operator's bearer, or it could spend broker verbs
+      // (mail.send) with only the behavioral send gate in the way.
+      spawnClaude(demoMode ? 'demo' : 'normal', demoMode ? '' : oidcToken);
       lastActivity = Date.now();
 
       let wakeUpMessage: string;
