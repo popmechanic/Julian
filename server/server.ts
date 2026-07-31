@@ -15,6 +15,8 @@ import {
   createEventLog,
   parseClaudeCredentials,
   parseSculptorCredentials,
+  bearerToken,
+  subprocessEnv,
   ServerEvent,
 } from "./lib";
 import { extractStructured } from "./extract";
@@ -204,13 +206,13 @@ const verifier = buildVerifier(
 
 async function verifyToken(req: Request): Promise<boolean> {
   if (!OIDC_ISSUER) return true; // No issuer configured = skip auth (local dev)
-  // Check Authorization header, fall back to X-Authorization (exe.dev edge proxy strips Authorization)
-  const auth = req.headers.get("Authorization") || req.headers.get("X-Authorization");
-  if (!auth?.startsWith("Bearer ")) {
+  // Authorization, falling back to X-Authorization (exe.dev edge proxy strips Authorization)
+  const token = bearerToken(req.headers);
+  if (!token) {
     console.warn("[auth] No Authorization header in request");
     return false;
   }
-  return verifier.verify(auth.slice(7));
+  return verifier.verify(token);
 }
 
 // ── Token refresh ───────────────────────────────────────────────────────
@@ -706,7 +708,7 @@ function setScreenFace(state: 'sleeping' | 'on') {
   }).catch(() => {});
 }
 
-function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
+function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '') {
   sessionId = `julian-${new Date().toISOString().slice(0, 10)}-${++sessionCounter}`;
   sessionCostUsd = 0;
   actualModel = 'claude-opus-4-6'; // default until system event arrives
@@ -746,13 +748,7 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal') {
   const proc = spawn({
     cmd,
     cwd: WORKING_DIR,
-    env: {
-      ...process.env,
-      ...authEnv,
-      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-      CLAUDECODE: '',           // allow spawning Claude from within Claude
-      CLAUDE_CODE_ENTRYPOINT: '', // clear nesting guard
-    },
+    env: subprocessEnv(process.env, authEnv, oidcToken),
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -1378,6 +1374,10 @@ const server = Bun.serve({
       if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
+      // The verified bearer, captured raw: it rides into the subprocess env of
+      // a normal session so door-side tools can prove to julian-broker who is
+      // asking. Demo sessions are spawned without it (see the call below).
+      const oidcToken = bearerToken(req.headers);
       if (processAlive && (claudeProc || REMOTE_SESSION)) {
         return Response.json({ error: "Session already active", sessionId }, { status: 409, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
@@ -1405,6 +1405,9 @@ const server = Bun.serve({
       } catch (e) {
         console.error("[Session] Body parse failed:", e);
       }
+      // The kiosk lock binds regardless of request body: a bodyless POST on a
+      // DEMO_MODE=1 deployment must never spawn a normal session with a token.
+      if (FORCE_DEMO_MODE) demoMode = true;
 
       // Append user_session_start event
       append({
@@ -1414,7 +1417,10 @@ const server = Bun.serve({
         hasPreviousTranscript: previousTranscript.length > 0,
       });
 
-      spawnClaude(demoMode ? 'demo' : 'normal');
+      // Demo mode is the visitor-facing path: an anonymous kiosk session must
+      // never inherit the operator's bearer, or it could spend broker verbs
+      // (mail.send) with only the behavioral send gate in the way.
+      spawnClaude(demoMode ? 'demo' : 'normal', demoMode ? '' : oidcToken);
       lastActivity = Date.now();
 
       let wakeUpMessage: string;
