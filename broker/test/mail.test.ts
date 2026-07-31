@@ -27,7 +27,8 @@ describe('mail proxy — pinned host, bearer key, passthrough', () => {
   test('send POSTs to the pinned host with the bearer key', async () => {
     fetchMock.get(MAIL_HOST)
       .intercept({ method: 'POST', path: `${INBOX_PATH}/messages/send`,
-        headers: { authorization: 'Bearer test-key-abc' } })
+        headers: { authorization: 'Bearer test-key-abc' },
+        body: JSON.stringify({ to: ['a@b.c'], subject: 's', text: 'hi' }) })
       .reply(200, JSON.stringify({ message_id: 'msg_1' }), { headers: { 'content-type': 'application/json' } });
     const res = await mailSend(ENV, { to: ['a@b.c'], subject: 's', text: 'hi' });
     expect(res.status).toBe(200);

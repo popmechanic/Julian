@@ -10,9 +10,9 @@ function upstream(env: MailEnvSlice, path: string, init: RequestInit = {}): Prom
   return fetch(url, {
     ...init,
     headers: {
+      ...(init.headers ?? {}),
       Authorization: `Bearer ${env.AGENTMAIL_API_KEY}`,
       'Content-Type': 'application/json',
-      ...(init.headers ?? {}),
     },
   });
 }
