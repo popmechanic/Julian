@@ -49,7 +49,7 @@ const TOOLS = [
 
 const SERVICES = [
   { name: 'julian-sync', purpose: 'TinyBase MergeableStore sync (Durable Object); the shared record all doors converge into.', endpoint: 'https://julian-sync.julian-memory.workers.dev', auth: 'Pocket ID OIDC (souls.exe.xyz)' },
-  { name: 'julian-broker', purpose: 'Credential broker — doors get verbs, never keys. Mail verbs (send/list/read/health) for julian-marcus@agentmail.to with daily caps and an audit ledger (`bun scripts/mail-broker.ts --agent-doc`). Send gate applies: draft, show the human, wait.', endpoint: process.env.BROKER_URL || 'https://julian-broker.julian-memory.workers.dev', auth: 'Pocket ID OIDC session token (souls.exe.xyz); service keys held by the broker, never by agent or harness' },
+  { name: 'julian-broker', purpose: 'Credential broker — doors get verbs, never keys. Mail verbs (send/list/read/health) for julian-marcus@agentmail.to with daily caps and an audit ledger (`bun scripts/mail-broker.ts --agent-doc`). Send gate applies: draft, show the human, wait.', endpoint: 'https://julian-broker.julian-memory.workers.dev', auth: 'Pocket ID OIDC session token (souls.exe.xyz); service keys held by the broker, never by agent or harness' },
 ];
 
 export function buildRoomDoc(): string {
