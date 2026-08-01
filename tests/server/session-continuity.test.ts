@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, readdirSync, existsSync } from "node:fs";
+import { mkdtempSync, readdirSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Subprocess } from "bun";
@@ -50,6 +50,18 @@ const waitFor = async (pred: () => boolean, ms = 8000) => {
   while (!pred()) { if (Date.now() - t0 > ms) throw new Error("timeout"); await Bun.sleep(100); }
 };
 
+async function waitForServer(url: string, timeoutMs = 10000): Promise<void> {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    try {
+      const resp = await fetch(url);
+      if (resp.ok) return;
+    } catch {}
+    await Bun.sleep(200);
+  }
+  throw new Error(`Server did not start within ${timeoutMs}ms`);
+}
+
 beforeAll(async () => {
   serverProc = Bun.spawn(["bun", "run", "server/server.ts"], {
     cwd: resolve(import.meta.dir, "../.."),
@@ -60,19 +72,25 @@ beforeAll(async () => {
       OIDC_ISSUER: "", VITE_OIDC_ISSUER: "",           // no-auth local mode
       SESSION_STATE_PATH: STATE,
       FAKE_CLAUDE_LOG: LOG,
+      // Hermetic: never touch real ~/.claude credentials on the host — the
+      // fake CLI fixture needs no auth at all, so bypass the setup gate.
+      SKIP_AUTH_SETUP_CHECK: "1",
       PATH: `${resolve(import.meta.dir, "fixtures")}:${process.env.PATH}`, // fake claude wins
     },
     stdout: "pipe",
     stderr: "pipe",
   });
-  const t0 = Date.now();
-  while (Date.now() - t0 < 10000) {
-    try { if ((await fetch(`${BASE}/api/health`)).ok) break; } catch {}
-    await Bun.sleep(200);
-  }
+  await waitForServer(`${BASE}/api/health`);
 });
 
-afterAll(() => { serverProc?.kill(); });
+afterAll(async () => {
+  if (serverProc) {
+    serverProc.kill();
+    await serverProc.exited;
+    serverProc = null;
+  }
+  rmSync(tmp, { recursive: true, force: true });
+});
 
 describe("session continuity lifecycle", () => {
   let firstId = "";
@@ -149,7 +167,6 @@ describe("session continuity lifecycle", () => {
     const stdinRaw = (await Promise.all(readLogs("stdin").map((f) => f.text()))).join("\n");
     const stdin = extractStdinText(stdinRaw);
     expect(stdin).toContain("tail-after-fallback"); // the fallback spawn got the tail
-    const { rmSync } = await import("node:fs");
     rmSync(`${LOG}.fail-resume`); // disarm
   });
 

@@ -323,6 +323,9 @@ function loadAuthEnv(): Record<string, string> {
 }
 
 async function needsSetup(): Promise<boolean> {
+  // Hermetic escape for tests: no real ~/.claude credentials are available
+  // (or wanted) against a fake CLI fixture, so the setup gate is bypassed.
+  if (process.env.SKIP_AUTH_SETUP_CHECK === "1") return false;
   // Check if creds are currently valid
   const claudeCreds = loadClaudeCredentials();
   if (claudeCreds?.accessToken && claudeCreds.expiresAt > Date.now()) return false;

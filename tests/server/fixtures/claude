@@ -4,7 +4,12 @@
 // FAKE_CLAUDE_LOG so tests can assert on what the server actually did.
 const log = process.env.FAKE_CLAUDE_LOG!;
 const argv = process.argv.slice(2);
-await Bun.write(`${log}.argv.${Date.now()}`, JSON.stringify(argv));
+// Monotonic, zero-padded suffix — same-millisecond writes (argv vs. stdin,
+// or two spawns racing under load) must never collide or reorder under
+// readLogs' lexicographic sort.
+let n = 0;
+const nextSuffix = () => `${String(++n).padStart(4, "0")}-${process.pid}`;
+await Bun.write(`${log}.argv.${nextSuffix()}`, JSON.stringify(argv));
 
 const resumeIdx = argv.indexOf("--resume");
 const sidIdx = argv.indexOf("--session-id");
@@ -22,7 +27,7 @@ console.log(JSON.stringify({ type: "system", session_id: sessionId, model: "fake
 const decoder = new TextDecoder();
 for await (const chunk of Bun.stdin.stream()) {
   const text = decoder.decode(chunk);
-  await Bun.write(`${log}.stdin.${Date.now()}`, text);
+  await Bun.write(`${log}.stdin.${nextSuffix()}`, text);
   console.log(JSON.stringify({ type: "assistant", message: { id: "m1", content: [{ type: "text", text: "ok" }] } }));
   console.log(JSON.stringify({ type: "result", subtype: "success", num_turns: 1, usage: {} }));
 }
