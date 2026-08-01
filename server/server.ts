@@ -1527,7 +1527,18 @@ const server = Bun.serve({
       if (!(await verifyToken(req))) {
         return Response.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders(ALLOWED_ORIGIN) });
       }
-      append({ sessionId, type: 'user_session_end' });
+      let finalEnd = false;
+      try {
+        const body = await req.json() as { final?: boolean };
+        finalEnd = body?.final === true;
+      } catch { /* bodyless POST = plain pause, unchanged */ }
+      if (finalEnd) {
+        // Cleared BEFORE the kill: the exit handler's rewrite is guarded on a
+        // matching state read, so a final end stays final.
+        clearSessionState(SESSION_STATE_PATH);
+        console.log("[Session] Deliberate final end — resume state cleared");
+      }
+      append({ sessionId, type: 'user_session_end', final: finalEnd });
       if (claudeProc && processAlive) {
         claudeProc.kill();
         // Wait briefly for cleanup
