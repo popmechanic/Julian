@@ -12,3 +12,4 @@ with ` | escalated: <what>` appended when something was surfaced to
 Marcus.
 
 ---
+- 2026-08-01T09:35:55Z | thread: ba131041-05a4-4ece-b134-92ce0c0c9f8a | to: marcus.e@gmail.com | subject: Hi | Answered Marcus's five-month-old "hiiiii" from Feb 28 — first autonomous send under the first-contact covenant; the heartbeat works.
