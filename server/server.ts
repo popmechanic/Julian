@@ -29,6 +29,7 @@ import {
   writeSessionState,
   clearSessionState,
   decideSpawn,
+  type SessionState,
   type SpawnDecision,
 } from "./session-state";
 
@@ -721,6 +722,17 @@ function setScreenFace(state: 'sleeping' | 'on') {
   }).catch(() => {});
 }
 
+// Death is never load-bearing: resume state is a convenience, not a
+// prerequisite. A full or read-only disk must degrade continuity, never fail a
+// session start or take the server down with an unhandled rejection.
+function saveSessionState(state: SessionState) {
+  try {
+    writeSessionState(SESSION_STATE_PATH, state);
+  } catch (err) {
+    console.warn('[Session] state write failed:', err);
+  }
+}
+
 // The harness session id is the id everywhere — events, store rows, resume.
 // A fresh spawn mints one and hands it to the CLI with --session-id; a resume
 // adopts the id the state file remembers.
@@ -750,6 +762,11 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '', decisio
   // Local mode: spawn a Claude process with the full flag set. The harness does
   // not restore flags on resume, so every flag is re-passed on every spawn.
   spawnOutcome = new Promise((r) => { resolveSpawnOutcome = r; });
+  // Captured per spawn: the module-level slot belongs to whoever spawned last,
+  // so a slow-dying predecessor must settle its OWN promise, never the live
+  // spawn's. Without this, end → quick restart reports a spurious resume
+  // failure and clears the state of a session that is running fine.
+  const resolveThisSpawn = resolveSpawnOutcome;
 
   const cmd = [
         "claude",
@@ -787,7 +804,7 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '', decisio
   // Demo/kiosk sessions never write resume state — a visitor must never leave a
   // trail the operator's next session could resume into.
   if (mode === 'normal') {
-    writeSessionState(SESSION_STATE_PATH, { claudeSessionId: sessionId!, lastActive: Date.now(), model: actualModel });
+    saveSessionState({ claudeSessionId: sessionId!, lastActive: Date.now(), model: actualModel });
   }
 
   // Background: read stdout line-by-line and append typed events to the log
@@ -815,12 +832,12 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '', decisio
                 actualModel = parsed.model;
                 console.log(`[Claude] Model: ${actualModel}`);
               }
-              resolveSpawnOutcome('ready');
+              resolveThisSpawn('ready');
               if (parsed.session_id && parsed.session_id !== sessionId) {
                 // Defensive: the harness is the authority on the id.
                 console.log(`[Session] Harness reports id ${parsed.session_id} (minted ${sessionId}) — adopting`);
                 sessionId = parsed.session_id;
-                if (mode === 'normal') writeSessionState(SESSION_STATE_PATH, { claudeSessionId: parsed.session_id, lastActive: Date.now(), model: actualModel });
+                if (mode === 'normal') saveSessionState({ claudeSessionId: parsed.session_id, lastActive: Date.now(), model: actualModel });
               }
               append({
                 sessionId,
@@ -903,6 +920,15 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '', decisio
   // Detect process exit and clean up — no auto-restart
   proc.exited.then((code) => {
     console.log(`[Claude] Process exited (code ${code})`);
+    resolveThisSpawn('exited');
+    // A predecessor finishing its death throes after a newer spawn took over
+    // must not tear down the live session: its session_end, its nulling of
+    // claudeProc/processAlive, and its state rewrite would all orphan a
+    // process that is running fine. Only the current proc's exit ends things.
+    if (claudeProc !== proc) {
+      console.warn(`[Claude] Ignoring exit of superseded process (pid ${proc.pid}) — a newer session is live`);
+      return;
+    }
     const reason = code === 143 ? 'inactivity_timeout'
       : code === 0 ? 'user_ended'
       : 'process_crash';
@@ -910,12 +936,11 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '', decisio
     setScreenFace('sleeping');
     processAlive = false;
     claudeProc = null;
-    resolveSpawnOutcome('exited');
     // Pause, not death: refresh lastActive so the resume window starts now.
     // State survives every exit except a deliberate final end.
     const st = readSessionState(SESSION_STATE_PATH);
     if (st && sessionId && st.claudeSessionId === sessionId) {
-      writeSessionState(SESSION_STATE_PATH, { ...st, lastActive: Date.now() });
+      saveSessionState({ ...st, lastActive: Date.now() });
     }
     sessionId = null;
   });
@@ -1464,11 +1489,16 @@ const server = Bun.serve({
         hasPreviousTranscript: previousTranscript.length > 0,
       });
 
-      // Demo sessions never read resume state and never resume — the kiosk is
-      // always a first meeting. (decideSpawn returns fresh for demoMode too;
-      // the guard here means the operator's state is not even read.)
-      const state = demoMode ? null : readSessionState(SESSION_STATE_PATH);
-      let decision = decideSpawn(state, { demoMode, now: Date.now() });
+      // Two paths never read the state file at all:
+      //   - demo/kiosk: always a first meeting, and the operator's state is not
+      //     even read (decideSpawn would return fresh anyway).
+      //   - REMOTE_SESSION: it never WRITES state, so it must never read it —
+      //     a stale local file would otherwise suppress the tail and the room
+      //     block on a remote deployment, resuming a session that is not there.
+      const readsState = !demoMode && !REMOTE_SESSION;
+      let decision: SpawnDecision = readsState
+        ? decideSpawn(readSessionState(SESSION_STATE_PATH), { demoMode, now: Date.now() })
+        : { mode: 'fresh' };
       // Demo mode is the visitor-facing path: an anonymous kiosk session must
       // never inherit the operator's bearer, or it could spend broker verbs
       // (mail.send) with only the behavioral send gate in the way.

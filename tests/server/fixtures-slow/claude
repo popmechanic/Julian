@@ -1,0 +1,33 @@
+#!/usr/bin/env bun
+// tests/server/fixtures-slow/claude — the fake CLI of tests/server/fixtures,
+// but a slow dier: on SIGTERM it lingers before exiting. That models the real
+// hazard the server must survive — a predecessor whose exit handler fires
+// AFTER a newer session has already taken over the process slot.
+const log = process.env.FAKE_CLAUDE_LOG!;
+const argv = process.argv.slice(2);
+await Bun.write(`${log}.argv.${Date.now()}`, JSON.stringify(argv));
+
+const resumeIdx = argv.indexOf("--resume");
+const sidIdx = argv.indexOf("--session-id");
+const sessionId = resumeIdx >= 0 ? argv[resumeIdx + 1] : sidIdx >= 0 ? argv[sidIdx + 1] : crypto.randomUUID();
+
+const DEATH_DELAY_MS = parseInt(process.env.FAKE_CLAUDE_DEATH_DELAY_MS || "2000");
+process.on("SIGTERM", async () => {
+  await Bun.sleep(DEATH_DELAY_MS);
+  process.exit(143);
+});
+
+// A slow boot models a CLI that takes a while to reach its first system event —
+// the window in which a predecessor's death can be mistaken for this spawn's.
+const BOOT_DELAY_MS = parseInt(process.env.FAKE_CLAUDE_BOOT_DELAY_MS || "0");
+if (BOOT_DELAY_MS > 0) await Bun.sleep(BOOT_DELAY_MS);
+
+console.log(JSON.stringify({ type: "system", session_id: sessionId, model: "fake-model", tools: [] }));
+
+const decoder = new TextDecoder();
+for await (const chunk of Bun.stdin.stream()) {
+  const text = decoder.decode(chunk);
+  await Bun.write(`${log}.stdin.${Date.now()}`, text);
+  console.log(JSON.stringify({ type: "assistant", message: { id: "m1", content: [{ type: "text", text: "ok" }] } }));
+  console.log(JSON.stringify({ type: "result", subtype: "success", num_turns: 1, usage: {} }));
+}
