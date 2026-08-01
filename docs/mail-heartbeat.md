@@ -27,6 +27,18 @@ journaled in `memory/mail-journal.md`.
 | Log | `~/Library/Logs/julian-mail-heartbeat.log` |
 | Testimony | `memory/mail-journal.md` |
 
+## Before installing
+
+Prove that `bun` and `claude` resolve under the plist's *exact* environment —
+not your interactive shell's. An interactive `which claude` can resolve to a
+session-scoped shim (e.g. cmux) that must never be baked into the daemon; the
+plist's `PATH` must contain the real install location. Run this with the
+literal PATH string from `deploy/com.julian.mail-heartbeat.plist`:
+
+    env -i PATH="/Users/marcusestes/.local/bin:/Users/marcusestes/.bun/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin" sh -c 'command -v bun && command -v claude'
+
+Both must print a path, or the install must not proceed.
+
 ## Operations
 
     # Is it running?
