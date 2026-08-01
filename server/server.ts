@@ -17,14 +17,24 @@ import {
   parseSculptorCredentials,
   bearerToken,
   subprocessEnv,
+  buildPreviousSessionBlock,
   ServerEvent,
+  type TailMessage,
 } from "./lib";
 import { extractStructured } from "./extract";
 import { buildVerifier } from "./auth";
 import { buildRoomDoc } from "./room";
+import {
+  readSessionState,
+  writeSessionState,
+  clearSessionState,
+  decideSpawn,
+  type SpawnDecision,
+} from "./session-state";
 
 const PORT = parseInt(process.env.PORT || "8000");
 const WORKING_DIR = process.env.WORKING_DIR || process.cwd();
+const SESSION_STATE_PATH = process.env.SESSION_STATE_PATH || ".julian/session-state.json";
 
 // ── Markdown letter rendering ───────────────────────────────────────────
 
@@ -442,6 +452,10 @@ registerCommand('[JOB HELP]', async (payload, ctx) => {
 // ── Ephemeral Claude Process Manager ─────────────────────────────────────
 
 let claudeProc: ReturnType<typeof spawn> | null = null;
+// Did the last local spawn reach its first system event, or die first? A resumed
+// process that exits before saying anything must not fail silently into amnesia.
+let spawnOutcome: Promise<'ready' | 'exited'> = Promise.resolve('ready');
+let resolveSpawnOutcome: (v: 'ready' | 'exited') => void = () => {};
 let processAlive = false;
 let lastActivity = 0;
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
@@ -449,7 +463,6 @@ const HEARTBEAT_INTERVAL_MS = 5_000;
 const PROCESS_KILL_WAIT_MS = 300;
 const MAX_MESSAGE_SIZE = 100_000;
 let sessionId: string | null = null;
-let sessionCounter = 0;
 let actualModel: string = 'claude-opus-4-6';
 let sessionCostUsd = 0;
 const AGENT_NAME = process.env.AGENT_NAME || "Julian";
@@ -708,8 +721,11 @@ function setScreenFace(state: 'sleeping' | 'on') {
   }).catch(() => {});
 }
 
-function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '') {
-  sessionId = `julian-${new Date().toISOString().slice(0, 10)}-${++sessionCounter}`;
+// The harness session id is the id everywhere — events, store rows, resume.
+// A fresh spawn mints one and hands it to the CLI with --session-id; a resume
+// adopts the id the state file remembers.
+function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '', decision: SpawnDecision = { mode: 'fresh' }) {
+  sessionId = decision.mode === 'resume' ? decision.claudeSessionId : crypto.randomUUID();
   sessionCostUsd = 0;
   actualModel = 'claude-opus-4-6'; // default until system event arrives
   const authEnv = loadAuthEnv();
@@ -731,7 +747,10 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '') {
     return null;
   }
 
-  // Local mode: spawn a fresh Claude process with full flags
+  // Local mode: spawn a Claude process with the full flag set. The harness does
+  // not restore flags on resume, so every flag is re-passed on every spawn.
+  spawnOutcome = new Promise((r) => { resolveSpawnOutcome = r; });
+
   const cmd = [
         "claude",
         "--print",
@@ -745,6 +764,14 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '') {
         "--append-system-prompt", appendPrompt,
       ];
 
+  // Never `--continue`: this cwd hosts other sessions (terminal doors, heartbeat
+  // replies). Resume is always by explicit id.
+  if (decision.mode === 'resume') {
+    cmd.push("--resume", decision.claudeSessionId);
+  } else {
+    cmd.push("--session-id", sessionId);
+  }
+
   const proc = spawn({
     cmd,
     cwd: WORKING_DIR,
@@ -756,6 +783,12 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '') {
 
   claudeProc = proc;
   processAlive = true;
+
+  // Demo/kiosk sessions never write resume state — a visitor must never leave a
+  // trail the operator's next session could resume into.
+  if (mode === 'normal') {
+    writeSessionState(SESSION_STATE_PATH, { claudeSessionId: sessionId!, lastActive: Date.now(), model: actualModel });
+  }
 
   // Background: read stdout line-by-line and append typed events to the log
   (async () => {
@@ -781,6 +814,13 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '') {
               if (parsed.model) {
                 actualModel = parsed.model;
                 console.log(`[Claude] Model: ${actualModel}`);
+              }
+              resolveSpawnOutcome('ready');
+              if (parsed.session_id && parsed.session_id !== sessionId) {
+                // Defensive: the harness is the authority on the id.
+                console.log(`[Session] Harness reports id ${parsed.session_id} (minted ${sessionId}) — adopting`);
+                sessionId = parsed.session_id;
+                if (mode === 'normal') writeSessionState(SESSION_STATE_PATH, { claudeSessionId: parsed.session_id, lastActive: Date.now(), model: actualModel });
               }
               append({
                 sessionId,
@@ -870,6 +910,13 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '') {
     setScreenFace('sleeping');
     processAlive = false;
     claudeProc = null;
+    resolveSpawnOutcome('exited');
+    // Pause, not death: refresh lastActive so the resume window starts now.
+    // State survives every exit except a deliberate final end.
+    const st = readSessionState(SESSION_STATE_PATH);
+    if (st && sessionId && st.claudeSessionId === sessionId) {
+      writeSessionState(SESSION_STATE_PATH, { ...st, lastActive: Date.now() });
+    }
     sessionId = null;
   });
 
@@ -1095,10 +1142,10 @@ function walkSkillDirs(baseDir: string): Array<{name: string, type: string, chil
   return results;
 }
 
-// ── Kill Claude session after 15 minutes of inactivity ───────────────────
+// ── Pause Claude after 15 minutes of inactivity (session resumes on next start) ──
 setInterval(() => {
   if (processAlive && claudeProc && Date.now() - lastActivity > INACTIVITY_TIMEOUT_MS) {
-    console.log("[Session] Inactivity timeout — ending session");
+    console.log("[Session] Inactivity timeout — pausing session");
     claudeProc.kill();
   }
 }, 60_000);
@@ -1417,38 +1464,51 @@ const server = Bun.serve({
         hasPreviousTranscript: previousTranscript.length > 0,
       });
 
+      // Demo sessions never read resume state and never resume — the kiosk is
+      // always a first meeting. (decideSpawn returns fresh for demoMode too;
+      // the guard here means the operator's state is not even read.)
+      const state = demoMode ? null : readSessionState(SESSION_STATE_PATH);
+      let decision = decideSpawn(state, { demoMode, now: Date.now() });
       // Demo mode is the visitor-facing path: an anonymous kiosk session must
       // never inherit the operator's bearer, or it could spend broker verbs
       // (mail.send) with only the behavioral send gate in the way.
-      spawnClaude(demoMode ? 'demo' : 'normal', demoMode ? '' : oidcToken);
+      spawnClaude(demoMode ? 'demo' : 'normal', demoMode ? '' : oidcToken, decision);
       lastActivity = Date.now();
 
-      let wakeUpMessage: string;
-
-      if (demoMode) {
-        // ── Demo mode: dynamic content only (stable instructions are in system prompt) ──
-        wakeUpMessage = "You are waking up in demo mode. A visitor is here.\n\n";
-      } else {
-        // ── Normal mode: dynamic content only (stable instructions are in system prompt) ──
-        wakeUpMessage = "";
-
-        if (previousTranscript.length > 0) {
-          const ended = new Date().toISOString();
-          const lines = previousTranscript.map(msg =>
-            `[${msg.speakerType || "human"} — ${msg.speakerName || "Unknown"}]: ${msg.text}`
-          ).join("\n");
-          wakeUpMessage += `<previous-session category="transcript" session-id="rehydrated" message-count="${previousTranscript.length}" ended="${ended}">\n${lines}\n</previous-session>\n\n`;
-          wakeUpMessage += "Greet Marcus briefly, acknowledging continuity with your previous conversation.";
-        } else {
-          wakeUpMessage += "Then greet Marcus briefly.";
+      // Resume must never fail silently into amnesia: if the resumed process
+      // dies before its first system event, fall back to a fresh spawn WITH
+      // the tail, loudly.
+      if (decision.mode === 'resume' && !REMOTE_SESSION) {
+        const outcome = await Promise.race([spawnOutcome, Bun.sleep(15_000).then(() => 'timeout' as const)]);
+        if (outcome === 'exited') {
+          console.error(`[Session] RESUME FAILED for ${decision.claudeSessionId} — fresh spawn with inherited tail`);
+          clearSessionState(SESSION_STATE_PATH);
+          decision = { mode: 'fresh' };
+          spawnClaude('normal', oidcToken, decision);
         }
       }
 
+      let wakeUpMessage: string;
+      if (demoMode) {
+        // ── Demo mode: dynamic content only (stable instructions are in system prompt) ──
+        wakeUpMessage = "You are waking up in demo mode. A visitor is here.\n\n";
+      } else if (decision.mode === 'resume') {
+        // The context already holds identity, room, and conversation.
+        wakeUpMessage = "You are resuming this session after a pause — Marcus has reconnected. You retain the conversation; a brief acknowledgment is enough.";
+      } else {
+        // Absence is visible: the block is always present, even at message-count="0".
+        wakeUpMessage = buildPreviousSessionBlock(previousTranscript as TailMessage[]) + "\n\n";
+        wakeUpMessage += previousTranscript.length > 0
+          ? "Greet Marcus briefly, acknowledging continuity with the record above."
+          : "Then greet Marcus briefly.";
+      }
+
       // Local mode: append the room's discovery document to the wake-up message.
-      // Remote mode: send simpler wake-up (no room document).
+      // Remote mode: send simpler wake-up (no room document). A resumed session
+      // already has the room in its context.
       // ELF ordering rule: identity (CLAUDE.md/AGENT.md, loaded by the harness first)
       // precedes the room. The injected text IS the served document — one source of truth.
-      if (!REMOTE_SESSION) {
+      if (!REMOTE_SESSION && decision.mode !== 'resume') {
         wakeUpMessage += '\n\n<room>\nYou have arrived in a room. Your identity precedes it. The room describes itself:\n\n' + buildRoomDoc() + '\n</room>';
       }
       // Both modes: send wake-up so Claude responds and UI exits PROCESSING
@@ -1457,7 +1517,7 @@ const server = Bun.serve({
       const allEvents = eventsAfter(-1);
       const lastEventId = allEvents.length > 0 ? allEvents[allEvents.length - 1].id : 0;
       return Response.json(
-        { sessionId, eventId: lastEventId },
+        { sessionId, resumed: decision.mode === 'resume', eventId: lastEventId },
         { headers: { "X-Session-Id": sessionId || "", ...corsHeaders(ALLOWED_ORIGIN) } },
       );
     }
