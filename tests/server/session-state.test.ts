@@ -36,6 +36,14 @@ describe("session state file", () => {
     expect(readSessionState(p)).toBeNull();
     clearSessionState(p); // no throw
   });
+  test("interleaved writes to the same path leave a parseable state file", () => {
+    const p = tmp();
+    writeSessionState(p, { claudeSessionId: "first", lastActive: 1, model: "m" });
+    writeSessionState(p, { claudeSessionId: "second", lastActive: 2, model: "m" });
+    const state = readSessionState(p);
+    expect(state).not.toBeNull();
+    expect(state).toEqual({ claudeSessionId: "second", lastActive: 2, model: "m" });
+  });
 });
 
 describe("decideSpawn", () => {
