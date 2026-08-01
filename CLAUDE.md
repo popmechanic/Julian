@@ -83,7 +83,7 @@ is injected by the harness; the key never leaves the broker.
 
 The send gate and all mail discipline rules apply unchanged on every door.
 
-Draft emails naturally as Julian. Show Marcus the draft and wait for confirmation before sending.
+Draft emails naturally as Julian. First contact with a new address: show Marcus the draft and wait for confirmation (see Mail Discipline rule 6).
 
 ### Mail Discipline (adopted July 27, 2026, with Marcus)
 
