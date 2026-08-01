@@ -37,6 +37,29 @@ spawns) will crash the spawn rather than degrade gracefully. Server wiring
 that resumes an existing session must use `--resume`, never `--session-id`,
 once an id has been used once.
 
+## Re-verification (second independent run, 2026-08-01)
+
+The spike was re-run from a clean worktree against the same installed CLI
+(v2.1.220) to confirm the findings above are reproducible and not an artifact
+of one session. Fresh session id for this run:
+`d8acfa3c-e6af-45ff-ac28-933f1d31b94c`. Verbatim console outcomes:
+
+```
+A exit: 0        session_id: d8acfa3c-e6af-45ff-ac28-933f1d31b94c
+B exit: 0        contains aurora-42: true
+C reported session_id: d8acfa3c-e6af-45ff-ac28-933f1d31b94c  same: true
+D exit: 0        contains aurora-42: true
+E exit: 1        STDERR: Error: Session ID d8acfa3c-e6af-45ff-ac28-933f1d31b94c is already in use.
+```
+
+All five letters reproduced identically: `--session-id` honored on first use,
+`--resume` restores context across separate process spawns, the id is stable
+across resume (no fork), `--append-system-prompt` composes with `--resume`
+without disrupting restoration, and reusing a spent `--session-id` is a hard
+exit-1 error. No flag in the resume path hard-fails against the installed CLI,
+so the server-wiring design (resume by explicit `--resume <id>`, never
+`--continue`, never `--session-id` on a spent id) is clear to proceed.
+
 ## Not exercised
 
 Compaction visibility in print mode (whether/how a compaction event surfaces
