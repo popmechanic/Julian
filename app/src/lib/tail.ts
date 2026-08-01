@@ -22,8 +22,18 @@ export function selectTail(store: Store): TailMessage[] {
   const out: TailMessage[] = [];
   let chars = 0;
   for (let i = rows.length - 1; i >= 0; i--) {
-    const text = String(rows[i].text);
-    if (out.length >= TAIL_MAX_MESSAGES || chars + text.length > TAIL_MAX_CHARS) break;
+    let text = String(rows[i].text);
+    if (out.length >= TAIL_MAX_MESSAGES) break;
+    if (chars + text.length > TAIL_MAX_CHARS) {
+      // The budget degrades rather than emptying the tail: when the single
+      // newest message alone exceeds the char budget, include it truncated
+      // to exactly the budget and stop — nothing else fits.
+      if (out.length === 0) {
+        text = text.slice(0, TAIL_MAX_CHARS);
+      } else {
+        break;
+      }
+    }
     chars += text.length;
     const role = String(rows[i].role || 'user');
     out.unshift({
