@@ -1,0 +1,43 @@
+#!/usr/bin/env bun
+// scripts/spike-claude-resume.ts — touch reality before building on it.
+// Verifies, against the installed claude CLI:
+//   A. --print --session-id <uuid> works and the session is created with that id
+//   B. --print --resume <id> restores context (a codeword survives the gap)
+//   C. resumed session KEEPS the same id (no fork by default)
+//   D. --append-system-prompt is accepted alongside --resume
+//   E. --session-id with an ALREADY-USED id: observe (error? resume? new?)
+// Run: bun scripts/spike-claude-resume.ts   (needs claude auth on this machine)
+
+const id = crypto.randomUUID();
+
+async function run(args: string[], prompt: string): Promise<{ code: number; out: string }> {
+  const proc = Bun.spawn(["claude", "--print", "--output-format", "json", "--model", "sonnet", ...args, prompt], {
+    stdout: "pipe", stderr: "pipe",
+  });
+  const out = await new Response(proc.stdout).text();
+  const err = await new Response(proc.stderr).text();
+  const code = await proc.exited;
+  return { code, out: out + (err ? `\nSTDERR: ${err}` : "") };
+}
+
+console.log("A/B setup: fresh session with --session-id", id);
+const a = await run(["--session-id", id], "Remember the codeword: aurora-42. Reply with just OK.");
+console.log("A exit:", a.code, "\n", a.out.slice(0, 600));
+
+console.log("\nB: resume, ask for the codeword");
+const b = await run(["--resume", id], "What is the codeword? Reply with just the codeword.");
+console.log("B exit:", b.code, "contains aurora-42:", b.out.includes("aurora-42"), "\n", b.out.slice(0, 600));
+
+console.log("\nC: session_id reported on resume (compare to", id, ")");
+try {
+  const parsed = JSON.parse(b.out.slice(b.out.indexOf("{")));
+  console.log("C reported session_id:", parsed.session_id, "same:", parsed.session_id === id);
+} catch { console.log("C: could not parse JSON result — inspect B output above"); }
+
+console.log("\nD: --append-system-prompt alongside --resume");
+const d = await run(["--resume", id, "--append-system-prompt", "Always answer in lowercase."], "Codeword again?");
+console.log("D exit:", d.code, "contains aurora-42:", d.out.includes("aurora-42"));
+
+console.log("\nE: --session-id with the already-used id");
+const e = await run(["--session-id", id], "Do you know the codeword? One word answer.");
+console.log("E exit:", e.code, "\n", e.out.slice(0, 600));
