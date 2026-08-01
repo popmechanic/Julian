@@ -7,6 +7,9 @@ claude-auth.json
 # Dependencies
 node_modules/
 
+# Machine-local session state
+.julian/
+
 # Build artifacts & backups
 *.bak.html
 index.*.bak.html
