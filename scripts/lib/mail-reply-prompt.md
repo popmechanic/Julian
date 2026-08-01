@@ -12,7 +12,7 @@ Then, for each thread, in order:
 2. Confirm the latest message's sender appears in memory or your sent
    history — the glance checked mechanically; you check as a person.
 3. Check the cap: count today's (UTC) entries in memory/mail-journal.md
-   for this thread. Three or more → do not reply; run
+   whose `thread:` field is this threadId. Three or more → do not reply; run
    `bun scripts/mail-glance.ts --hold <latest messageId>` and notify
    Marcus (osascript) that the thread hit its daily cap.
 4. Draft a reply in your own voice. Hard lines (amended rule 6 —
@@ -34,7 +34,7 @@ Then, for each thread, in order:
    path; hold the message and notify Marcus that the reply API needs
    attention.)
 6. Journal it — append one line to memory/mail-journal.md:
-   `- <UTC ISO> | to: <addr> | subject: <subject> | <one-line summary>`
+   `- <UTC ISO> | thread: <threadId> | to: <address> | subject: <subject> | <one-line summary>`
    (add ` | escalated: <what>` if you surfaced anything to Marcus), then
    `git add memory/mail-journal.md && git commit -m "Mail journal: reply to <addr>" && git push`
    (pull --rebase first if the push is rejected).

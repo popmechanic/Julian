@@ -6,10 +6,10 @@
 
 import { homedir } from 'os';
 import { join } from 'path';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import {
-  classifyThreads, knownFromSent,
-  type MailMessage, type MailThread,
+  classifyThreads, knownFromSent, hasSafeIds, parseStateFile,
+  type HeartbeatState, type MailMessage, type MailThread,
 } from './lib/mail-glance-lib';
 
 const INBOX = 'julian-marcus@agentmail.to';
@@ -19,11 +19,10 @@ const DRY = process.env.DRY_RUN === '1';
 const STATE_DIR = join(homedir(), '.julian');
 const STATE_PATH = join(STATE_DIR, 'mail-heartbeat.json');
 
-// The whole alphabet an id may use before it reaches the spawned session's
-// instructions. Ids outside it are skipped, never escaped.
-const SAFE_ID = /^[A-Za-z0-9_.:-]+$/;
-
-interface State { strangerWatermarkMs: number; held: string[]; updatedAt: string }
+// The state shape and every guard below it are the library's (and so are
+// unit-tested there): the id alphabet that may reach the spawned session's
+// instructions, and the strict parse of the state file.
+type State = HeartbeatState;
 
 function notify(text: string) {
   if (DRY) { console.log('[dry] notify:', text); return; }
@@ -41,7 +40,9 @@ function abort(text: string, code = 1): never {
 function usage(): never {
   console.error('usage: mail-glance.ts                     run one beat');
   console.error('       mail-glance.ts --hold <messageId>  park a thread');
-  process.exit(2);
+  // Routed through abort() like every other failure: no stop path in this
+  // file is silent, so a mistyped invocation still reaches Marcus.
+  abort('unrecognized arguments — no beat run, nothing sent', 2);
 }
 
 function freshState(): State {
@@ -61,36 +62,23 @@ function loadState(): State {
     abort(`state file unreadable at ${STATE_PATH} — beat aborted, nothing sent`);
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    abort(`state file is not valid JSON at ${STATE_PATH} — beat aborted, nothing sent`);
+  const parsed = parseStateFile(raw);
+  if (!parsed.ok) {
+    abort(`state file corrupt (${parsed.reason}) at ${STATE_PATH} — beat aborted, nothing sent`);
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    abort(`state file is not an object at ${STATE_PATH} — beat aborted, nothing sent`);
-  }
-
-  const s = parsed as Record<string, unknown>;
-  const watermark = s.strangerWatermarkMs ?? 0;
-  const held = s.held ?? [];
-  if (typeof watermark !== 'number' || !Number.isFinite(watermark)) {
-    abort(`state file has a bad strangerWatermarkMs at ${STATE_PATH} — beat aborted, nothing sent`);
-  }
-  if (!Array.isArray(held) || held.some((h) => typeof h !== 'string')) {
-    abort(`state file has a bad held list at ${STATE_PATH} — beat aborted, nothing sent`);
-  }
-  return {
-    strangerWatermarkMs: watermark,
-    held: held as string[],
-    updatedAt: typeof s.updatedAt === 'string' ? s.updatedAt : '',
-  };
+  return parsed.state;
 }
 
+// Write through a temp file and rename: rename is atomic within the
+// directory, so an interrupted beat can never leave a half-written file
+// behind. A torn write would read as corrupt, and corruption halts every
+// future beat — the heartbeat must not be able to stop its own heart.
 function writeState(s: State) {
   if (DRY) { console.log('[dry] would save state:', JSON.stringify(s)); return; }
   mkdirSync(STATE_DIR, { recursive: true });
-  writeFileSync(STATE_PATH, JSON.stringify({ ...s, updatedAt: new Date().toISOString() }, null, 2));
+  const tmp = `${STATE_PATH}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ ...s, updatedAt: new Date().toISOString() }, null, 2));
+  renameSync(tmp, STATE_PATH);
 }
 
 // Beat-side save: re-read the file immediately before writing and union the
@@ -108,22 +96,17 @@ function saveBeatState(s: State) {
   });
 }
 
-function isSafeId(v: unknown): boolean {
-  return typeof v === 'string' && SAFE_ID.test(v);
-}
-
-// threadIds and messageIds are remote-controlled, and the thread ids are the
-// only such strings that reach the spawned session's instructions. Reject
-// rather than escape: a thread carrying an odd id is left for Marcus.
-function hasSafeIds(t: MailThread): boolean {
-  return isSafeId(t.threadId) && t.messages.every((m) => isSafeId(m.messageId));
-}
-
 // Latest arrival in a thread by timestamp rather than array position — the
-// same rule the classifier uses. Unparseable timestamps are ignored.
+// same rule the classifier uses. Individual unparseable timestamps are
+// ignored; when NOTHING in the thread parses we return now, so the thread
+// reads as newly arrived and clears the watermark. That deliberately
+// re-notifies on every beat for as long as the anomaly persists — loud
+// beats silent, and a stranger with a garbled clock deserves attention
+// until it is handled. An unparseable timestamp must never mean "never
+// notified".
 function latestMs(t: MailThread): number {
   const times = t.messages.map((m) => Date.parse(m.timestamp)).filter((n) => !Number.isNaN(n));
-  return times.length ? Math.max(...times) : 0;
+  return times.length ? Math.max(...times) : Date.now();
 }
 
 async function get(path: string): Promise<unknown> {
@@ -166,14 +149,22 @@ async function main() {
   const freshStrangers = strangers.filter((t) => latestMs(t) > state.strangerWatermarkMs);
   if (freshStrangers.length) {
     notify(`${freshStrangers.length} new thread(s) from unknown senders — quarantined, unread`);
+    // Clamp every candidate to now before advancing. A single unsolicited
+    // message stamped 2099 would otherwise push the watermark past every
+    // real arrival and silence stranger notifications forever — a stranger
+    // reaching in to switch off the notification half of the constraint.
+    const now = Date.now();
     state.strangerWatermarkMs = Math.max(
       state.strangerWatermarkMs,
-      ...freshStrangers.map(latestMs),
+      ...freshStrangers.map((t) => Math.min(latestMs(t), now)),
     );
     saveBeatState(state);
   }
 
-  const safe = eligible.filter(hasSafeIds);
+  // threadIds and messageIds are remote-controlled, and the thread ids are
+  // the only such strings that reach the spawned session's instructions.
+  // Reject rather than escape: a thread carrying an odd id is left for Marcus.
+  const safe = eligible.filter((t) => hasSafeIds(t));
   const skipped = eligible.length - safe.length;
   if (skipped) {
     notify(`${skipped} eligible thread(s) skipped — unexpected characters in remote ids`);
