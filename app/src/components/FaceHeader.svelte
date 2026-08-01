@@ -10,8 +10,8 @@
 <script lang="ts">
   import PixelFace from './PixelFace.svelte';
 
-  let { sessionActive, processing = false, onEnd }: {
-    sessionActive: boolean; processing?: boolean; onEnd: () => void;
+  let { sessionActive, processing = false, onEnd, onEndFinal }: {
+    sessionActive: boolean; processing?: boolean; onEnd: () => void; onEndFinal: () => void;
   } = $props();
 
   const status = $derived(statusFor(sessionActive, processing));
@@ -30,6 +30,7 @@
     </div>
     {#if sessionActive}
       <button class="end" onclick={onEnd}>END</button>
+      <button class="end-final" title="End session (final)" onclick={onEndFinal}>end session</button>
     {/if}
   </div>
 </header>
@@ -89,5 +90,24 @@
     padding: 4px 10px;
     cursor: pointer;
     text-transform: uppercase;
+  }
+  /* Deliberate final end: visually quieter than the pause control — lowercase,
+     dimmer, no filled background — so it reads as the rarer, weightier action. */
+  .end-final {
+    font-family: var(--font-terminal);
+    font-size: 0.7rem;
+    color: var(--j-gray-333);
+    background: transparent;
+    border: 1px solid var(--j-gray-333);
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+    text-transform: lowercase;
+    opacity: 0.6;
+    transition: opacity 200ms ease, color 200ms ease;
+  }
+  .end-final:hover {
+    opacity: 1;
+    color: var(--j-red);
   }
 </style>
