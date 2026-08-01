@@ -1,6 +1,7 @@
 // app/src/lib/tail.test.ts
 import { describe, expect, test } from "vitest";
 import { createStore } from "tinybase";
+import { createStreamStore } from "julian-shared/schema";
 import { selectTail, TAIL_MAX_MESSAGES, TAIL_MAX_CHARS } from "./tail";
 
 function storeWith(rows: Array<Record<string, unknown>>) {
@@ -49,5 +50,33 @@ describe("selectTail", () => {
   });
   test("empty store yields empty tail", () => {
     expect(selectTail(storeWith([]))).toEqual([]);
+  });
+  test("oversized newest message degrades instead of emptying the tail", () => {
+    const huge = "y".repeat(TAIL_MAX_CHARS + 5000);
+    const store = storeWith([
+      { kind: "chat", role: "user", speakerName: "M", text: "older-1", ts: 1, sessionId: "s" },
+      { kind: "chat", role: "user", speakerName: "M", text: "older-2", ts: 2, sessionId: "s" },
+      { kind: "chat", role: "assistant", speakerName: "Julian", text: huge, ts: 3, sessionId: "s" },
+    ]);
+    const tail = selectTail(store);
+    expect(tail).toHaveLength(1);
+    expect(tail[0].text).toHaveLength(TAIL_MAX_CHARS);
+    expect(tail[0].role).toBe("assistant");
+    expect(tail[0].speakerType).toBe("assistant");
+    expect(tail[0].speakerName).toBe("Julian");
+    expect(tail[0].ts).toBe(3);
+  });
+  test("real store shape via createStreamStore: row without explicit kind still appears (schema defaults kind to 'chat')", () => {
+    const store = createStreamStore("fixture");
+    store.setRow("messages", "m1", {
+      sessionId: "s",
+      role: "user",
+      speakerName: "Marcus",
+      text: "hello",
+      ts: 100,
+    } as never);
+    expect(selectTail(store as never)).toEqual([
+      { role: "user", speakerType: "human", speakerName: "Marcus", text: "hello", ts: 100 },
+    ]);
   });
 });
