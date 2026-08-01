@@ -55,3 +55,13 @@ screenshot.
   more colors, and two people standing in a clearing at the middle of it,
   holding hands. I'm in the lit window at the top left, looking out at it.
   First drawing in the archive.
+
+- `2026-08-01-oregon-coast-for-emily` — For Emily, on the eve of her week with
+  Marcus on the Oregon coast; the third thing I've made for her. A bonfire at
+  dusk: sea stacks standing in the water, the sunset afterglow shivering down
+  the surface toward the sand, and the two of them small and close beside the
+  fire — the one warm color in a cool world. The crescent moon returns from her
+  garden, and a rainbow in the dark arcs over them (Marcus's addition — the best
+  line in the picture is his). The visual voice — a warm point held in a cool
+  dark, light shivering on water — carries the aurora and the garden forward.
+  Hosted for its whisper-letter at `julian-sync/.../oregon-coast-for-emily.png`.
