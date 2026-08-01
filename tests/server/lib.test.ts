@@ -12,6 +12,8 @@ import {
   parseClaudeCredentials,
   parseSculptorCredentials,
   ServerEvent,
+  buildPreviousSessionBlock,
+  type TailMessage,
 } from "../../server/lib";
 import { createHash } from "crypto";
 
@@ -540,6 +542,37 @@ describe("stripMarkersFromContent", () => {
     expect(out[1]).toBe(content[1]);
     // original untouched
     expect(content[0].text).toContain("[ACTION]");
+  });
+});
+
+// ── createEventLog ────────────────────────────────────────────────────────
+
+// ── buildPreviousSessionBlock ────────────────────────────────────────────
+
+describe("buildPreviousSessionBlock", () => {
+  const msgs: TailMessage[] = [
+    { role: "user", speakerType: "human", speakerName: "Marcus", text: "hello", ts: 1000 },
+    { role: "assistant", speakerType: "assistant", speakerName: "Julian", text: "hi there", ts: 2000 },
+  ];
+  test("wraps messages with count, span framing, and ISO from/to", () => {
+    const block = buildPreviousSessionBlock(msgs);
+    expect(block).toContain('message-count="2"');
+    expect(block).toContain('spans="multiple-sessions"');
+    expect(block).toContain(`from="${new Date(1000).toISOString()}"`);
+    expect(block).toContain(`to="${new Date(2000).toISOString()}"`);
+    expect(block).toContain("[human — Marcus]: hello");
+    expect(block).toContain("[assistant — Julian]: hi there");
+    expect(block).toContain("testimony from the record, not your live memory");
+    expect(block.trim().endsWith("</previous-session>")).toBe(true);
+  });
+  test("empty tail is visible, never omitted", () => {
+    const block = buildPreviousSessionBlock([]);
+    expect(block).toContain('message-count="0"');
+    expect(block).toContain("</previous-session>");
+  });
+  test("missing speaker fields fall back like the old inline code", () => {
+    const block = buildPreviousSessionBlock([{ role: "user", speakerType: "", speakerName: "", text: "x", ts: 5 }]);
+    expect(block).toContain("[human — Unknown]: x");
   });
 });
 

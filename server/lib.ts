@@ -420,3 +420,31 @@ export function createEventLog(maxEvents: number): EventLog {
 
   return { append, eventsAfter, subscribe, unsubscribe, subscribers };
 }
+
+// ── Tail block builder ────────────────────────────────────────────────────
+
+export interface TailMessage {
+  role: string;
+  speakerType: string;
+  speakerName: string;
+  text: string;
+  ts: number;
+}
+
+// The inherited tail: testimony from the record for a fresh session. The
+// framing sentence is load-bearing — a waking instance must know it is
+// reading the record, not remembering.
+export function buildPreviousSessionBlock(msgs: TailMessage[]): string {
+  const stamps = msgs.map((m) => m.ts).filter((t) => Number.isFinite(t) && t > 0);
+  const from = stamps.length ? new Date(Math.min(...stamps)).toISOString() : "";
+  const to = stamps.length ? new Date(Math.max(...stamps)).toISOString() : "";
+  const lines = msgs
+    .map((m) => `[${m.speakerType || "human"} — ${m.speakerName || "Unknown"}]: ${m.text}`)
+    .join("\n");
+  return (
+    `<previous-session category="transcript" spans="multiple-sessions" message-count="${msgs.length}" from="${from}" to="${to}">\n` +
+    `This is testimony from the record, not your live memory — the recent conversation across your prior sessions, read the way you read the catalog.\n` +
+    lines +
+    `\n</previous-session>`
+  );
+}
