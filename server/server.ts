@@ -458,6 +458,9 @@ let claudeProc: ReturnType<typeof spawn> | null = null;
 let spawnOutcome: Promise<'ready' | 'exited'> = Promise.resolve('ready');
 let resolveSpawnOutcome: (v: 'ready' | 'exited') => void = () => {};
 let processAlive = false;
+// Which mode spawned the CURRENT session — the end handler consults this to
+// keep a demo/kiosk visitor from ever touching the operator's resume state.
+let currentSessionDemo = false;
 let lastActivity = 0;
 const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 5_000;
@@ -738,6 +741,7 @@ function saveSessionState(state: SessionState) {
 // adopts the id the state file remembers.
 function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '', decision: SpawnDecision = { mode: 'fresh' }) {
   sessionId = decision.mode === 'resume' ? decision.claudeSessionId : crypto.randomUUID();
+  currentSessionDemo = mode === 'demo';
   sessionCostUsd = 0;
   actualModel = 'claude-opus-4-6'; // default until system event arrives
   const authEnv = loadAuthEnv();
@@ -1562,7 +1566,11 @@ const server = Bun.serve({
         const body = await req.json() as { final?: boolean };
         finalEnd = body?.final === true;
       } catch { /* bodyless POST = plain pause, unchanged */ }
-      if (finalEnd) {
+      // Demo/kiosk sessions never read or write resume state — a final end from
+      // an anonymous visitor must never delete the operator's saved session; it
+      // behaves as a plain pause for state purposes (still kills the process,
+      // still appends the event below with final: true).
+      if (finalEnd && !currentSessionDemo && !FORCE_DEMO_MODE) {
         // Cleared BEFORE the kill: the exit handler's rewrite is guarded on a
         // matching state read, so a final end stays final.
         clearSessionState(SESSION_STATE_PATH);
