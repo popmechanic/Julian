@@ -96,14 +96,14 @@
   .end-final {
     font-family: var(--font-terminal);
     font-size: 0.7rem;
-    color: var(--j-gray-333);
+    color: var(--j-gray-666);
     background: transparent;
-    border: 1px solid var(--j-gray-333);
+    border: 1px solid var(--j-gray-666);
     border-radius: 4px;
     padding: 4px 8px;
     cursor: pointer;
     text-transform: lowercase;
-    opacity: 0.6;
+    opacity: 1;
     transition: opacity 200ms ease, color 200ms ease;
   }
   .end-final:hover {

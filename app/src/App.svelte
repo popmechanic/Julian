@@ -116,8 +116,10 @@
         {sessionActive}
         {processing}
         onEnd={() => endSession()}
-        onEndFinal={() => {
-          if (confirm('End this session for good? The next one starts fresh, inheriting the recent record.')) endSession(true);
+        onEndFinal={async () => {
+          if (confirm('End this session for good? The next one starts fresh, inheriting the recent record.')) {
+            try { await endSession(true); } catch (e) { alert('End session failed: ' + e); }
+          }
         }}
       />
       <ChatView {processing} {sessionActive} onStart={() => { sfx.playBoot(); startSession(); }} />
