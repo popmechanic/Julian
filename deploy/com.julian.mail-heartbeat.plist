@@ -15,7 +15,7 @@
   <key>StandardErrorPath</key><string>/Users/marcusestes/Library/Logs/julian-mail-heartbeat.log</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PATH</key><string>/Users/marcusestes/.bun/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>PATH</key><string>/Users/marcusestes/.local/bin:/Users/marcusestes/.bun/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
   </dict>
 </dict>
 </plist>
