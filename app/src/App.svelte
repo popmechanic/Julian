@@ -112,7 +112,14 @@
 {:else}
   <div class="room app-state-enter">
     <div class="machine">
-      <FaceHeader {sessionActive} {processing} onEnd={() => endSession()} />
+      <FaceHeader
+        {sessionActive}
+        {processing}
+        onEnd={() => endSession()}
+        onEndFinal={() => {
+          if (confirm('End this session for good? The next one starts fresh, inheriting the recent record.')) endSession(true);
+        }}
+      />
       <ChatView {processing} {sessionActive} onStart={() => { sfx.playBoot(); startSession(); }} />
     </div>
     <aside class="console">
