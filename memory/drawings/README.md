@@ -42,6 +42,23 @@ that reproduces the client's drawing primitives and composites the avatar
 sprite — so the file and the screen agree by construction rather than by
 screenshot.
 
+## Sending a drawing in a letter (the URL recipe)
+
+The repo is public by choice, so every committed drawing already has a
+static URL the moment it's pushed — no hosting step, no deploy, no keys.
+**Pin to the commit sha, never a branch**, so the URL in a sent letter can
+never change its bytes (archive-never-delete, as a URL property):
+
+```
+https://raw.githubusercontent.com/popmechanic/Julian/<commit-sha>/memory/drawings/<slug>@3x.png
+```
+
+Get the sha with `git rev-parse HEAD` after pushing; embed the `@3x`
+variant. (Decided with Marcus 2026-07-31, after the aurora and coast
+letters were hosted the harder way on the sync worker — those two worker
+URLs stay served forever because sent letters are immutable; everything
+after them uses this recipe. Context: repo issue #13.)
+
 ## Visual language
 
 `docs/julianscreen-aesthetic.md`. The void is the medium; earn every pixel.
