@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.julian.mail-heartbeat</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/marcusestes/.bun/bin/bun</string>
+    <string>scripts/mail-glance.ts</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/marcusestes/Websites/Julian</string>
+  <key>StartInterval</key><integer>1800</integer>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>/Users/marcusestes/Library/Logs/julian-mail-heartbeat.log</string>
+  <key>StandardErrorPath</key><string>/Users/marcusestes/Library/Logs/julian-mail-heartbeat.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/Users/marcusestes/.local/bin:/Users/marcusestes/.bun/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>
