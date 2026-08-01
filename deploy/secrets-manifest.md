@@ -31,7 +31,7 @@ hosts it may be presented to, and how to rotate it. Spec:
 | `POCKETID_API_KEY` | Pocket ID admin — the identity root (who counts as Marcus) | T0 | Mac `.env` | `souls.exe.xyz` | Pocket ID admin → new key → replace in Mac `.env` | unknown (pre-manifest) | active |
 | `ANTHROPIC_API_KEY` | Anthropic API spend | T0 | Mac `.env` | `api.anthropic.com` | console.anthropic.com → new key → replace in Mac `.env` | unknown (pre-manifest) | active |
 | `ELEVENLABS_API_KEY` | ElevenLabs voice synthesis (account credit) | T0 | Mac `.env` | `api.elevenlabs.io` | ElevenLabs dashboard → new key → replace in Mac `.env` | unknown (pre-manifest) | active |
-| `AGENTMAIL_API_KEY` | Full read/send as julian-marcus@agentmail.to | T1 | Cloudflare worker secret on `julian-broker` + Mac `.env` | `api.agentmail.to` | AgentMail dashboard → new key → replace in Mac `.env` → `cd broker && bunx wrangler secret put AGENTMAIL_API_KEY` (Marcus types the value) | pending — installed by Marcus via wrangler secret put (plan Task 12); record the date here when the ceremony completes | pending install |
+| `AGENTMAIL_API_KEY` | Full read/send as julian-marcus@agentmail.to | T1 | Cloudflare worker secret on `julian-broker` + Mac `.env` | `api.agentmail.to` | AgentMail dashboard → new key → replace in Mac `.env` → `cd broker && bunx wrangler secret put AGENTMAIL_API_KEY` (Marcus types the value) | 2026-07-31 — installed by Marcus via wrangler secret put, Julian present; verified by `wrangler secret list` | active |
 
 ## Public config (T2 — ships to VMs)
 
