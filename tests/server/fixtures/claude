@@ -1,0 +1,28 @@
+#!/usr/bin/env bun
+// tests/server/fixtures/claude — a fake claude CLI speaking just enough
+// stream-json for lifecycle tests. Records argv and stdin to files named by
+// FAKE_CLAUDE_LOG so tests can assert on what the server actually did.
+const log = process.env.FAKE_CLAUDE_LOG!;
+const argv = process.argv.slice(2);
+await Bun.write(`${log}.argv.${Date.now()}`, JSON.stringify(argv));
+
+const resumeIdx = argv.indexOf("--resume");
+const sidIdx = argv.indexOf("--session-id");
+const sessionId = resumeIdx >= 0 ? argv[resumeIdx + 1] : sidIdx >= 0 ? argv[sidIdx + 1] : crypto.randomUUID();
+
+// Fallback drill: when the fail-resume flag file exists, a resume attempt dies
+// before its system event — exactly how a GC'd transcript presents.
+if (resumeIdx >= 0 && (await Bun.file(`${log}.fail-resume`).exists())) {
+  console.error("fake-claude: simulated resume failure");
+  process.exit(1);
+}
+
+console.log(JSON.stringify({ type: "system", session_id: sessionId, model: "fake-model", tools: [] }));
+
+const decoder = new TextDecoder();
+for await (const chunk of Bun.stdin.stream()) {
+  const text = decoder.decode(chunk);
+  await Bun.write(`${log}.stdin.${Date.now()}`, text);
+  console.log(JSON.stringify({ type: "assistant", message: { id: "m1", content: [{ type: "text", text: "ok" }] } }));
+  console.log(JSON.stringify({ type: "result", subtype: "success", num_turns: 1, usage: {} }));
+}
