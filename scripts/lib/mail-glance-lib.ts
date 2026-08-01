@@ -40,25 +40,34 @@ export function isAutomated(msg: MailMessage): boolean {
 
 export interface GlanceResult { eligible: MailThread[]; strangers: MailThread[] }
 
-// Parse a timestamp for comparison; unparseable/missing values sort lowest
-// so a real timestamp always wins over a bad one.
-function parseTime(ts: string | undefined): number {
+// Parse a timestamp for comparison. Returns null when missing/unparseable —
+// callers must not silently coerce that into a sortable number, because
+// mixing a bad timestamp into an otherwise-good comparison is exactly the
+// double-send edge this function exists to avoid.
+function parseTime(ts: string | undefined): number | null {
   const t = ts ? Date.parse(ts) : NaN;
-  return Number.isNaN(t) ? -Infinity : t;
+  return Number.isNaN(t) ? null : t;
 }
 
 // The message with the greatest timestamp, falling back to the last array
-// element on ties or when timestamps are missing/unparseable. Threads are
-// contracted to arrive chronological (oldest first), but the API is not
-// trusted to honor that — picking by position alone would let an
-// already-answered thread (my reply arrived first in a misordered array)
-// classify as eligible and reply twice.
+// element on ties OR when ANY message in the thread has a missing/
+// unparseable timestamp. Threads are contracted to arrive chronological
+// (oldest first), but the API is not trusted to honor that — picking by
+// position alone would let an already-answered thread (my reply arrived
+// first in a misordered array) classify as eligible and reply twice.
+// Whole-thread fallback (not per-message): a single bad timestamp on my
+// own outbound reply must not let it lose a timestamp race it never
+// entered — that's the same double-send edge, just mixed instead of
+// reordered. When any timestamp in the thread can't be trusted, none of
+// them are; the plan's original last-element semantics take over.
 function pickLatest(messages: MailMessage[]): MailMessage | undefined {
   if (messages.length === 0) return undefined;
+  const times = messages.map((m) => parseTime(m.timestamp));
+  if (times.some((t) => t === null)) return messages[messages.length - 1];
   let best = messages[0];
-  let bestTime = parseTime(best.timestamp);
+  let bestTime = times[0] as number;
   for (let i = 1; i < messages.length; i++) {
-    const t = parseTime(messages[i].timestamp);
+    const t = times[i] as number;
     if (t >= bestTime) { best = messages[i]; bestTime = t; }
   }
   return best;
@@ -82,4 +91,57 @@ export function classifyThreads(
     (known.has(extractAddress(latest.from)) ? eligible : strangers).push(t);
   }
   return { eligible, strangers };
+}
+
+// Safety guards for the runner (scripts/mail-glance.ts). threadId and
+// messageId are the only remote-controlled strings that reach the spawned
+// reply session's instructions — they must be restricted before
+// interpolation into that prompt.
+export const SAFE_ID = /^[A-Za-z0-9_.:-]+$/;
+
+export function isSafeId(s: string): boolean {
+  return SAFE_ID.test(s);
+}
+
+export function hasSafeIds(t: MailThread): boolean {
+  if (!isSafeId(t.threadId)) return false;
+  return t.messages.every((m) => isSafeId(m.messageId));
+}
+
+export interface HeartbeatState {
+  strangerWatermarkMs: number;
+  held: string[];
+  updatedAt: string;
+}
+
+export type ParsedStateFile =
+  | { ok: true; state: HeartbeatState }
+  | { ok: false; reason: string };
+
+// Strict shape validation for ~/.julian/mail-heartbeat.json. A corrupt file
+// must be distinguishable from a missing one: silently discarding a bad
+// file's held list would un-park a deliberately parked thread and reply to
+// it again — an unintended send.
+export function parseStateFile(raw: string): ParsedStateFile {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, reason: 'invalid JSON' };
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { ok: false, reason: 'not a JSON object' };
+  }
+  const obj = parsed as Record<string, unknown>;
+  if (!Array.isArray(obj.held) || !obj.held.every((h) => typeof h === 'string')) {
+    return { ok: false, reason: 'held is not an array of strings' };
+  }
+  if (typeof obj.strangerWatermarkMs !== 'number' || !Number.isFinite(obj.strangerWatermarkMs)) {
+    return { ok: false, reason: 'strangerWatermarkMs is not a finite number' };
+  }
+  const updatedAt = typeof obj.updatedAt === 'string' ? obj.updatedAt : '';
+  return {
+    ok: true,
+    state: { strangerWatermarkMs: obj.strangerWatermarkMs, held: obj.held as string[], updatedAt },
+  };
 }

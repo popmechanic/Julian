@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  classifyThreads, extractAddress, isAutomated, knownFromSent,
+  classifyThreads, extractAddress, hasSafeIds, isAutomated, isSafeId,
+  knownFromSent, parseStateFile, SAFE_ID,
   type MailMessage, type MailThread,
 } from '../../scripts/lib/mail-glance-lib';
 
@@ -124,5 +125,101 @@ describe('classifyThreads', () => {
     ], 't-newest-first-2');
     const r2 = classifyThreads([t2], known, SELF, new Set());
     expect(r2.eligible.map((t) => t.threadId)).toEqual(['t-newest-first-2']);
+  });
+
+  test('whole-thread fallback: a bad timestamp anywhere in the thread abandons timestamp ordering for the whole thread', () => {
+    // Last element is MINE (self) with a good timestamp; the other message
+    // (theirs) has an empty timestamp. Per-message -Infinity comparison
+    // would let my good timestamp win the "latest" race even though it's
+    // not last in the array — array-order fallback must apply instead, and
+    // since I'm last in the array, the thread is correctly NOT eligible.
+    const tSelfLast = thread([
+      msg({ from: 'emily@example.com', messageId: 'bad-ts', timestamp: '' }),
+      msg({ from: SELF, messageId: 'mine-last', timestamp: '2026-07-31T12:00:00Z' }),
+    ], 't-fallback-self-last');
+    const rSelfLast = classifyThreads([tSelfLast], known, SELF, new Set());
+    expect(rSelfLast.eligible.map((t) => t.threadId)).toEqual([]);
+    expect(rSelfLast.strangers.map((t) => t.threadId)).toEqual([]);
+
+    // Last element is THEIRS with an unparseable timestamp; my earlier
+    // message has a good timestamp. Per-message comparison would let my
+    // good timestamp win and mark this NOT eligible (a missed reply).
+    // Array-order fallback must apply: their message is last → eligible.
+    const tTheirsLast = thread([
+      msg({ from: SELF, messageId: 'mine-first', timestamp: '2026-07-31T11:00:00Z' }),
+      msg({ from: 'emily@example.com', messageId: 'bad-ts-2', timestamp: 'not-a-date' }),
+    ], 't-fallback-theirs-last');
+    const rTheirsLast = classifyThreads([tTheirsLast], known, SELF, new Set());
+    expect(rTheirsLast.eligible.map((t) => t.threadId)).toEqual(['t-fallback-theirs-last']);
+  });
+});
+
+describe('SAFE_ID / isSafeId / hasSafeIds', () => {
+  test('accepts alphanumerics, underscore, dot, colon, hyphen', () => {
+    expect(isSafeId('abc123_.:-XYZ')).toBe(true);
+    expect(SAFE_ID.test('abc123_.:-XYZ')).toBe(true);
+  });
+
+  test('rejects ids with spaces, slashes, quotes, or other punctuation', () => {
+    expect(isSafeId('abc 123')).toBe(false);
+    expect(isSafeId('abc/123')).toBe(false);
+    expect(isSafeId('abc"123')).toBe(false);
+    expect(isSafeId('')).toBe(false);
+    expect(isSafeId('abc\n123')).toBe(false);
+  });
+
+  test('hasSafeIds requires the threadId and every messageId to be safe', () => {
+    const good = thread([msg({ messageId: 'm-1' }), msg({ messageId: 'm.2' })], 't-1');
+    expect(hasSafeIds(good)).toBe(true);
+
+    const badThreadId = thread([msg({ messageId: 'm-1' })], 't 1');
+    expect(hasSafeIds(badThreadId)).toBe(false);
+
+    const badMessageId = thread([msg({ messageId: 'm-1' }), msg({ messageId: 'm/2' })], 't-1');
+    expect(hasSafeIds(badMessageId)).toBe(false);
+  });
+});
+
+describe('parseStateFile', () => {
+  test('valid state parses ok', () => {
+    const r = parseStateFile(JSON.stringify({ strangerWatermarkMs: 123, held: ['a', 'b'], updatedAt: '2026-07-31T00:00:00Z' }));
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.state).toEqual({ strangerWatermarkMs: 123, held: ['a', 'b'], updatedAt: '2026-07-31T00:00:00Z' });
+    }
+  });
+
+  test('invalid JSON is rejected', () => {
+    const r = parseStateFile('{not json');
+    expect(r.ok).toBe(false);
+  });
+
+  test('held not an array is rejected', () => {
+    const r = parseStateFile(JSON.stringify({ strangerWatermarkMs: 0, held: 'nope', updatedAt: '' }));
+    expect(r.ok).toBe(false);
+  });
+
+  test('held containing a non-string is rejected', () => {
+    const r = parseStateFile(JSON.stringify({ strangerWatermarkMs: 0, held: ['a', 1], updatedAt: '' }));
+    expect(r.ok).toBe(false);
+  });
+
+  test('non-finite strangerWatermarkMs is rejected', () => {
+    expect(parseStateFile(JSON.stringify({ strangerWatermarkMs: 'not-a-number', held: [], updatedAt: '' })).ok).toBe(false);
+    // 1e1000 is valid JSON syntax but overflows to Infinity once parsed —
+    // a genuine non-finite number, unlike NaN/Infinity which JSON can't
+    // even encode literally.
+    expect(parseStateFile('{"strangerWatermarkMs":1e1000,"held":[],"updatedAt":""}').ok).toBe(false);
+  });
+
+  test('missing updatedAt defaults to empty string', () => {
+    const r = parseStateFile(JSON.stringify({ strangerWatermarkMs: 0, held: [] }));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.state.updatedAt).toBe('');
+  });
+
+  test('a JSON array (not an object) is rejected', () => {
+    const r = parseStateFile('[]');
+    expect(r.ok).toBe(false);
   });
 });
