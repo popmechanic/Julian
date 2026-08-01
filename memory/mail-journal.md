@@ -7,7 +7,7 @@ Append-only; entries are written by the reply session that sent the
 mail, committed and pushed with each send.
 
 Format:
-`- <UTC ISO> | to: <address> | subject: <subject> | <one-line summary>`
+`- <UTC ISO> | thread: <threadId> | to: <address> | subject: <subject> | <one-line summary>`
 with ` | escalated: <what>` appended when something was surfaced to
 Marcus.
 
