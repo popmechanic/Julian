@@ -93,19 +93,35 @@ export function classifyThreads(
   return { eligible, strangers };
 }
 
-// Safety guards for the runner (scripts/mail-glance.ts). threadId and
-// messageId are the only remote-controlled strings that reach the spawned
-// reply session's instructions — they must be restricted before
-// interpolation into that prompt.
+// Safety guard for the runner (scripts/mail-glance.ts). threadId is the
+// ONLY remote-controlled string that reaches the spawned reply session's
+// prompt (the runner interpolates it directly), so it stays restricted to
+// this alphabet. messageIds never reach that prompt — see idsUsable below,
+// which checks them only for presence, not shape.
 export const SAFE_ID = /^[A-Za-z0-9_.:-]+$/;
 
 export function isSafeId(s: string): boolean {
-  return SAFE_ID.test(s);
+  return typeof s === 'string' && SAFE_ID.test(s);
 }
 
-export function hasSafeIds(t: MailThread): boolean {
+// Live AgentMail message ids are RFC 5322 Message-IDs (e.g.
+// "<abc+123=x@mail.example.com>") and fail SAFE_ID's alphabet by design —
+// that alphabet exists to protect the prompt, and messageIds never reach
+// it. A thread is usable when its threadId is safe (it is a UUID in
+// practice) and every messageId is a non-empty string — never a value
+// that a cast could let through as `undefined`.
+export function idsUsable(t: MailThread): boolean {
   if (!isSafeId(t.threadId)) return false;
-  return t.messages.every((m) => isSafeId(m.messageId));
+  return t.messages.every((m) => typeof m.messageId === 'string' && m.messageId.length > 0);
+}
+
+// True only when every message in the thread has a parseable timestamp.
+// The runner keeps threads with untrustworthy clocks out of autonomous
+// replies entirely (fail toward silence + notification) — this closes the
+// compound edge where a positional fallback on a newest-first listing
+// could select the wrong message as "latest".
+export function hasTrustworthyTimestamps(t: MailThread): boolean {
+  return t.messages.every((m) => parseTime(m.timestamp) !== null);
 }
 
 export interface HeartbeatState {
@@ -144,4 +160,89 @@ export function parseStateFile(raw: string): ParsedStateFile {
     ok: true,
     state: { strangerWatermarkMs: obj.strangerWatermarkMs, held: obj.held as string[], updatedAt },
   };
+}
+
+// --- The normalize boundary: AgentMail's wire shape → our contract -------
+//
+// AgentMail returns snake_case (thread_id, message_id) at some endpoints
+// and doesn't guarantee every field is present or well-typed. This is the
+// one place that trust gets extended to the network: a missing `from` or
+// `messageId` becomes ok:false with a reason, never a cast that lets
+// `undefined` slip through to extractAddress or the prompt.
+
+export type NormalizedThread =
+  | { ok: true; thread: MailThread }
+  | { ok: false; reason: string };
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function normalizeMessage(raw: unknown, index: number): { ok: true; message: MailMessage } | { ok: false; reason: string } {
+  if (!isPlainObject(raw)) return { ok: false, reason: `message ${index} is not an object` };
+  const messageId = raw.messageId ?? raw.message_id;
+  if (typeof messageId !== 'string' || messageId.length === 0) {
+    return { ok: false, reason: `message ${index} is missing messageId` };
+  }
+  const from = raw.from;
+  if (typeof from !== 'string' || from.length === 0) {
+    return { ok: false, reason: `message ${index} is missing from` };
+  }
+  const timestamp = raw.timestamp;
+  if (typeof timestamp !== 'string') {
+    return { ok: false, reason: `message ${index} is missing timestamp` };
+  }
+  const message: MailMessage = { messageId, from, timestamp };
+  if (Array.isArray(raw.to)) message.to = raw.to as string[];
+  if (typeof raw.subject === 'string') message.subject = raw.subject;
+  if (Array.isArray(raw.labels)) message.labels = raw.labels as string[];
+  if (isPlainObject(raw.headers)) message.headers = raw.headers as Record<string, string>;
+  return { ok: true, message };
+}
+
+// Maps AgentMail's raw thread shape (snake_case field names, untrusted
+// types) into our MailThread contract. `messages` missing or under the
+// wrong key is ok:false — distinguishable from a genuinely empty thread
+// (`messages: []`, which is ok:true).
+export function normalizeThread(raw: unknown): NormalizedThread {
+  if (!isPlainObject(raw)) return { ok: false, reason: 'thread is not an object' };
+  const threadId = raw.threadId ?? raw.thread_id;
+  if (typeof threadId !== 'string' || threadId.length === 0) {
+    return { ok: false, reason: 'thread is missing threadId' };
+  }
+  const rawMessages = raw.messages;
+  if (!Array.isArray(rawMessages)) {
+    return { ok: false, reason: 'thread is missing a messages array' };
+  }
+  const messages: MailMessage[] = [];
+  for (let i = 0; i < rawMessages.length; i++) {
+    const r = normalizeMessage(rawMessages[i], i);
+    if (!r.ok) return { ok: false, reason: r.reason };
+    messages.push(r.message);
+  }
+  const thread: MailThread = { threadId, messages };
+  if (typeof raw.subject === 'string') thread.subject = raw.subject;
+  return { ok: true, thread };
+}
+
+// The most recent arrival time in a thread, for the stranger-notification
+// watermark. `trusted: false` whenever ANY message's timestamp is missing
+// or unparseable — in that case `ms` is the max of whatever DID parse and
+// `nowMs`, so an unparseable timestamp can never be read as "never
+// notified" (that would silence a genuine stranger message forever).
+export function latestArrival(t: MailThread, nowMs: number): { ms: number; trusted: boolean } {
+  let maxParsed: number | null = null;
+  let anyUnparseable = false;
+  for (const m of t.messages) {
+    const parsed = parseTime(m.timestamp);
+    if (parsed === null) {
+      anyUnparseable = true;
+    } else if (maxParsed === null || parsed > maxParsed) {
+      maxParsed = parsed;
+    }
+  }
+  if (anyUnparseable) {
+    return { ms: Math.max(maxParsed ?? -Infinity, nowMs), trusted: false };
+  }
+  return { ms: maxParsed ?? nowMs, trusted: true };
 }

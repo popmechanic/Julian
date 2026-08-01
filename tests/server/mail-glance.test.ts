@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  classifyThreads, extractAddress, hasSafeIds, isAutomated, isSafeId,
-  knownFromSent, parseStateFile, SAFE_ID,
+  classifyThreads, extractAddress, hasTrustworthyTimestamps, idsUsable, isAutomated, isSafeId,
+  knownFromSent, latestArrival, normalizeThread, parseStateFile, SAFE_ID,
   type MailMessage, type MailThread,
 } from '../../scripts/lib/mail-glance-lib';
 
@@ -154,7 +154,7 @@ describe('classifyThreads', () => {
   });
 });
 
-describe('SAFE_ID / isSafeId / hasSafeIds', () => {
+describe('SAFE_ID / isSafeId', () => {
   test('accepts alphanumerics, underscore, dot, colon, hyphen', () => {
     expect(isSafeId('abc123_.:-XYZ')).toBe(true);
     expect(SAFE_ID.test('abc123_.:-XYZ')).toBe(true);
@@ -168,15 +168,182 @@ describe('SAFE_ID / isSafeId / hasSafeIds', () => {
     expect(isSafeId('abc\n123')).toBe(false);
   });
 
-  test('hasSafeIds requires the threadId and every messageId to be safe', () => {
-    const good = thread([msg({ messageId: 'm-1' }), msg({ messageId: 'm.2' })], 't-1');
-    expect(hasSafeIds(good)).toBe(true);
+  test('rejects non-string values (SAFE_ID.test would coerce them to a passing string)', () => {
+    expect(isSafeId(undefined as unknown as string)).toBe(false);
+    expect(isSafeId(null as unknown as string)).toBe(false);
+    expect(isSafeId(123 as unknown as string)).toBe(false);
+    expect(isSafeId({} as unknown as string)).toBe(false);
+  });
+});
 
-    const badThreadId = thread([msg({ messageId: 'm-1' })], 't 1');
-    expect(hasSafeIds(badThreadId)).toBe(false);
+describe('idsUsable', () => {
+  test('real-shaped RFC 5322 message ids (with <>@+=) pass, alongside a safe threadId', () => {
+    const t = thread([
+      msg({ messageId: '<CADkP+abc123@mail.gmail.com>' }),
+      msg({ messageId: '<xyz+789=foo@example.com>', from: 'b@c.d' }),
+    ], 't-uuid-1234-safe');
+    expect(idsUsable(t)).toBe(true);
+  });
 
-    const badMessageId = thread([msg({ messageId: 'm-1' }), msg({ messageId: 'm/2' })], 't-1');
-    expect(hasSafeIds(badMessageId)).toBe(false);
+  test('a missing, empty, or non-string messageId fails', () => {
+    const missing = thread([{ ...msg({}), messageId: undefined as unknown as string }], 't-1');
+    expect(idsUsable(missing)).toBe(false);
+
+    const empty = thread([msg({ messageId: '' })], 't-1');
+    expect(idsUsable(empty)).toBe(false);
+
+    const nonString = thread([{ ...msg({}), messageId: 123 as unknown as string }], 't-1');
+    expect(idsUsable(nonString)).toBe(false);
+  });
+
+  test('an unsafe threadId fails even when every messageId is fine', () => {
+    const t = thread([msg({ messageId: '<a@b.c>' })], 't 1');
+    expect(idsUsable(t)).toBe(false);
+  });
+});
+
+describe('hasTrustworthyTimestamps', () => {
+  test('all messages parseable → true', () => {
+    const t = thread([
+      msg({ timestamp: '2026-07-31T10:00:00Z' }),
+      msg({ timestamp: '2026-07-31T11:00:00Z', messageId: 'm2' }),
+    ]);
+    expect(hasTrustworthyTimestamps(t)).toBe(true);
+  });
+
+  test('one empty timestamp → false', () => {
+    const t = thread([
+      msg({ timestamp: '2026-07-31T10:00:00Z' }),
+      msg({ timestamp: '', messageId: 'm2' }),
+    ]);
+    expect(hasTrustworthyTimestamps(t)).toBe(false);
+  });
+
+  test('one unparseable timestamp → false', () => {
+    const t = thread([
+      msg({ timestamp: '2026-07-31T10:00:00Z' }),
+      msg({ timestamp: 'not-a-date', messageId: 'm2' }),
+    ]);
+    expect(hasTrustworthyTimestamps(t)).toBe(false);
+  });
+});
+
+describe('normalizeThread', () => {
+  test('happy path: camelCase input passes through unchanged', () => {
+    const raw = {
+      threadId: 't-1',
+      subject: 'Hi',
+      messages: [
+        {
+          messageId: 'm-1', from: 'a@b.c', timestamp: '2026-07-31T12:00:00Z',
+          to: ['x@y.z'], subject: 's', labels: ['inbox'], headers: { A: 'b' },
+        },
+      ],
+    };
+    const r = normalizeThread(raw);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.thread).toEqual({
+        threadId: 't-1',
+        subject: 'Hi',
+        messages: [{
+          messageId: 'm-1', from: 'a@b.c', timestamp: '2026-07-31T12:00:00Z',
+          to: ['x@y.z'], subject: 's', labels: ['inbox'], headers: { A: 'b' },
+        }],
+      });
+    }
+  });
+
+  test('maps AgentMail snake_case thread_id/message_id', () => {
+    const raw = {
+      thread_id: 't-2',
+      messages: [{ message_id: 'm-2', from: 'a@b.c', timestamp: '2026-07-31T12:00:00Z' }],
+    };
+    const r = normalizeThread(raw);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.thread.threadId).toBe('t-2');
+      expect(r.thread.messages[0].messageId).toBe('m-2');
+    }
+  });
+
+  test('a message missing "from" → ok:false with a reason, never a cast through to extractAddress', () => {
+    const raw = { threadId: 't-3', messages: [{ messageId: 'm-3', timestamp: '2026-07-31T12:00:00Z' }] };
+    const r = normalizeThread(raw);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason.length).toBeGreaterThan(0);
+  });
+
+  test('a message missing "message_id"/"messageId" → ok:false with a reason', () => {
+    const raw = { threadId: 't-4', messages: [{ from: 'a@b.c', timestamp: '2026-07-31T12:00:00Z' }] };
+    const r = normalizeThread(raw);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason.length).toBeGreaterThan(0);
+  });
+
+  test('messages under a wrong key → ok:false, distinguishable from a genuinely empty thread', () => {
+    const wrongKey = { threadId: 't-5', msgs: [] };
+    const r = normalizeThread(wrongKey);
+    expect(r.ok).toBe(false);
+
+    const empty = { threadId: 't-6', messages: [] };
+    const rEmpty = normalizeThread(empty);
+    expect(rEmpty.ok).toBe(true);
+    if (rEmpty.ok) expect(rEmpty.thread.messages).toEqual([]);
+  });
+
+  test('absent optional fields stay absent, not undefined-valued keys', () => {
+    const raw = { threadId: 't-7', messages: [{ messageId: 'm-7', from: 'a@b.c', timestamp: '2026-07-31T12:00:00Z' }] };
+    const r = normalizeThread(raw);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect('subject' in r.thread).toBe(false);
+      expect('to' in r.thread.messages[0]).toBe(false);
+      expect('subject' in r.thread.messages[0]).toBe(false);
+      expect('labels' in r.thread.messages[0]).toBe(false);
+      expect('headers' in r.thread.messages[0]).toBe(false);
+    }
+  });
+});
+
+describe('latestArrival', () => {
+  test('all messages parseable → max timestamp, trusted', () => {
+    const t = thread([
+      msg({ timestamp: '2026-07-31T10:00:00Z' }),
+      msg({ timestamp: '2026-07-31T12:00:00Z', messageId: 'm2' }),
+    ]);
+    const r = latestArrival(t, Date.parse('2026-07-31T20:00:00Z'));
+    expect(r).toEqual({ ms: Date.parse('2026-07-31T12:00:00Z'), trusted: true });
+  });
+
+  test('one garbled timestamp → untrusted; returns nowMs when the garbled one could be newest', () => {
+    const now = Date.parse('2026-07-31T15:00:00Z');
+    const t = thread([
+      msg({ timestamp: '2026-07-31T10:00:00Z' }),
+      msg({ timestamp: 'not-a-date', messageId: 'm2' }),
+    ]);
+    const r = latestArrival(t, now);
+    expect(r).toEqual({ ms: now, trusted: false });
+  });
+
+  test('one garbled timestamp, but a good timestamp already exceeds nowMs → returns that later timestamp', () => {
+    const now = Date.parse('2026-07-31T09:00:00Z');
+    const t = thread([
+      msg({ timestamp: '2026-07-31T10:00:00Z' }),
+      msg({ timestamp: 'not-a-date', messageId: 'm2' }),
+    ]);
+    const r = latestArrival(t, now);
+    expect(r).toEqual({ ms: Date.parse('2026-07-31T10:00:00Z'), trusted: false });
+  });
+
+  test('all timestamps garbled → untrusted, ms is nowMs', () => {
+    const now = Date.parse('2026-07-31T15:00:00Z');
+    const t = thread([
+      msg({ timestamp: '' }),
+      msg({ timestamp: 'not-a-date', messageId: 'm2' }),
+    ]);
+    const r = latestArrival(t, now);
+    expect(r).toEqual({ ms: now, trusted: false });
   });
 });
 
