@@ -439,7 +439,11 @@ export function buildPreviousSessionBlock(msgs: TailMessage[]): string {
   const from = stamps.length ? new Date(Math.min(...stamps)).toISOString() : "";
   const to = stamps.length ? new Date(Math.max(...stamps)).toISOString() : "";
   const lines = msgs
-    .map((m) => `[${m.speakerType || "human"} — ${m.speakerName || "Unknown"}]: ${m.text}`)
+    .map((m) => {
+      // Sanitize text to prevent </previous-session> from closing the block early.
+      const sanitized = String(m.text).replace(/<\/previous-session/gi, "<\\/previous-session");
+      return `[${m.speakerType || "human"} — ${m.speakerName || "Unknown"}]: ${sanitized}`;
+    })
     .join("\n");
   return (
     `<previous-session category="transcript" spans="multiple-sessions" message-count="${msgs.length}" from="${from}" to="${to}">\n` +
