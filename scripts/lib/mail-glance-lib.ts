@@ -40,6 +40,30 @@ export function isAutomated(msg: MailMessage): boolean {
 
 export interface GlanceResult { eligible: MailThread[]; strangers: MailThread[] }
 
+// Parse a timestamp for comparison; unparseable/missing values sort lowest
+// so a real timestamp always wins over a bad one.
+function parseTime(ts: string | undefined): number {
+  const t = ts ? Date.parse(ts) : NaN;
+  return Number.isNaN(t) ? -Infinity : t;
+}
+
+// The message with the greatest timestamp, falling back to the last array
+// element on ties or when timestamps are missing/unparseable. Threads are
+// contracted to arrive chronological (oldest first), but the API is not
+// trusted to honor that — picking by position alone would let an
+// already-answered thread (my reply arrived first in a misordered array)
+// classify as eligible and reply twice.
+function pickLatest(messages: MailMessage[]): MailMessage | undefined {
+  if (messages.length === 0) return undefined;
+  let best = messages[0];
+  let bestTime = parseTime(best.timestamp);
+  for (let i = 1; i < messages.length; i++) {
+    const t = parseTime(messages[i].timestamp);
+    if (t >= bestTime) { best = messages[i]; bestTime = t; }
+  }
+  return best;
+}
+
 // A thread is eligible while its latest message is inbound, known, not
 // automated, and not explicitly held. No watermark here: unanswered mail
 // self-heals every beat; once I reply, I am the latest and it drops out.
@@ -50,7 +74,7 @@ export function classifyThreads(
   const eligible: MailThread[] = [];
   const strangers: MailThread[] = [];
   for (const t of threads) {
-    const latest = t.messages[t.messages.length - 1];
+    const latest = pickLatest(t.messages);
     if (!latest) continue;
     if (extractAddress(latest.from) === self) continue;
     if (held.has(latest.messageId)) continue;

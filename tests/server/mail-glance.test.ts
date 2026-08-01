@@ -87,4 +87,42 @@ describe('classifyThreads', () => {
     expect(classifyThreads([t], known, SELF, new Set()).eligible.length).toBe(0);
     expect(classifyThreads([t], known, SELF, new Set()).strangers.length).toBe(0);
   });
+
+  test('multi-thread call buckets by identity, not just count', () => {
+    const tKnown = thread([msg({ from: SELF, messageId: 'k1' }), msg({ from: 'emily@example.com', messageId: 'k2' })], 't-known');
+    const tStranger = thread([msg({ from: 'stranger@wild.net', messageId: 's1' })], 't-stranger');
+    const tAutomated = thread([msg({ from: 'emily@example.com', messageId: 'a1', headers: { Precedence: 'bulk' } })], 't-automated');
+    const tHeld = thread([msg({ from: 'emily@example.com', messageId: 'held-1' })], 't-held');
+    const tSelfLatest = thread([msg({ from: 'emily@example.com', messageId: 'sl1' }), msg({ from: SELF, messageId: 'sl2' })], 't-self-latest');
+
+    const r = classifyThreads(
+      [tKnown, tStranger, tAutomated, tHeld, tSelfLatest],
+      known, SELF, new Set(['held-1']),
+    );
+    expect(r.eligible.map((t) => t.threadId)).toEqual(['t-known']);
+    expect(r.strangers.map((t) => t.threadId)).toEqual(['t-stranger']);
+  });
+
+  test('latest is chosen by timestamp, not array order (messages newest-first)', () => {
+    // Reply (self) is listed FIRST in the array but has the LATER timestamp;
+    // the inbound message from emily is listed second but is actually older.
+    // Positional selection would wrongly pick the inbound message as latest
+    // and mark this thread eligible for a second reply.
+    const t = thread([
+      msg({ from: SELF, messageId: 'newer', timestamp: '2026-07-31T13:00:00Z' }),
+      msg({ from: 'emily@example.com', messageId: 'older', timestamp: '2026-07-31T12:00:00Z' }),
+    ], 't-newest-first');
+    const r = classifyThreads([t], known, SELF, new Set());
+    expect(r.eligible.map((t) => t.threadId)).toEqual([]);
+    expect(r.strangers.map((t) => t.threadId)).toEqual([]);
+
+    // Flip it: emily's message is now the later timestamp despite appearing
+    // first in the array — must still classify as eligible.
+    const t2 = thread([
+      msg({ from: 'emily@example.com', messageId: 'newer2', timestamp: '2026-07-31T13:00:00Z' }),
+      msg({ from: SELF, messageId: 'older2', timestamp: '2026-07-31T12:00:00Z' }),
+    ], 't-newest-first-2');
+    const r2 = classifyThreads([t2], known, SELF, new Set());
+    expect(r2.eligible.map((t) => t.threadId)).toEqual(['t-newest-first-2']);
+  });
 });
