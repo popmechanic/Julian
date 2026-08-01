@@ -8,7 +8,8 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import {
-  classifyThreads, knownFromSent, hasSafeIds, parseStateFile,
+  classifyThreads, knownFromSent, hasTrustworthyTimestamps,
+  idsUsable, isSafeId, latestArrival, normalizeThread, parseStateFile,
   type HeartbeatState, type MailMessage, type MailThread,
 } from './lib/mail-glance-lib';
 
@@ -19,9 +20,10 @@ const DRY = process.env.DRY_RUN === '1';
 const STATE_DIR = join(homedir(), '.julian');
 const STATE_PATH = join(STATE_DIR, 'mail-heartbeat.json');
 
-// The state shape and every guard below it are the library's (and so are
-// unit-tested there): the id alphabet that may reach the spawned session's
-// instructions, and the strict parse of the state file.
+// The state shape, the fetch-boundary normalizer, and every guard below
+// them belong to the library, and so are unit-tested there. What is left
+// here is I/O, ordering, and the decision to stay quiet — nothing this
+// file decides about a thread is invented in this file.
 type State = HeartbeatState;
 
 function notify(text: string) {
@@ -76,7 +78,10 @@ function loadState(): State {
 function writeState(s: State) {
   if (DRY) { console.log('[dry] would save state:', JSON.stringify(s)); return; }
   mkdirSync(STATE_DIR, { recursive: true });
-  const tmp = `${STATE_PATH}.tmp`;
+  // Pid-unique temp name: a single shared `.tmp` path let two concurrent
+  // writers (a beat and a reply session's `--hold`) interleave their writes
+  // into the same scratch file and rename the wreckage into place.
+  const tmp = `${STATE_PATH}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify({ ...s, updatedAt: new Date().toISOString() }, null, 2));
   renameSync(tmp, STATE_PATH);
 }
@@ -96,23 +101,38 @@ function saveBeatState(s: State) {
   });
 }
 
-// Latest arrival in a thread by timestamp rather than array position — the
-// same rule the classifier uses. Individual unparseable timestamps are
-// ignored; when NOTHING in the thread parses we return now, so the thread
-// reads as newly arrived and clears the watermark. That deliberately
-// re-notifies on every beat for as long as the anomaly persists — loud
-// beats silent, and a stranger with a garbled clock deserves attention
-// until it is handled. An unparseable timestamp must never mean "never
-// notified".
-function latestMs(t: MailThread): number {
-  const times = t.messages.map((m) => Date.parse(m.timestamp)).filter((n) => !Number.isNaN(n));
-  return times.length ? Math.max(...times) : Date.now();
-}
-
 async function get(path: string): Promise<unknown> {
   const res = await fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${KEY}` } });
   if (!res.ok) throw new Error(`GET ${path} -> ${res.status}`);
   return res.json();
+}
+
+// Read a thread id off a raw listing entry without trusting the dialect or
+// the type. AgentMail speaks snake_case (`thread_id`); the library speaks
+// camelCase. Anything that is not a safe id yields undefined, and an
+// undefined id is never turned into a request path.
+function listedThreadId(raw: unknown): string | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  const id = r.threadId ?? r.thread_id;
+  return typeof id === 'string' && isSafeId(id) ? id : undefined;
+}
+
+// The sent listing is a list of messages, not a thread, and the library's
+// normalize boundary is thread-shaped and all-or-nothing by design (a
+// thread carrying one malformed message is not a trustworthy thread). Here
+// the opposite is right: one odd sent message must not erase every known
+// correspondent and turn the whole address book into strangers. So each raw
+// message goes through that same library boundary on its own and the bad
+// ones drop out — no second normalizer, one dialect translated in one
+// tested place.
+function normalizeSentMessages(raw: unknown[]): MailMessage[] {
+  const out: MailMessage[] = [];
+  for (const m of raw) {
+    const r = normalizeThread({ threadId: 'sent-listing', messages: [m] });
+    if (r.ok && r.thread.messages.length === 1) out.push(r.thread.messages[0]);
+  }
+  return out;
 }
 
 async function main() {
@@ -131,48 +151,99 @@ async function main() {
 
   if (!KEY) abort('no AGENTMAIL_API_KEY in env; aborting', 2);
 
-  const state = loadState();
+  // Fail fast on a corrupt state file before spending any network calls;
+  // the value actually used for classification is re-read below.
+  loadState();
 
-  const sentRes = await get('/messages?limit=100') as { messages?: MailMessage[] };
-  const sent = (sentRes.messages ?? []).filter((m) => m.labels?.includes('sent'));
+  const sentRes = await get('/messages?limit=100') as { messages?: unknown[] };
+  const sent = normalizeSentMessages(sentRes.messages ?? [])
+    .filter((m) => m.labels?.includes('sent'));
   const known = knownFromSent(sent);
 
-  const listRes = await get('/threads?limit=50') as { threads?: Array<{ threadId: string }> };
+  const listRes = await get('/threads?limit=50') as { threads?: unknown[] };
+  const listed = listRes.threads ?? [];
   const threads: MailThread[] = [];
-  for (const t of listRes.threads ?? []) {
-    threads.push(await get(`/threads/${encodeURIComponent(t.threadId)}`) as MailThread);
+  let unfetchable = 0;
+  const unreadable: string[] = [];
+  for (const raw of listed) {
+    const id = listedThreadId(raw);
+    // Never build a request path out of an id we have not verified.
+    if (id === undefined) { unfetchable++; continue; }
+    const normalized = normalizeThread(await get(`/threads/${encodeURIComponent(id)}`));
+    // One malformed message costs one thread, never the heartbeat: the
+    // thread drops out with its reason surfaced and the beat carries on for
+    // every thread that did parse.
+    if (!normalized.ok) { unreadable.push(normalized.reason); continue; }
+    threads.push(normalized.thread);
+  }
+  if (unfetchable) {
+    notify(`${unfetchable} thread(s) not fetched — missing or unexpected thread ids in the listing`);
+  }
+  if (unreadable.length) {
+    // One notification carrying the distinct reasons rather than one per
+    // thread: when a wire-format change breaks every thread at once, fifty
+    // identical alerts bury the signal instead of raising it.
+    notify(`${unreadable.length} thread(s) skipped — ${[...new Set(unreadable)].join('; ')}`);
   }
 
+  // The deaf beat: a listing that arrived but produced nothing readable.
+  // Without this check a renamed container key drops every thread at the
+  // boundary and the beat prints a cheerful "nothing eligible" forever —
+  // the last failure mode that could still go quiet. Loud beats silent.
+  if (listed.length > 0 && threads.every((t) => t.messages.length === 0)) {
+    notify(`mail heartbeat may be deaf: ${listed.length} threads listed, 0 readable`);
+  }
+
+  // Re-read the state immediately before classifying: a reply session from
+  // an earlier beat may have run `--hold` while this beat was mid-fetch, and
+  // a thread parked in that window must be honored by THIS classification,
+  // not only by the union at save time.
+  const state = loadState();
   const { eligible, strangers } = classifyThreads(threads, known, INBOX, new Set(state.held));
 
   // Strangers: notify once per new arrival (watermark), content unread.
-  const freshStrangers = strangers.filter((t) => latestMs(t) > state.strangerWatermarkMs);
-  if (freshStrangers.length) {
-    notify(`${freshStrangers.length} new thread(s) from unknown senders — quarantined, unread`);
-    // Clamp every candidate to now before advancing. A single unsolicited
-    // message stamped 2099 would otherwise push the watermark past every
-    // real arrival and silence stranger notifications forever — a stranger
-    // reaching in to switch off the notification half of the constraint.
-    const now = Date.now();
-    state.strangerWatermarkMs = Math.max(
-      state.strangerWatermarkMs,
-      ...freshStrangers.map((t) => Math.min(latestMs(t), now)),
-    );
-    saveBeatState(state);
+  // `latestArrival` also reports whether the time it returned came from the
+  // mail or from the now-fallback it uses when a thread's clock is garbled.
+  const now = Date.now();
+  const strangerArrivals = strangers.map((t) => latestArrival(t, now));
+  const fresh = strangerArrivals.filter((a) => a.ms > state.strangerWatermarkMs);
+  if (fresh.length) {
+    notify(`${fresh.length} new thread(s) from unknown senders — quarantined, unread`);
+    // Only genuine, in-the-past timestamps may advance the watermark.
+    // Clamping to now stops a message stamped 2099 from pushing the mark
+    // past every real arrival and silencing stranger notifications forever;
+    // dropping the untrusted ones stops a thread whose clock is garbled —
+    // whose `ms` was fabricated as now — from doing the same to a genuine
+    // stranger message that shows up in the listing a beat later. Garbled
+    // threads keep notifying every beat; they just never move the mark.
+    const advancing = fresh.filter((a) => a.trusted).map((a) => Math.min(a.ms, now));
+    if (advancing.length) {
+      state.strangerWatermarkMs = Math.max(state.strangerWatermarkMs, ...advancing);
+      saveBeatState(state);
+    }
   }
 
   // threadIds and messageIds are remote-controlled, and the thread ids are
   // the only such strings that reach the spawned session's instructions.
   // Reject rather than escape: a thread carrying an odd id is left for Marcus.
-  const safe = eligible.filter((t) => hasSafeIds(t));
+  const safe = eligible.filter((t) => idsUsable(t));
   const skipped = eligible.length - safe.length;
   if (skipped) {
-    notify(`${skipped} eligible thread(s) skipped — unexpected characters in remote ids`);
+    notify(`${skipped} eligible thread(s) skipped — missing or unexpected characters in remote ids`);
   }
 
-  if (!safe.length) { console.log(`[glance] ${new Date().toISOString()} nothing eligible`); return; }
+  // A thread whose clock cannot be read cannot be ordered, and a thread that
+  // cannot be ordered cannot be shown to be unanswered. Never auto-reply into
+  // that: skip toward silence plus a notification and let Marcus look.
+  const dated = safe.filter((t) => hasTrustworthyTimestamps(t));
+  const undated = safe.length - dated.length;
+  if (undated) {
+    notify(`${undated} eligible thread(s) skipped — unreadable message timestamps`);
+  }
 
-  const ids = safe.map((t) => t.threadId);
+  if (!dated.length) { console.log(`[glance] ${new Date().toISOString()} nothing eligible`); return; }
+
+  const ids = dated.map((t) => t.threadId);
   console.log(`[glance] eligible: ${ids.join(', ')}`);
   if (DRY) { console.log('[dry] would spawn reply session for the threads above'); return; }
 
