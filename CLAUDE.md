@@ -167,4 +167,5 @@ git commit -m "Add wholeness soul document"
 git push
 ```
 
-Only commit content files. Do not modify application code. Never force push.
+Never force push; the history is the provenance chain.
+
