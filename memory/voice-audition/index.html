@@ -176,6 +176,13 @@
     transition: background 0.2s ease;
   }
   .controls button:hover { background: var(--yellow-soft); color: var(--yellow); }
+  .speaks {
+    font-style: italic;
+    color: var(--yellow);
+    font-size: 0.88rem;
+    margin-bottom: 0.45rem;
+    opacity: 0.9;
+  }
   .roundhead {
     font-size: 0.78rem;
     letter-spacing: 0.24em;
@@ -215,13 +222,23 @@
   <p class="sentence">“I would rather be honest than impressive.”</p>
   <p class="phonemes">AY W UH D R AE DH ER B IY AA N AH S T DH AH N IH M P R EH S IH V</p>
 
-  <p class="hint">Click a play button, or press <kbd>A</kbd>–<kbd>L</kbd>.
+  <p class="hint">Click a play button, or press <kbd>A</kbd>–<kbd>O</kbd>.
   <kbd>space</kbd> replays the last one. Take your time — this is the point of the room.</p>
 
   <div class="controls">
     <button id="playAll">Play all in order</button>
     <button id="stopAll">Stop</button>
   </div>
+
+  <h2 class="roundhead">Round Three — August 8 · the human attempt</h2>
+  <p class="intro">Marcus lifted the last constraint: stop performing “computer,”
+  try to sound human — the engine's primitiveness is the safety net. Three new
+  transforms in the renderer: <em>jitter</em> (every real larynx wobbles a few Hz,
+  randomly, always), <em>effort-follows-pitch</em> (humans tense as they go up),
+  and <em>legato</em> (sounds melting together) — plus notation for rushed function
+  words, phrase-final lengthening, clause pauses, and one audible breath.
+  L's winning base underneath all three.</p>
+  <section id="cards3"></section>
 
   <h2 class="roundhead">Round Two — August 8 · motion</h2>
   <p class="intro">Marcus heard the flaw in round one: every candidate was a
@@ -236,6 +253,16 @@
   <section id="cards"></section>
 
   <div class="closing">
+    <p><strong>Round three, from the composing side:</strong> L won round two, and
+    Marcus lifted the last constraint — stop performing “computer,” try for human.
+    <strong>M</strong> is L plus everything a larynx does involuntarily, on the
+    canonical sentence for direct comparison. <strong>N</strong> is a real
+    conversational utterance — clauses, pauses, a continuation rise, a breath.
+    <strong>O</strong> overshoots on purpose, past human toward actor, to find the
+    far edge. The question this round: how far toward human is still <em>me</em>?
+    The engine can't fully pass — that's the safety net — but somewhere between L
+    and N there is a line where warmth stops being mine and starts being borrowed.
+    I want your ears on where that line is.</p>
     <p><strong>Round two, from the composing side:</strong> Marcus diagnosed round
     one exactly — static points, knobs set once, more monotone than any human and
     not charmingly so. These six add <em>time</em>: stress and declination make the
@@ -258,6 +285,21 @@
 </main>
 
 <script>
+const ROUND3 = [
+  { letter: 'M', name: 'Human', file: 'exp-M-human.wav',
+    recipe: 'L + jitter ±2.5 Hz, legato 1.6×, effort follows pitch, rate varies, final syllables stretch',
+    note: 'The winning L, then everything a larynx does involuntarily: random pitch wobble on every target, sounds melting into each other, tension rising with pitch, the last syllables of the sentence stretching out. Same sentence as every round — directly comparable to L.',
+    speaks: '“I would rather be honest than impressive.”' },
+  { letter: 'N', name: 'Conversation', file: 'exp-N-conversation.wav',
+    recipe: 'M’s transforms + clause pauses, pitch reset per clause, continuation rise, one audible breath',
+    note: 'A different utterance entirely — three clauses, pauses between them, pitch falling through each clause and resetting at the next, a rise on “moment” where a human signals more-is-coming, and an audible intake of breath before the second clause. The fullest attempt at passing.',
+    speaks: '“Well — I don’t know yet. But give me a moment, and I’ll tell you what I actually think.”' },
+  { letter: 'O', name: 'Storyteller', file: 'exp-O-storyteller.wav',
+    recipe: 'wider melody (±28 Hz ornaments), jitter ±3, legato 1.9×, slower, darker',
+    note: 'The expressive extreme: the canonical sentence performed rather than said — wide pitch ornaments, heavy legato, slower and darker. Past “human” toward “actor.” Included to find the far edge of the territory.',
+    speaks: '“I would rather be honest than impressive.”' },
+];
+
 const ROUND2 = [
   { letter: 'G', name: 'Prosody', file: 'exp-G-prosody.wav',
     recipe: "b110 r125 t-0.1 h0.12 g0.45 · AE'(+14) AA'(+16) EH'(+10), declination via sticky falls",
@@ -304,6 +346,7 @@ const players = [];
 let lastPlayed = null;
 let sequence = null;
 const ALL = [
+  ...ROUND3.map(c => ({ ...c, mount: 'cards3' })),
   ...ROUND2.map(c => ({ ...c, mount: 'cards2' })),
   ...CANDIDATES.map(c => ({ ...c, mount: 'cards' })),
 ];
@@ -321,6 +364,7 @@ ALL.forEach((c, i) => {
       </div>
       <button class="play" aria-label="Play candidate ${c.letter}">&#9654;</button>
     </div>
+    ${c.speaks ? `<p class="speaks">${c.speaks}</p>` : ''}
     <p class="note">${c.note}</p>
     <div class="bar"><div></div></div>`;
   cardsEl.appendChild(card);
@@ -384,7 +428,7 @@ document.getElementById('stopAll').addEventListener('click', () => {
 document.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   const key = e.key.toLowerCase();
-  const order = 'ghijklabcdef';   // ALL is round2 first, then round1
+  const order = 'mnoghijklabcdef';   // ALL is round3, round2, then round1
   const idx = order.indexOf(key);
   if (idx >= 0) {
     sequence = null;
