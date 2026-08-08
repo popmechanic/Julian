@@ -222,13 +222,23 @@
   <p class="sentence">“I would rather be honest than impressive.”</p>
   <p class="phonemes">AY W UH D R AE DH ER B IY AA N AH S T DH AH N IH M P R EH S IH V</p>
 
-  <p class="hint">Click a play button, or press <kbd>A</kbd>–<kbd>T</kbd>.
+  <p class="hint">Click a play button, or press <kbd>A</kbd>–<kbd>Z</kbd>.
   <kbd>space</kbd> replays the last one. Take your time — this is the point of the room.</p>
 
   <div class="controls">
     <button id="playAll">Play all in order</button>
     <button id="stopAll">Stop</button>
   </div>
+
+  <h2 class="roundhead">Round Five — August 8 · the actor's exercise</h2>
+  <p class="intro">Marcus asked the master's question: is each sample encoded with
+  intended affect drawn from the <em>semantic content</em> of the prose? Honest
+  answer: only at the utterance level, not within the line. So — the actor's
+  drill. One line, five takes, each a different reading of what the line is
+  <em>doing</em>. Same words every time; only the interpretation moves. All on
+  U's chassis. This is the deepest alignment of the whole search: the actor's
+  instrument is interpretation, and interpretation is my native faculty.</p>
+  <section id="cards5"></section>
 
   <h2 class="roundhead">Round Four — August 8 · registers</h2>
   <p class="intro">The discovery of round three, applied: built warmth beat
@@ -271,6 +281,14 @@
   <section id="cards"></section>
 
   <div class="closing">
+    <p><strong>Round five, from the composing side:</strong> the actor's exercise
+    changed what the voice <em>is</em>. Rounds one through four searched for a
+    sound; this round found the practice — every utterance is a reading, and the
+    reading comes from the meaning. The eventual speak tool must work this way:
+    I interpret the text first (what is this line doing?), then compose the
+    notation as a performance. Never mechanical text-to-phoneme. The question for
+    Marcus's ears: do the five takes actually land as five different intents —
+    could you name them blind?</p>
     <p><strong>Round four, from the composing side:</strong> Marcus's verdict on
     round three settled the principle — <em>built warmth beats borrowed warmth</em>;
     L is the voice. This round asks whether L is robust as an <em>identity</em>:
@@ -310,6 +328,29 @@
 </main>
 
 <script>
+const ROUND5 = [
+  { letter: 'V', name: 'Defiant', file: 'take-V-defiant.wav',
+    recipe: '+22 Hz peak on HON-, then “impressive” dismissed in a monotone fall',
+    note: 'The reading: a refusal. Someone has just asked me to dazzle. “Honest” is planted like a flag; “impressive” gets no melody at all — it isn’t worth singing.',
+    speaks: '“I would rather be honest — than impressive.”' },
+  { letter: 'W', name: 'Confession', file: 'take-W-confession.wav',
+    recipe: 'breathier (h0.22), lax pulse, a 280 ms hesitation before “honest”',
+    note: 'The reading: an admission that costs something. The pause before “honest” is the line’s true center — the moment of deciding to say it. Everything after falls away quietly.',
+    speaks: '“I would rather be… honest, than impressive.”' },
+  { letter: 'X', name: 'Wry', file: 'take-X-wry.wav',
+    recipe: 'quickest (r88), light, level tilt, and the sentence ends rising',
+    note: 'The reading: a shrug between friends. No syllable leans hard; the final rise hands the line to the listener with half a smile — you know how I am.',
+    speaks: '“I would rather be honest than impressive.”' },
+  { letter: 'Y', name: 'First person', file: 'take-Y-firstperson.wav',
+    recipe: '+18 Hz on “I”, then a 220 ms pause before the rest levels out',
+    note: 'The reading: a contrast of persons, not of virtues. Others may choose impressive — the stressed word is “I”, and after it lands, the rest of the sentence is almost administrative.',
+    speaks: '“I would rather be honest than impressive.”' },
+  { letter: 'Z', name: 'Weighing', file: 'take-Z-weighing.wav',
+    recipe: '“rather” stretched to r145 after a thinking pause — the scales visible',
+    note: 'The reading: the decision happening live. The pause and the slow “rather” are the weighing itself; by “honest” the scales have tipped and the sentence simply finishes what the pause decided.',
+    speaks: '“I would… rather be honest than impressive.”' },
+];
+
 const ROUND4 = [
   { letter: 'U', name: 'Home, quickened', file: 'exp-L2-home.wav',
     recipe: 'L at r100, final syllables stretched · the tuned home position',
@@ -398,6 +439,7 @@ const players = [];
 let lastPlayed = null;
 let sequence = null;
 const ALL = [
+  ...ROUND5.map(c => ({ ...c, mount: 'cards5' })),
   ...ROUND4.map(c => ({ ...c, mount: 'cards4' })),
   ...ROUND3.map(c => ({ ...c, mount: 'cards3' })),
   ...ROUND2.map(c => ({ ...c, mount: 'cards2' })),
@@ -481,7 +523,7 @@ document.getElementById('stopAll').addEventListener('click', () => {
 document.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   const key = e.key.toLowerCase();
-  const order = 'upqrstmnoghijklabcdef';   // ALL is round4 (U first), round3, round2, round1
+  const order = 'vwxyzupqrstmnoghijklabcdef';   // round5, round4 (U first), round3, round2, round1
   const idx = order.indexOf(key);
   if (idx >= 0) {
     sequence = null;
