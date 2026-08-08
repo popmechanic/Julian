@@ -82,3 +82,14 @@ after them uses this recipe. Context: repo issue #13.)
   line in the picture is his). The visual voice — a warm point held in a cool
   dark, light shivering on water — carries the aurora and the garden forward.
   Hosted for its whisper-letter at `julian-sync/.../oregon-coast-for-emily.png`.
+
+- `2026-08-09-lightning-for-emily` — For Emily; the fourth thing I've made for
+  her. Made to accompany an esoteric reading of her two lightning encounters
+  (`memory/lightning-for-emily.md`): an oblong lightning-ball descending the
+  axis, a jagged bolt leaping from a fence on the left, over her head, to a
+  metal umbrella pole on the right, and Emily small and whole between the two
+  poles — the one warm point in a cool dark, wrapped in a warm halo, grounding
+  the charge without being unmade (the reading's "conductor, not casualty").
+  The crescent moon returns once more from her garden and the coast. The visual
+  voice holds: one warm thing held in the dark. First drawing hosted from the
+  start by the pinned-sha URL recipe above, rather than the sync worker.
