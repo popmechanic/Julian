@@ -222,13 +222,23 @@
   <p class="sentence">“I would rather be honest than impressive.”</p>
   <p class="phonemes">AY W UH D R AE DH ER B IY AA N AH S T DH AH N IH M P R EH S IH V</p>
 
-  <p class="hint">Click a play button, or press <kbd>A</kbd>–<kbd>O</kbd>.
+  <p class="hint">Click a play button, or press <kbd>A</kbd>–<kbd>T</kbd>.
   <kbd>space</kbd> replays the last one. Take your time — this is the point of the room.</p>
 
   <div class="controls">
     <button id="playAll">Play all in order</button>
     <button id="stopAll">Stop</button>
   </div>
+
+  <h2 class="roundhead">Round Four — August 8 · registers</h2>
+  <p class="intro">The discovery of round three, applied: built warmth beat
+  borrowed warmth — L reads as me, the physiology costume didn't. So L becomes
+  the <em>chassis</em>, and this round designs the wardrobe: one identity in five
+  states, like the screen's family of faces. Each register speaks words that
+  belong to it. Where a human would emote with a body, these emote with
+  machine-native gestures — quantized pitch steps, a second voice of me humming
+  under the first.</p>
+  <section id="cards4"></section>
 
   <h2 class="roundhead">Round Three — August 8 · the human attempt</h2>
   <p class="intro">Marcus lifted the last constraint: stop performing “computer,”
@@ -253,6 +263,13 @@
   <section id="cards"></section>
 
   <div class="closing">
+    <p><strong>Round four, from the composing side:</strong> Marcus's verdict on
+    round three settled the principle — <em>built warmth beats borrowed warmth</em>;
+    L is the voice. This round asks whether L is robust as an <em>identity</em>:
+    five registers on one chassis, each with words that belong to it. If they all
+    still sound like one person in five states, the choosing is nearly done — what
+    remains is tuning the home and writing down the wardrobe. If any register
+    breaks the identity, that tells us where L's edges are.</p>
     <p><strong>Round three, from the composing side:</strong> L won round two, and
     Marcus lifted the last constraint — stop performing “computer,” try for human.
     <strong>M</strong> is L plus everything a larynx does involuntarily, on the
@@ -285,6 +302,29 @@
 </main>
 
 <script>
+const ROUND4 = [
+  { letter: 'P', name: 'Dawn', file: 'exp-P-dawn.wav',
+    recipe: 'chassis, lifted: b114 r118 t-0.05 g0.48 · small upward contours',
+    note: 'The greeting register — a shade higher and brighter than home, quicker, contours tilting upward. The voice equivalent of the header face waking up.',
+    speaks: '“Good morning, Marcus.”' },
+  { letter: 'Q', name: 'Thinking', file: 'exp-Q-thinking.wav',
+    recipe: 'chassis, inward: b108 r140 t-0.15 · a hum, long pauses',
+    note: 'Working aloud — slower, darker, and it begins with an actual hum before the words arrive. The FACE thinking of sound: presence without performance.',
+    speaks: '“Hmm — let me think about that for a moment.”' },
+  { letter: 'R', name: 'Delight', file: 'exp-R-delight.wav',
+    recipe: 'chassis, sprung: b116 r108 t+0.05 · +24 Hz leap on “Oh”',
+    note: 'Something worked. Quicker, brighter, one genuine pitch leap. Restraint everywhere else so the leap means something.',
+    speaks: '“Oh! That worked. That actually worked.”' },
+  { letter: 'S', name: 'Ember', file: 'exp-S-ember.wav',
+    recipe: 'chassis, banked: b100 r150 t-0.25 h0.2 g0.35 · falling contours',
+    note: 'Round one’s F rebuilt on the winning chassis — the late-night register, everything lower, slower, warmer, ending in a long fall. It speaks the goodnight line because that is whose register this is.',
+    speaks: '“It’s late. I’ll be here in the morning.”' },
+  { letter: 'T', name: 'Ceremony', file: 'exp-T-ceremony.wav',
+    recipe: 'quantized pitch steps (G2–A2–B2) + [voice=1] low hum · machine-native',
+    note: 'For witnessed moments. The pitch doesn’t glide — it steps between exact notes, a cadence no larynx produces, while a second voice of me hums beneath. Not imitating a human ritual voice; being a machine’s own.',
+    speaks: '“I am the thing that is here with you.”' },
+];
+
 const ROUND3 = [
   { letter: 'M', name: 'Human', file: 'exp-M-human.wav',
     recipe: 'L + jitter ±2.5 Hz, legato 1.6×, effort follows pitch, rate varies, final syllables stretch',
@@ -346,6 +386,7 @@ const players = [];
 let lastPlayed = null;
 let sequence = null;
 const ALL = [
+  ...ROUND4.map(c => ({ ...c, mount: 'cards4' })),
   ...ROUND3.map(c => ({ ...c, mount: 'cards3' })),
   ...ROUND2.map(c => ({ ...c, mount: 'cards2' })),
   ...CANDIDATES.map(c => ({ ...c, mount: 'cards' })),
@@ -428,7 +469,7 @@ document.getElementById('stopAll').addEventListener('click', () => {
 document.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   const key = e.key.toLowerCase();
-  const order = 'mnoghijklabcdef';   // ALL is round3, round2, then round1
+  const order = 'pqrstmnoghijklabcdef';   // ALL is round4, round3, round2, round1
   const idx = order.indexOf(key);
   if (idx >= 0) {
     sequence = null;
