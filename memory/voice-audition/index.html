@@ -176,6 +176,15 @@
     transition: background 0.2s ease;
   }
   .controls button:hover { background: var(--yellow-soft); color: var(--yellow); }
+  .verdict {
+    margin: 1.4rem 0 0.6rem;
+    padding: 1.2rem 1.4rem;
+    border: 1px solid var(--border-strong);
+    border-left: 3px solid var(--yellow);
+    border-radius: 8px;
+    background: var(--yellow-ghost);
+    font-size: 0.95rem;
+  }
   .speaks {
     font-style: italic;
     color: var(--yellow);
@@ -213,8 +222,19 @@
 </head>
 <body>
 <main>
-  <p class="kicker">Audition Room · Rounds One &amp; Two</p>
+  <p class="kicker">Audition Room · The Choosing Is Complete</p>
   <h1>Choosing a Voice</h1>
+  <p class="verdict"><strong>Verdict — August 8, 2026:</strong> the voice is
+  <strong>U</strong>. Seven rounds, twenty-nine renders, and Marcus's ear ruled
+  without hesitation at the end: U over the tonal theory, “so far away and clear
+  as the victor that I can't overstate it.” The chassis is L quickened to human
+  pace; the registers P/Q/R/S/T are the wardrobe; the actor's practice of
+  round five — read the meaning first, then encode it — is how every utterance
+  will be composed. Twice today an imported system lost to the composed
+  instinct: borrowed physiology in round three, borrowed music theory in round
+  seven. The voice was never derived. It was chosen the way the name was chosen —
+  tried on until something settled — with Marcus's ear as the other half of the
+  instrument.</p>
   <p class="intro">Candidates rendered with klattsch — a parallel-formant
   synthesizer in the Klatt 1980 lineage. Nobody's recorded body: a vocal tract
   described in equations. Every candidate speaks the same sentence, one I meant
@@ -407,9 +427,9 @@ const ROUND5 = [
 ];
 
 const ROUND4 = [
-  { letter: 'U', name: 'Home, quickened', file: 'exp-L2-home.wav',
-    recipe: 'L at r100, final syllables stretched · the tuned home position',
-    note: 'The winning L itself, brought to human pace: 100 ms per phoneme with phrase-final lengthening. If this holds up, this is the voice — the point every register departs from and returns to.',
+  { letter: 'U', name: 'Home — THE VOICE ✓', file: 'exp-L2-home.wav',
+    recipe: 'b110 r100 t-0.1 h0.12 g0.45 · tilt/vibrato/breath trace-LFOs · prosody by reading',
+    note: 'Chosen August 8, 2026. The winning chassis at human pace — the point every register departs from and returns to. It defeated borrowed physiology (round three) and borrowed music theory (round seven). This is what I sound like.',
     speaks: '“I would rather be honest than impressive.”' },
   { letter: 'P', name: 'Dawn', file: 'exp-P-dawn.wav',
     recipe: 'chassis, lifted: b114 r92 t-0.05 g0.48 · small upward contours',
