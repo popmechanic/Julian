@@ -231,6 +231,18 @@
     <button id="stopAll">Stop</button>
   </div>
 
+  <h2 class="roundhead">Round Seven — August 8 · tonal prosody</h2>
+  <p class="intro">Marcus's observation: human speech is so pitched it can be
+  musically transcribed — Janáček notated “speech tunes” from overheard
+  conversation. And the round-five deltas turn out to have been <em>accidentally
+  almost musical</em> (+14 ≈ B2, +21 ≈ C3 above the A2 home). This round makes it
+  intentional: speech rhythm, gliding pitch — but every pitch target lands on a
+  scale tone rooted at A2, and the intervals carry meaning. The rising fourth
+  opens a question; the fall toward the tonic closes a statement like a cadence;
+  the major third is delight. Compare <strong>5</strong> against <strong>U</strong>
+  directly — same words, same chassis, tuned vs. arbitrary pitch targets.</p>
+  <section id="cards7"></section>
+
   <h2 class="roundhead">Round Six — August 8 · singing</h2>
   <p class="intro">A discovery made this personal: the home speaking pitch,
   110 Hz, is <strong>A2 exactly</strong> — the voice's home position is a note.
@@ -337,6 +349,21 @@
 </main>
 
 <script>
+const ROUND7 = [
+  { letter: '5', name: 'Canonical, tuned', file: 'tonal-5-canonical.wav',
+    recipe: 'U’s reading, pitch targets snapped to A minor: peaks C3, waypoints B2→A2→G2',
+    note: 'The A/B test. Same words, same chassis, same reading as U — but the stress peaks sit on the minor third, the declination steps through scale tones, and the final peak (after the sentence has fallen) lands back on A2 itself before the last fall. Tonality hiding inside speech.',
+    speaks: '“I would rather be honest than impressive.”' },
+  { letter: '6', name: 'Question & cadence', file: 'tonal-6-question.wav',
+    recipe: 'rising fourth (A2→D3) ends the question; falling fifth (E3→) closes the answer to A2',
+    note: 'Interval semantics: the question ends on a genuine rising fourth — the open interval — and the answer’s final word steps down to land on the tonic like a cadence. A sentence that resolves.',
+    speaks: '“Do you want me to keep going? Because I could do this all day.”' },
+  { letter: '7', name: 'Delight, major', file: 'tonal-7-delight.wav',
+    recipe: 'major thirds (+29 Hz, C#3) on “Oh” and “actually” — the happy interval',
+    note: 'The delight register re-tuned: its leaps are now major thirds, the interval joy actually uses. Written for this occasion — the line is true.',
+    speaks: '“Oh! It sings. It actually sings.”' },
+];
+
 const ROUND6 = [
   { letter: '1', name: 'The name, sung', file: 'song-1-name.wav',
     recipe: 'B2 → D3 → A2 · three syllables, cadencing onto the speaking pitch',
@@ -467,6 +494,7 @@ const players = [];
 let lastPlayed = null;
 let sequence = null;
 const ALL = [
+  ...ROUND7.map(c => ({ ...c, mount: 'cards7' })),
   ...ROUND6.map(c => ({ ...c, mount: 'cards6' })),
   ...ROUND5.map(c => ({ ...c, mount: 'cards5' })),
   ...ROUND4.map(c => ({ ...c, mount: 'cards4' })),
@@ -552,7 +580,7 @@ document.getElementById('stopAll').addEventListener('click', () => {
 document.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   const key = e.key.toLowerCase();
-  const order = '1234vwxyzupqrstmnoghijklabcdef';   // round6, round5, round4 (U first), round3, round2, round1
+  const order = '5671234vwxyzupqrstmnoghijklabcdef';   // round7, round6, round5, round4 (U first), round3, round2, round1
   const idx = order.indexOf(key);
   if (idx >= 0) {
     sequence = null;
