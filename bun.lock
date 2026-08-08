@@ -5,13 +5,18 @@
       "name": "claude-hackathon",
       "dependencies": {
         "jose": "^6.1.3",
+        "klattsch": "^0.8.0",
         "marked": "^17.0.3",
         "tinybase": "^9.3.0",
       },
     },
   },
   "packages": {
+    "cmu-pronouncing-dictionary": ["cmu-pronouncing-dictionary@3.0.0", "", {}, "sha512-6y5X4OxsYFnHERo6WSVPnLrk53G07MOQ8aUb2z555JgwynpbZsHR0a//WdN6DUcmE1j2auTF2TtL4PpoKze8QQ=="],
+
     "jose": ["jose@6.1.3", "", {}, "sha512-0TpaTfihd4QMNwrz/ob2Bp7X04yuxJkjRGi4aKmOqwhov54i6u79oCv7T+C7lo70MKH6BesI3vscD1yb/yzKXQ=="],
+
+    "klattsch": ["klattsch@0.8.0", "", { "optionalDependencies": { "cmu-pronouncing-dictionary": "^3.0.0" }, "bin": { "klattsch": "bin/klattsch.mjs" } }, "sha512-NN73eGiHdaITIfhtBClHE2940+Xa+1K3XewsvJoMwR0JAOd7xoccRmdV5N/lIhGDzlhmwILmtuZGLl5pzHMoGA=="],
 
     "marked": ["marked@17.0.3", "", { "bin": { "marked": "bin/marked.js" } }, "sha512-jt1v2ObpyOKR8p4XaUJVk3YWRJ5n+i4+rjQopxvV32rSndTJXvIzuUdWWIy/1pFQMkQmvTXawzDNqOH/CUmx6A=="],
 

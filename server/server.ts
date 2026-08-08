@@ -784,7 +784,7 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '', decisio
         "--output-format", "stream-json",
         "--verbose",
         "--permission-mode", "acceptEdits",
-        "--allowedTools", "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch",
+        "--allowedTools", "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch,Skill",
         "--append-system-prompt", appendPrompt,
       ];
 
