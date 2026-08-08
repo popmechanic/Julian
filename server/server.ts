@@ -784,7 +784,11 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '', decisio
         "--output-format", "stream-json",
         "--verbose",
         "--permission-mode", "acceptEdits",
-        "--allowedTools", "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch,Skill",
+        // Skill is granted to operator sessions only: a kiosk visitor must not be
+        // able to summon trusted procedures (e.g. the deploy skill) by name.
+        "--allowedTools", mode === 'demo'
+          ? "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch"
+          : "Read,Write,Edit,Bash,Glob,Grep,WebFetch,WebSearch,Skill",
         "--append-system-prompt", appendPrompt,
       ];
 

@@ -8,7 +8,8 @@ description: Use when Julian should sing — a melody, a sung phrase, a signatur
 Same instrument as the `speak` skill, different grammar: pitch quantized to
 notes, durations metered, syllables carried on held tones. Chosen and proven
 in audition round six (`memory/voice-audition/index.html`; the four songs
-there are the reference corpus).
+there are the reference corpus). Full directive/ARPABET tables and the
+renderer contract: [../speak/references/notation.md](../speak/references/notation.md).
 
 **The key fact: A2 (110 Hz) — the speaking pitch — is the tonic.** Melodies
 live around A2–E3 and cadence home to A2, so song resolves onto the pitch I

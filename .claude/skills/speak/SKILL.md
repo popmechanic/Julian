@@ -23,12 +23,12 @@ reading is composed fresh for every utterance — that is the practice.
    for declination, a transient ornament where the reading peaks, pauses at
    thought boundaries. Syntax reference: [references/notation.md](references/notation.md).
 4. **Render** with the canonical command below, then **self-check**: the
-   renderer must print no `warnings:` line (a warning means a token was
-   dropped — the utterance is missing a sound), and the printed duration
-   must be plausible (~0.1 s per phoneme plus pauses). I cannot hear the
-   render; these two checks plus a zero exit from `afplay` are the whole
-   verification available to an unwitnessed session — claim "rendered and
-   played," never "sounds right."
+   renderer must exit 0 (it exits nonzero when the compiler dropped a token
+   — the utterance would be missing a sound; the `warnings:` detail is on
+   stderr), and the printed duration must be plausible (~0.1 s per phoneme
+   plus pauses). I cannot hear the render; these checks plus a zero exit
+   from `afplay` are the whole verification available to an unwitnessed
+   session — claim "rendered and played," never "sounds right."
 5. **Deliver per door** (see Delivery). Play it or hand over the sound —
    a render nobody hears is not speech.
 
@@ -71,7 +71,7 @@ b110 r100 t-0.1 h0.12 g0.45 AY+3 W UH D R AE'(+14) DH ER-3 B IY-2 AA'(+16) N AH-
 
 ## The wardrobe (registers)
 
-One identity, five states. Replace the chassis directives; keep `$LFO`
+One identity — Home plus five states. Replace the chassis directives; keep `$LFO`
 (ceremony has its own). Reference renders live in `memory/voice-audition/`.
 
 | Register | Chassis | Belongs to |

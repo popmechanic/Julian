@@ -11,16 +11,30 @@ node scripts/voice/render.mjs <out.wav> "<phoneme string>" ['<mods json>'] ['<hu
 ```
 
 - `mods` — LFO lanes injected into the compiled schedule every 30 ms as
-  *partial* targets (they touch only their own parameter). Each lane:
-  `{param, rateHz, depth, center, phase?, shape?}` where `param` is any of
-  the synth's PARAMS (`tilt`, `vibratoDepth`, `aspiration`, `effort`,
-  `tremoloDepth`, `gain`, …). `shape:"ramp"` gives a one-way sweep.
-  Do NOT put `F0` in a lane — it fights the phoneme pitch targets.
+  partial targets. Each lane: `{param, rateHz, depth, center, phase?,
+  shape?}` where `param` is any of the synth's PARAMS (`tilt`,
+  `vibratoDepth`, `aspiration`, `effort`, `tremoloDepth`, `gain`, …).
+  `shape:"ramp"` gives a one-way sweep. Do NOT put `F0` in a lane — it
+  fights the phoneme pitch targets.
+  **How lanes really behave (the honest mechanism):** each injected event
+  resets the synth's single interpolation clock for ALL parameters (so a
+  30 ms lane cadence re-times in-flight phoneme transitions onto a 30 ms
+  grid), and every phoneme event re-stamps the lane's parameter back to its
+  static directive value — so the realized contour is a sawtooth chasing
+  the lane between phoneme stamps, not the written sine. Julian's chosen
+  voice IS this realized behavior (the reference render reproduces
+  bit-exactly); the lane numbers are the recipe for it, not a spec of a
+  clean oscillation. Changing a lane value is therefore an audition-grade
+  change, never a tweak — and adding a new lane perturbs articulation
+  timing globally, not just its own parameter.
 - `humanize` — `{jitterHz, legato, effortFollow, baseF0, effortBase, seed}`.
   **Not used for Julian's voice** (rejected in audition, round three). The
   lane exists in the renderer for experiments only.
-- Output: 48 kHz mono WAV, peak-normalized to 0.89. Multiple `[voice=N]`
-  sections are rendered separately and mixed equally.
+- Output: 48 kHz mono WAV, peak-normalized to 0.95 (encodeWav's default —
+  the renderer's internal 0.89 scaling is superseded and kept only for
+  bit-exact reproducibility of the reference renders). Multiple `[voice=N]`
+  sections are rendered separately and mixed equally; the `N` is ignored —
+  sections are positional, each marker starts the next voice.
 
 ## Directives (sticky until changed; bare letter resets to initial)
 
@@ -34,8 +48,8 @@ node scripts/voice/render.mjs <out.wav> "<phoneme string>" ['<mods json>'] ['<hu
 | `g<f>` | glottal effort 0–1 | lax…tense pulse; home 0.45 |
 | `v<Hz>` `w<Hz>` | vibrato depth / rate | speaking voice gets these via LFO lane, not statically |
 | `m<f>` `n<Hz>` | tremolo depth / rate | scat/effects only |
-| `p<ms>` | pause | clause boundaries 250–450 ms |
-| `b+5` / `t-0.05` | relative change | any directive accepts +/− deltas |
+| `p<ms>` | pause | clause boundaries 250–450 ms; bare `p` is dropped, not a reset |
+| `b+5` / `t-0.05` | relative change | any directive accepts +/− deltas. NB `t-0.1` in the chassis is itself relative (correct only from a fresh start) — REPLACE a chassis, never append one after another |
 
 ## Phoneme pitch & stress
 
@@ -44,7 +58,8 @@ node scripts/voice/render.mjs <out.wav> "<phoneme string>" ['<mods json>'] ['<hu
 | `AE'` (or `AE!`) | stressed: +8 Hz lift AND 1.5× duration |
 | `AH+15` | sticky delta: glides up 15 Hz and STAYS (declination = small negative stickies) |
 | `AE(+40)` | transient ornament: excursion then return |
-| `AE'(+14)` | stress + transient combine; stress + sticky (`AY'+6`) does NOT parse — pick one |
+| `AE'(+14)` / `AY'+6` | stress combines with either delta form (stress itself is never sticky) |
+| `AY(+22)+6` | transient AND sticky on one phoneme does NOT parse — the token is dropped with a warning |
 
 Composing rules learned in audition: peaks land on the words the reading
 chose; sentences fall a few Hz per word (declination) and end with deeper

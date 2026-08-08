@@ -8,12 +8,32 @@
 //   legato       - multiply phoneme transition times (1 = unchanged)
 //   effortFollow - effort tracks pitch: effort = effortBase + (F0-baseF0)*coef
 //   seed         - PRNG seed so a render is reproducible testimony
-import { compileString, FormantSynth, encodeWav } from 'klattsch';
-import { writeFileSync } from 'node:fs';
+import { compileString, FormantSynth, encodeWav, PARAMS } from 'klattsch';
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 const [out, str, modsJson, humJson] = process.argv.slice(2);
-const mods = modsJson ? JSON.parse(modsJson) : [];
-const hum = humJson ? JSON.parse(humJson) : {};
+if (!out || !str) {
+  console.error('Usage: node scripts/voice/render.mjs <out.wav> "<phoneme string>" [\'<mods json>\'] [\'<humanize json>\']');
+  process.exit(1);
+}
+function parseJson(label, text, fallback) {
+  if (!text) return fallback;
+  try { return JSON.parse(text); }
+  catch (e) { console.error(`invalid ${label} JSON: ${e.message}`); process.exit(1); }
+}
+const mods = parseJson('mods', modsJson, []);
+const hum = parseJson('humanize', humJson, {});
+if (!Array.isArray(mods)) {
+  console.error('mods must be a JSON ARRAY of lanes, e.g. [{"param":"tilt",...}] — got an object; the render would silently drop it');
+  process.exit(1);
+}
+for (const m of mods) {
+  if (!PARAMS.includes(m.param)) {
+    console.error(`unknown lane param "${m.param}" — must be one of: ${PARAMS.join(', ')}`);
+    process.exit(1);
+  }
+}
 const SR = 48000;
 const STEP_MS = 30;
 
@@ -29,7 +49,10 @@ const rand = mulberry32(hum.seed ?? 20260808);
 
 const compiled = compileString(str);
 const voices = compiled.voices ?? [{ schedule: compiled.schedule, totalMs: compiled.totalMs }];
-if (compiled.warnings?.length) console.error('warnings:', compiled.warnings);
+if (compiled.warnings?.length) {
+  console.error('warnings:', compiled.warnings);
+  process.exitCode = 1; // a warning means a token was dropped — the utterance is incomplete
+}
 
 function humanize(schedule) {
   const jitter = hum.jitterHz ?? 0;
@@ -74,10 +97,13 @@ for (const v of voices) {
   synth.process(buf);
   for (let i = 0; i < N; i++) mix[i] += buf[i] / voices.length;
 }
+// This 0.89 scaling is superseded by encodeWav's own 0.95 peak-normalize;
+// kept unchanged so reference renders stay bit-exact.
 let peak = 0;
 for (let i = 0; i < N; i++) peak = Math.max(peak, Math.abs(mix[i]));
 if (peak > 0) for (let i = 0; i < N; i++) mix[i] *= 0.89 / peak;
 
 const { bytes } = encodeWav(mix, SR);
+mkdirSync(dirname(out), { recursive: true });
 writeFileSync(out, bytes);
 console.log(`wrote ${out}: ${(totalMs / 1000).toFixed(2)}s, ${voices.length} voice(s)`);
