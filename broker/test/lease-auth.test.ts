@@ -266,11 +266,11 @@ describe('the legacy window', () => {
 });
 
 describe('the four faces', () => {
-  test('stubbed faces respond 501 at /device, /approve, /introspect', async () => {
+  // /device and /token are proven fully by device-flow.test.ts now that the
+  // knock is implemented; only the still-stubbed faces are asserted 501 here.
+  test('stubbed faces respond 501 at /approve, /introspect', async () => {
     const { env } = gateEnv();
     const cases: Array<[string, RequestInit]> = [
-      ['/device', { method: 'POST' }],
-      ['/token', { method: 'POST' }],
       ['/approve', { method: 'GET' }],
       ['/auth/callback', { method: 'GET' }],
       ['/introspect', { method: 'POST' }],
@@ -285,7 +285,7 @@ describe('the four faces', () => {
 
   test('the faces are mounted ahead of lease auth — no bearer required to reach them', async () => {
     const { env, calls } = gateEnv();
-    const res = await worker.fetch(new Request(`${BASE}/device`, { method: 'POST' }), env);
+    const res = await worker.fetch(new Request(`${BASE}/approve`, { method: 'GET' }), env);
     expect(res.status).toBe(501);
     expect(calls.validateAccess).toEqual([]);
     expect(calls.legacyAllowed).toBe(0);
