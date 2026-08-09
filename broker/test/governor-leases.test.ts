@@ -30,6 +30,11 @@ async function withGovernor(fn: (g: GovernorDO, clock: Clock) => Promise<void> |
 
 type Ready = { status: 'ready'; accessToken: string; refreshToken: string; expiresIn: number; scope: string };
 
+/** The register's own storage, for the two facts no RPC exposes: stored caps and token kinds. */
+function sqlOf(g: GovernorDO): SqlStorage {
+  return (g as unknown as { sql: SqlStorage }).sql;
+}
+
 async function enroll(
   g: GovernorDO, clock: Clock, door = DOOR, scope: 'full-house' | 'reading-room' = 'full-house',
 ): Promise<Ready> {
@@ -102,6 +107,22 @@ describe('knock → approve → poll lifecycle', () => {
     });
   });
 
+  test('a slow_down does not restart the penalty window', async () => {
+    await withGovernor(async (g, clock) => {
+      const knock = await g.knockCreate(CLIENT, HOST, PURPOSE);
+      if ('error' in knock) throw new Error('knock refused');
+      expect(await g.devicePoll(knock.deviceCode, CLIENT)).toEqual({ status: 'pending' }); // served at t
+      clock.advance(2);
+      expect(await g.devicePoll(knock.deviceCode, CLIENT)).toEqual({ status: 'slow_down' });
+      clock.advance(1);
+      expect(await g.devicePoll(knock.deviceCode, CLIENT)).toEqual({ status: 'slow_down' });
+      // Five seconds after the last *served* poll, the door is served again —
+      // impatience must not push the next answer further away.
+      clock.advance(2);
+      expect(await g.devicePoll(knock.deviceCode, CLIENT)).toEqual({ status: 'pending' });
+    });
+  });
+
   test('expired knock → expired; a decision on it is refused', async () => {
     await withGovernor(async (g, clock) => {
       const knock = await g.knockCreate(CLIENT, HOST, PURPOSE);
@@ -145,14 +166,30 @@ describe('knock → approve → poll lifecycle', () => {
     });
   });
 
-  test('knock flooding: a seventh pending knock is refused, and expiry clears the jam', async () => {
+  test('knock flooding: at most five knocks may be pending, and expiry clears the jam', async () => {
     await withGovernor(async (g, clock) => {
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 5; i++) {
         expect(await g.knockCreate(CLIENT, HOST, PURPOSE)).toHaveProperty('deviceCode');
       }
       expect(await g.knockCreate(CLIENT, HOST, PURPOSE)).toEqual({ error: 'slow_down' });
       clock.advance(901);
       expect(await g.knockCreate(CLIENT, HOST, PURPOSE)).toHaveProperty('deviceCode');
+    });
+  });
+
+  test('the door claims are length-capped at 120 characters before they are stored', async () => {
+    await withGovernor(async (g) => {
+      const long = 'x'.repeat(300);
+      const knock = await g.knockCreate(`${long}client`, `${long}host`, `${long}purpose`);
+      if ('error' in knock) throw new Error('knock refused');
+      const view = g.knockByUserCode(knock.userCode);
+      expect(view).toEqual({
+        userCode: knock.userCode,
+        clientId: 'x'.repeat(120), host: 'x'.repeat(120), purpose: 'x'.repeat(120),
+        created: START,
+      });
+      // The over-long id still polls: the caller's id is capped the same way.
+      expect(await g.devicePoll(knock.deviceCode, `${long}client`)).toEqual({ status: 'pending' });
     });
   });
 
@@ -212,11 +249,59 @@ describe('rotation machine', () => {
       expect(retry.status).toBe('ok');
       if (retry.status !== 'ok') throw new Error('unreachable');
 
-      // The unreceived successor was revoked in the same breath.
-      expect((await g.mintFromRefresh(second.refreshToken)).status).toBe('invalid');
+      // Grace holds: the door that never heard the answer is served.
       expect(await g.validateAccess(second.accessToken)).toBeNull();
       expect(await g.validateAccess(retry.accessToken)).toMatchObject({ doorName: DOOR });
       expect(g.leaseList().find((l) => l.doorName === DOOR)?.status).toBe('living');
+
+      // The unreceived successor is not erased but tombstoned: it stays
+      // associated with the lease so that presenting it later is legible.
+      const revoked = sqlOf(g).exec(
+        "SELECT COUNT(*) AS n FROM lease_tokens WHERE kind = 'revoked'",
+      ).one().n;
+      expect(Number(revoked)).toBe(1);
+    });
+  });
+
+  test('retrying the same prev refresh again still grace-mints: tombstones are not successors', async () => {
+    await withGovernor(async (g, clock) => {
+      const first = await enroll(g, clock);
+      const second = await g.mintFromRefresh(first.refreshToken);
+      if (second.status !== 'ok') throw new Error('unreachable');
+      expect((await g.mintFromRefresh(first.refreshToken)).status).toBe('ok');
+      const third = await g.mintFromRefresh(first.refreshToken);
+      expect(third.status).toBe('ok');
+      if (third.status !== 'ok') throw new Error('unreachable');
+      expect(await g.validateAccess(third.accessToken)).toMatchObject({ doorName: DOOR });
+      expect(g.leaseList().find((l) => l.doorName === DOOR)?.status).toBe('living');
+    });
+  });
+
+  test('a tombstoned refresh presented later kills the lease: the replay is not survivable', async () => {
+    await withGovernor(async (g, clock) => {
+      const first = await enroll(g, clock);                        // honest door holds R1
+      const leaseId = (await g.validateAccess(first.accessToken))?.leaseId;
+      // The thief has R1 too. The honest door rotates first.
+      const honest = await g.mintFromRefresh(first.refreshToken);  // R2, never spent
+      if (honest.status !== 'ok') throw new Error('unreachable');
+      // The thief replays R1 and is served under the lost-response grace.
+      const stolen = await g.mintFromRefresh(first.refreshToken);
+      expect(stolen.status).toBe('ok');
+
+      // The honest door now presents R2 — tombstoned by the thief's mint. Two
+      // parties hold this lease's tokens, and the lease dies.
+      expect(await g.mintFromRefresh(honest.refreshToken)).toEqual({ status: 'killed' });
+      expect(g.leaseList().find((l) => l.doorName === DOOR)?.status).toBe('killed-rotation');
+      if (stolen.status !== 'ok') throw new Error('unreachable');
+      expect(await g.validateAccess(stolen.accessToken)).toBeNull();
+      expect(await g.mintFromRefresh(stolen.refreshToken)).toEqual({ status: 'invalid' });
+
+      const entry = g.entries(5)[0];
+      expect(entry.sub).toBe(`lease:${leaseId}`);
+      expect(entry.service).toBe('lease');
+      expect(entry.verb).toBe('killed');
+      expect(entry.allowed).toBe(0);
+      expect(entry.detail).toContain('rotation replay');
     });
   });
 
@@ -336,20 +421,82 @@ describe('reserveLease caps', () => {
     });
   });
 
-  test('every act is ledgered under sub lease:<id> with the door from the lease row', async () => {
+  test('the ledgered door name is read from the register, never taken from the caller', async () => {
     await withGovernor(async (g, clock) => {
       await enroll(g, clock);
       const lease = g.leaseList().find((l) => l.doorName === DOOR);
       if (!lease) throw new Error('no lease');
-      g.reserveLease(lease.leaseId, lease.doorName, 'mail', 'send', 'to=a@b.c', null, 1);
-      const refused = g.reserveLease(lease.leaseId, lease.doorName, 'mail', 'send', 'to=a@b.c', null, 1);
+      // A caller that lies about which door it is gets no say in the attribution.
+      g.reserveLease(lease.leaseId, 'door:somebody-else', 'mail', 'send', 'to=a@b.c', null, 1);
+      const refused = g.reserveLease(lease.leaseId, 'door:somebody-else', 'mail', 'send', 'to=a@b.c', null, 1);
       expect(refused.ok).toBe(false);
       expect(g.entries(10)[0]).toEqual({
         ts: clock.t, sub: `lease:${lease.leaseId}`, service: 'mail', verb: 'send',
         detail: `door=${DOOR} to=a@b.c`, allowed: 0,
       });
       expect(g.entries(10)[1].allowed).toBe(1);
+      expect(JSON.stringify(g.entries(10))).not.toContain('somebody-else');
       expect(g.leaseList().find((l) => l.doorName === DOOR)?.lastVerb).toBe('mail.send');
+    });
+  });
+
+  test('an act under an unknown lease id is ledgered with no door claim at all', async () => {
+    await withGovernor(async (g) => {
+      expect(g.reserveLease('no-such-lease', 'door:invented', 'mail', 'send', 'to=x', null, null).ok).toBe(true);
+      expect(g.entries(10)[0].detail).toBe('door=unknown to=x');
+    });
+  });
+
+  test('the stored send_cap_per_day binds a caller that changed nothing', async () => {
+    await withGovernor(async (g, clock) => {
+      await enroll(g, clock);
+      const lease = g.leaseList().find((l) => l.doorName === DOOR);
+      if (!lease) throw new Error('no lease');
+      const send = () => g.reserveLease(lease.leaseId, DOOR, 'mail', 'send', 'd', null, 5);
+      for (let i = 0; i < 5; i++) expect(send().ok).toBe(true);
+      expect(send()).toEqual({ ok: false, refusedBy: 'lease', count: 5, cap: 5 });
+
+      // Marcus narrows this door's allowance. The caller still asks for five.
+      sqlOf(g).exec('UPDATE leases SET send_cap_per_day = 2 WHERE lease_id = ?', lease.leaseId);
+      clock.advance(86_400);
+      expect(send().ok).toBe(true);
+      expect(send().ok).toBe(true);
+      expect(send()).toEqual({ ok: false, refusedBy: 'lease', count: 2, cap: 2 });
+    });
+  });
+
+  test('a null lease cap on mail.send falls to the stored one; other verbs stay uncapped', async () => {
+    await withGovernor(async (g, clock) => {
+      await enroll(g, clock);
+      const lease = g.leaseList().find((l) => l.doorName === DOOR);
+      if (!lease) throw new Error('no lease');
+      sqlOf(g).exec('UPDATE leases SET send_cap_per_day = 1 WHERE lease_id = ?', lease.leaseId);
+      expect(g.reserveLease(lease.leaseId, DOOR, 'mail', 'send', 'd', null, null))
+        .toEqual({ ok: true, count: 1, cap: null });
+      expect(g.reserveLease(lease.leaseId, DOOR, 'mail', 'send', 'd', null, null))
+        .toEqual({ ok: false, refusedBy: 'lease', count: 1, cap: 1 });
+      for (let i = 0; i < 9; i++) {
+        expect(g.reserveLease(lease.leaseId, DOOR, 'mail', 'list', '', null, null).ok).toBe(true);
+      }
+    });
+  });
+
+  test('the legacy pseudo-lease is not metered by its stored cap, only by the house', async () => {
+    await withGovernor(async (g) => {
+      for (let i = 0; i < 8; i++) {
+        expect(g.reserveLease('legacy-window', 'legacy-window', 'mail', 'send', 'd', 20, null).ok).toBe(true);
+      }
+    });
+  });
+
+  test('a zero cap from the caller still refuses a lease whose stored cap is generous', async () => {
+    await withGovernor(async (g, clock) => {
+      await enroll(g, clock);
+      const lease = g.leaseList().find((l) => l.doorName === DOOR);
+      if (!lease) throw new Error('no lease');
+      expect(g.reserveLease(lease.leaseId, DOOR, 'mail', 'send', 'refused: scope', 0, 0))
+        .toEqual({ ok: false, refusedBy: 'lease', count: 0, cap: 0 });
+      expect(g.entries(10)[0].allowed).toBe(0);
     });
   });
 });

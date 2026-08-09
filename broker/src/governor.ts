@@ -39,7 +39,8 @@ const MAX_LIMIT = 200;
 const ACCESS_TTL_SECONDS = 3600;
 const DEVICE_CODE_TTL_SECONDS = 900;
 const POLL_INTERVAL_SECONDS = 5;
-const MAX_PENDING_KNOCKS = 5;          // a sixth pending knock still lands; a seventh is flooding
+const MAX_PENDING_KNOCKS = 5;          // at most five may wait at once; the sixth is flooding
+const MAX_CLAIM = 120;                 // the door's self-description, bounded before storage
 const DEFAULT_LEASE_SEND_CAP = 5;
 const ACCESS_PREFIX = 'jla_';
 const REFRESH_PREFIX = 'jlr_';
@@ -74,6 +75,22 @@ function normalizeUserCode(input: string): string {
   const letters = input.toUpperCase().replace(/[^A-Z]/g, '');
   if (letters.length !== USER_CODE_HALF * 2) return '';
   return `${letters.slice(0, USER_CODE_HALF)}-${letters.slice(USER_CODE_HALF)}`;
+}
+
+/**
+ * Everything a door says about itself is unverified text, and unverified text
+ * gets a length. Applied at storage and at every later comparison, so a door
+ * with an over-long client id still matches its own knock.
+ */
+function claim(value: string): string {
+  return value.slice(0, MAX_CLAIM);
+}
+
+/** The tighter of two caps; null is "no opinion", not "no limit". */
+function tighter(a: number | null, b: number | null): number | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return Math.min(a, b);
 }
 
 async function sha256Hex(value: string): Promise<string> {
@@ -169,23 +186,43 @@ export class GovernorDO extends DurableObject {
   // single greedy door is told it is the greedy one rather than blaming the
   // house. `count`/`cap` always describe the counter that decided: the refusing
   // one on refusal, the global one when the act is allowed.
+  //
+  // `_doorName` is accepted and ignored. The caller's word for who it is has no
+  // standing here: attribution and the door's own send allowance are both read
+  // from the lease row, so a compromised caller cannot write another door's name
+  // into the ledger or talk its way past a cap Marcus lowered.
   reserveLease(
-    leaseId: string, doorName: string, service: string, verb: string, detail: string,
+    leaseId: string, _doorName: string, service: string, verb: string, detail: string,
     globalCap: number | null, leaseCap: number | null,
   ): LeaseReserveResult {
     const now = this.now();
     const dayStart = now - (now % DAY_MS);
     const sub = `lease:${leaseId}`;
-    const leaseUsed = leaseCap === null ? 0 : this.countSince(dayStart, service, verb, sub);
+    const lease = this.sql.exec(
+      'SELECT door_name, send_cap_per_day FROM leases WHERE lease_id = ?', leaseId,
+    ).toArray()[0] as Row | undefined;
+    const doorName = lease ? String(lease.door_name) : 'unknown';
+    // The stored allowance governs mail.send — the one verb the column names —
+    // and only ever narrows what the caller asked for, so lowering a door's cap
+    // in the register binds immediately with no deploy and no caller change.
+    // The legacy window is exempt by design: it stands for everyone already
+    // trusted yesterday, and metering them at five mid-migration would break the
+    // doors the window exists to keep working. The house cap of 20 still binds
+    // it, and it closes by date or by revoke.
+    const metered = lease && leaseId !== LEGACY_LEASE_ID && service === 'mail' && verb === 'send';
+    const storedCap = metered ? Number(lease.send_cap_per_day) : null;
+    const effectiveLeaseCap = tighter(leaseCap, storedCap);
+
+    const leaseUsed = effectiveLeaseCap === null ? 0 : this.countSince(dayStart, service, verb, sub);
     const globalUsed = this.countSince(dayStart, service, verb, null);
-    const leaseOk = leaseCap === null || leaseUsed < leaseCap;
+    const leaseOk = effectiveLeaseCap === null || leaseUsed < effectiveLeaseCap;
     const globalOk = globalCap === null || globalUsed < globalCap;
     const ok = leaseOk && globalOk;
 
     this.ledger(now, sub, service, verb, detail ? `door=${doorName} ${detail}` : `door=${doorName}`, ok);
     this.sql.exec('UPDATE leases SET last_verb = ? WHERE lease_id = ?', `${service}.${verb}`, leaseId);
 
-    if (!leaseOk) return { ok: false, refusedBy: 'lease', count: leaseUsed, cap: leaseCap };
+    if (!leaseOk) return { ok: false, refusedBy: 'lease', count: leaseUsed, cap: effectiveLeaseCap };
     if (!globalOk) return { ok: false, refusedBy: 'global', count: globalUsed, cap: globalCap };
     return { ok: true, count: globalUsed + 1, cap: globalCap };
   }
@@ -205,7 +242,7 @@ export class GovernorDO extends DurableObject {
     const pending = Number(
       this.sql.exec("SELECT COUNT(*) AS n FROM knocks WHERE status = 'pending' AND expires > ?", now).one().n,
     );
-    if (pending > MAX_PENDING_KNOCKS) return { error: 'slow_down' };
+    if (pending >= MAX_PENDING_KNOCKS) return { error: 'slow_down' };
 
     let userCode = '';
     for (let attempt = 0; attempt < 10 && userCode === ''; attempt++) {
@@ -220,7 +257,8 @@ export class GovernorDO extends DurableObject {
       `INSERT INTO knocks
          (device_code, user_code, client_id, host, purpose, status, scope, door_name, created, expires, last_poll)
        VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, ?, 0)`,
-      deviceCode, userCode, clientId, host, purpose, now, now + DEVICE_CODE_TTL_SECONDS * 1000,
+      deviceCode, userCode, claim(clientId), claim(host), claim(purpose),
+      now, now + DEVICE_CODE_TTL_SECONDS * 1000,
     );
     return {
       deviceCode, userCode, expiresIn: DEVICE_CODE_TTL_SECONDS, interval: POLL_INTERVAL_SECONDS,
@@ -273,13 +311,13 @@ export class GovernorDO extends DurableObject {
 
     // An unknown code, another client's code, a dead code and a spent code all
     // sound identical from outside: expired.
-    if (!row || String(row.client_id) !== clientId) return { status: 'expired' };
+    if (!row || String(row.client_id) !== claim(clientId)) return { status: 'expired' };
     if (Number(row.expires) <= now || String(row.status) === 'claimed') return { status: 'expired' };
 
-    if (now - Number(row.last_poll) < POLL_INTERVAL_SECONDS * 1000) {
-      this.sql.exec('UPDATE knocks SET last_poll = ? WHERE device_code = ?', now, deviceCode);
-      return { status: 'slow_down' };
-    }
+    // The window is measured from the last poll that was *answered*. Stamping an
+    // impatient poll would let flooding push the door's own answer further away
+    // — a self-inflicted denial of service.
+    if (now - Number(row.last_poll) < POLL_INTERVAL_SECONDS * 1000) return { status: 'slow_down' };
     this.sql.exec('UPDATE knocks SET last_poll = ? WHERE device_code = ?', now, deviceCode);
 
     const status = String(row.status);
@@ -288,7 +326,9 @@ export class GovernorDO extends DurableObject {
 
     const doorName = String(row.door_name);
     const scope = String(row.scope);
-    const claims = JSON.stringify({ clientId, host: String(row.host), purpose: String(row.purpose) });
+    const claims = JSON.stringify({
+      clientId: String(row.client_id), host: String(row.host), purpose: String(row.purpose),
+    });
     const leaseId = this.upsertLease(doorName, scope, claims, now);
     this.insertPair(leaseId, 1, pair, now);
     this.sql.exec("UPDATE knocks SET status = 'claimed' WHERE device_code = ?", deviceCode);
@@ -309,7 +349,8 @@ export class GovernorDO extends DurableObject {
     const [hash, pair] = await Promise.all([sha256Hex(refreshToken), this.newPair()]);
     const now = this.now();
     const token = this.sql.exec(
-      "SELECT lease_id, kind, generation FROM lease_tokens WHERE hash = ? AND kind IN ('refresh', 'refresh_prev')",
+      `SELECT lease_id, kind, generation FROM lease_tokens
+        WHERE hash = ? AND kind IN ('refresh', 'refresh_prev', 'revoked')`,
       hash,
     ).toArray()[0] as Row | undefined;
     if (!token) return { status: 'invalid' };
@@ -321,11 +362,19 @@ export class GovernorDO extends DurableObject {
     if (!lease || String(lease.status) !== 'living') return { status: 'invalid' };
 
     const generation = Number(token.generation);
-    if (String(token.kind) === 'refresh_prev') {
+    const kind = String(token.kind);
+
+    // A tombstone comes back. Grace was already spent on someone: the pair this
+    // token belonged to was superseded by a *replay* of an older refresh, which
+    // only two holders can produce. Whoever presents it now is the second party.
+    if (kind === 'revoked') return this.killLease(leaseId, String(lease.door_name), now);
+
+    if (kind === 'refresh_prev') {
       // A superseded refresh comes back. If its successor was never spent this
       // is the lost-response retry — the door never received the new pair, so
-      // mint another and revoke the one that went missing. If the successor was
-      // spent, two parties hold this lease's tokens: kill it.
+      // mint another and tombstone the one that went missing. If the successor
+      // was spent, two parties hold this lease's tokens: kill it. Tombstones are
+      // not successors; a door retrying the same lost response keeps its grace.
       const successor = this.sql.exec(
         `SELECT used FROM lease_tokens
           WHERE lease_id = ? AND generation > ? AND kind IN ('refresh', 'refresh_prev')
@@ -336,8 +385,11 @@ export class GovernorDO extends DurableObject {
       if (!successor || Number(successor.used) === 1) return this.killLease(leaseId, String(lease.door_name), now);
     }
 
+    // The superseded pair is retired, not erased. A deleted hash is
+    // indistinguishable from a hash that never existed, and "never existed"
+    // answers `invalid` — which would let a replay be survived in silence.
     this.sql.exec(
-      "DELETE FROM lease_tokens WHERE lease_id = ? AND generation > ? AND kind = 'refresh' AND used = 0",
+      "UPDATE lease_tokens SET kind = 'revoked' WHERE lease_id = ? AND generation > ? AND kind = 'refresh' AND used = 0",
       leaseId, generation,
     );
     const maxGeneration = Number(
