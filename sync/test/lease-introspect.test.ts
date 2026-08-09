@@ -49,12 +49,37 @@ describe('introspectLease', () => {
     expect(second).toEqual({ active: true, leaseId: 'l2', doorName: 'door:y', scope: 'full-house' });
   });
 
-  test('non-200 response → inactive', async () => {
+  // A governor blip must not read as revocation — only a definitive 200 is
+  // ever a verdict. A 401 (bad shared secret / config error) or any 5xx is
+  // "the gate didn't answer", not "the gate said no": it propagates as a
+  // throw (same shape as a network failure) so the caller fails closed
+  // (503 / WS close 4002) without telling the door its lease was revoked,
+  // and it is never cached — a transient blip must not keep refusing
+  // reconnects for the next 60 seconds.
+  test('401 (bad shared secret / config error) → throws, not cached', async () => {
     fetchMock.get(GATE)
       .intercept({ method: 'POST', path: '/introspect' })
       .reply(401, '');
 
-    expect(await introspectLease('jla_badsecret', GATE, 'wrong-secret')).toEqual({ active: false });
+    await expect(introspectLease('jla_badsecret', GATE, 'wrong-secret')).rejects.toThrow();
+  });
+
+  test('5xx (gate down) → throws, not cached, and recovery within the 60s window works', async () => {
+    const token = 'jla_recovers1';
+    fetchMock.get(GATE)
+      .intercept({ method: 'POST', path: '/introspect' })
+      .reply(503, 'gate down');
+    await expect(introspectLease(token, GATE, 'test-secret')).rejects.toThrow();
+
+    // If the failed attempt had been cached, this second call for the same
+    // token would have no matching interceptor and throw for the wrong
+    // reason (no mock) rather than succeeding.
+    fetchMock.get(GATE)
+      .intercept({ method: 'POST', path: '/introspect' })
+      .reply(200, JSON.stringify({ active: true, lease_id: 'l5', door_name: 'door:recovered', scope: 'full-house' }),
+        { headers: { 'content-type': 'application/json' } });
+    expect(await introspectLease(token, GATE, 'test-secret'))
+      .toEqual({ active: true, leaseId: 'l5', doorName: 'door:recovered', scope: 'full-house' });
   });
 
   test('active:false response → inactive, no lease fields', async () => {
@@ -212,7 +237,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
     });
   });
 
-  test('stale attachment + gate unreachable → closes 4002 "introspection unavailable"', async () => {
+  test('stale attachment + gate unreachable (network failure) → closes 4002 "introspection unavailable"', async () => {
     fetchMock.get(GATE)
       .intercept({ method: 'POST', path: '/introspect' })
       .replyWithError(new Error('connect timeout'));
@@ -225,6 +250,44 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
 
       await instance.webSocketMessage(server, 'ping');
       expect(await waitForClose(client)).toEqual({ code: 4002, reason: 'introspection unavailable' });
+    });
+  });
+
+  // Distinct from the network-failure case above: here the gate answers, but
+  // with a 503 (not a definitive 200) — a governor blip, not a revocation.
+  // This must ALSO close 4002, never 4001, and must never be cached, so a
+  // reconnect once the gate recovers isn't refused by a stale negative.
+  test('stale attachment + gate 503 (HTTP error, not network failure) → closes 4002, never cached', async () => {
+    const leaseToken = 'jla_stale_503';
+    fetchMock.get(GATE)
+      .intercept({ method: 'POST', path: '/introspect' })
+      .reply(503, 'gate down');
+
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { client, server } = acceptedSocket(instance);
+      server.serializeAttachment({ leaseToken, verifiedAt: Date.now() - 400_000 });
+      (instance as unknown as { env: Env }).env.GATE_URL = GATE;
+      (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
+
+      await instance.webSocketMessage(server, 'ping');
+      expect(await waitForClose(client)).toEqual({ code: 4002, reason: 'introspection unavailable' });
+    });
+
+    // Recovery: the gate comes back within the 60s window. Since the 503
+    // was never cached, a fresh re-auth attempt for the same token succeeds
+    // instead of being blocked by a stale "unavailable"/"inactive" verdict.
+    fetchMock.get(GATE)
+      .intercept({ method: 'POST', path: '/introspect' })
+      .reply(200, JSON.stringify({ active: true, lease_id: 'l6', door_name: 'door:recovered2', scope: 'full-house' }),
+        { headers: { 'content-type': 'application/json' } });
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { client, server } = acceptedSocket(instance);
+      server.serializeAttachment({ leaseToken, verifiedAt: Date.now() - 400_000 });
+      (instance as unknown as { env: Env }).env.GATE_URL = GATE;
+      (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
+
+      await instance.webSocketMessage(server, 'ping');
+      expect(await waitForClose(client)).toBeNull();
     });
   });
 

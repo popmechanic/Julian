@@ -194,10 +194,12 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
 
   // Re-auth on traffic, not on a timer: a lease-token socket that has gone
   // quiet for >5 minutes of activity gets re-introspected before its next
-  // message is processed. `active:false` (revoked) closes 4001; introspection
-  // failure (gate unreachable) fails closed and closes 4002 — same failure
-  // shape as a brand-new connection being refused when the gate can't be
-  // reached.
+  // message is processed. A definitive `active:false` (revoked) closes 4001;
+  // any non-definitive introspection failure — gate unreachable, a 401
+  // (config error), or a 5xx — throws (see introspectLease) and fails closed
+  // here as 4002, never 4001: a governor blip must never read as revocation.
+  // Same failure shape as a brand-new connection being refused when the gate
+  // can't be reached.
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     const attachment = ws.deserializeAttachment() as LeaseAttachment | null;
     if (attachment && Date.now() - attachment.verifiedAt > REAUTH_INTERVAL_MS) {
