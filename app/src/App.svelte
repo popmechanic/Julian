@@ -117,7 +117,7 @@
         {processing}
         onEnd={() => endSession()}
         onEndFinal={async () => {
-          if (confirm('End this session for good? The next one starts fresh, inheriting the recent record.')) {
+          if (confirm('End this session for good? This cannot be resumed — the next session starts fresh, inheriting only the recent record.')) {
             try { await endSession(true); } catch (e) { alert('End session failed: ' + e); }
           }
         }}

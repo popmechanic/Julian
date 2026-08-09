@@ -29,8 +29,8 @@
       <div class="state">{status}</div>
     </div>
     {#if sessionActive}
-      <button class="end" onclick={onEnd}>END</button>
-      <button class="end-final" title="End session (final)" onclick={onEndFinal}>end session</button>
+      <button class="end" title="Pause — Julian resumes this same session next start" onclick={onEnd}>REST</button>
+      <button class="end-final danger" title="Ends this session permanently — the next one starts fresh" onclick={onEndFinal}>END FOR GOOD</button>
     {/if}
   </div>
 </header>
@@ -109,5 +109,13 @@
   .end-final:hover {
     opacity: 1;
     color: var(--j-red);
+  }
+  .end-final.danger {
+    border-color: var(--j-red-dim, var(--j-red));
+    color: var(--j-red-dim, var(--j-red));
+  }
+  .end-final.danger:hover {
+    color: var(--j-red);
+    border-color: var(--j-red);
   }
 </style>
