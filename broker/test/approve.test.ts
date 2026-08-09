@@ -330,6 +330,78 @@ describe('the approver login', () => {
   });
 });
 
+// ── the allowlist, at the desk and not only at the door ─────────────────────
+//
+// The login check alone would let a cookie outlive the trust that minted it:
+// sessions last a day, and `APPROVER_SUBS` can be emptied in a second. The
+// constraint is that an empty list refuses *approvals*, not merely logins, so
+// the list is consulted on every act, and a de-listed browser never reaches
+// the governor.
+
+describe('the approver allowlist at the desk', () => {
+  const DELISTED = 'no longer on the gate’s approver list';
+  /** Every way an operator can shut the desk: emptied, blanked, or the one sub swapped out. */
+  const shutOut: Array<string | undefined> = ['', '   ', ',,', undefined, 'user_someone_else'];
+
+  const confirmFields = async (session: string) => ({
+    user_code: KNOCK.userCode,
+    door_name: 'door:aurora-vm',
+    decision: 'open',
+    csrf: await csrfFor(session, KNOCK.userCode, SECRET),
+  });
+
+  test('code entry from a de-listed session → 403, and the governor is never asked', async () => {
+    const session = await mintSession(APPROVER, SECRET);
+    for (const value of shutOut) {
+      const { env, calls } = gateEnv({ knock: KNOCK }, { APPROVER_SUBS: value as unknown as string });
+      const res = await worker.fetch(post('/approve', session, {
+        user_code: KNOCK.userCode, csrf: await csrfFor(session, '', SECRET),
+      }), env);
+
+      expect(res.status, JSON.stringify(value)).toBe(403);
+      expect(await res.text()).toContain(DELISTED);
+      expect(calls.knockByUserCode, JSON.stringify(value)).toEqual([]);
+      expect(calls.reserve, JSON.stringify(value)).toEqual([]);
+    }
+  });
+
+  test('confirm from a de-listed session → 403, and knockDecide is never called', async () => {
+    const session = await mintSession(APPROVER, SECRET);
+    for (const value of shutOut) {
+      const { env, calls } = gateEnv({}, { APPROVER_SUBS: value as unknown as string });
+      const res = await worker.fetch(post('/approve/confirm', session, await confirmFields(session)), env);
+
+      expect(res.status, JSON.stringify(value)).toBe(403);
+      expect(await res.text()).toContain(DELISTED);
+      expect(calls.knockDecide, JSON.stringify(value)).toEqual([]);
+    }
+  });
+
+  test('GET /approve from a de-listed session renders no desk and burns the cookie', async () => {
+    const { env } = gateEnv({ knock: KNOCK }, { APPROVER_SUBS: '' });
+    const session = await mintSession(APPROVER, SECRET);
+    const res = await worker.fetch(new Request(`${BASE}/approve`, { headers: sessionCookie(session) }), env);
+
+    expect(res.status).toBe(403);
+    const html = await res.text();
+    expect(html).toContain(DELISTED);
+    expect(html).not.toContain('name="user_code"');
+    // The dead session is cleared, not left to be retried for another day.
+    expect(setCookies(res).some((c) => c.startsWith('gate_session=;') && c.includes('Max-Age=0'))).toBe(true);
+  });
+
+  test('a still-listed approver is untouched by any of this', async () => {
+    const { env, calls } = gateEnv({ knock: KNOCK }, { APPROVER_SUBS: ` other , ${APPROVER} ,` });
+    const session = await mintSession(APPROVER, SECRET);
+    const res = await worker.fetch(post('/approve', session, {
+      user_code: KNOCK.userCode, csrf: await csrfFor(session, '', SECRET),
+    }), env);
+
+    expect(res.status).toBe(200);
+    expect(calls.knockByUserCode).toEqual([KNOCK.userCode]);
+  });
+});
+
 // ── the pages ───────────────────────────────────────────────────────────────
 
 describe('the approval pages', () => {

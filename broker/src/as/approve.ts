@@ -10,7 +10,9 @@
 //
 // Getting here at all takes a Pocket ID login with PKCE, a nonce, and a sub on
 // the approver allowlist. An empty or missing `APPROVER_SUBS` refuses everyone:
-// there is no auto-approve path, and a misconfigured gate approves nothing.
+// there is no auto-approve path, and a misconfigured gate approves nothing. The
+// list is consulted at the login *and* at every act of the desk — a cookie is a
+// day long, the list is whatever it is right now, and the list wins.
 import { decodeJwt } from 'jose';
 import { keySetFor, verifyWithKeySet } from '../auth';
 import type { Env } from '../env';
@@ -274,6 +276,8 @@ async function authCallback(req: Request, url: URL, env: Env): Promise<Response>
 const STALE_FORM = 'that form went stale — reload /approve and try again';
 const NO_SESSION = 'your approver session expired — reload /approve to sign in again';
 const NOT_A_FORM = 'the gate expects a form post from its own page';
+const DELISTED = 'this account is no longer on the gate’s approver list — nothing was approved;'
+  + ' restore the sub in APPROVER_SUBS, then sign in again';
 
 async function readForm(req: Request): Promise<URLSearchParams | null> {
   if (!(req.headers.get('Content-Type') ?? '').includes('application/x-www-form-urlencoded')) return null;
@@ -284,17 +288,38 @@ async function readForm(req: Request): Promise<URLSearchParams | null> {
   }
 }
 
-/** The session and the exact cookie value that proves it — CSRF is bound to the latter. */
-async function desk(req: Request, env: Env): Promise<{ sub: string; value: string } | null> {
+interface Seat { sub: string; value: string }
+
+/**
+ * Who is at the desk, if anyone. Two things must hold, and both are checked on
+ * every act rather than once at login: the cookie must verify, and the sub it
+ * names must still be on the allowlist. A session is a day long and the list
+ * can be emptied in a second — so the list, not the cookie, is what says who
+ * may approve. Taking a sub off `APPROVER_SUBS` shuts that browser out on its
+ * very next request, and an empty list shuts every browser out.
+ *
+ * `delisted` separates "you were never signed in" from "you were, and are no
+ * longer": the second deserves the truth and a burnt cookie, not a login loop.
+ */
+async function desk(req: Request, env: Env): Promise<{ seat: Seat | null; delisted: boolean }> {
   const header = req.headers.get('Cookie');
   const session = await readSession(header, env.SESSION_SECRET);
   const value = cookieValue(header, SESSION_COOKIE);
-  return session && value ? { sub: session.sub, value } : null;
+  if (!session || !value) return { seat: null, delisted: false };
+  if (!isApprover(session.sub, env)) return { seat: null, delisted: true };
+  return { seat: { sub: session.sub, value }, delisted: false };
+}
+
+/** The refusal owed to an empty seat — and, when the list moved, a dead cookie. */
+function noSeat(delisted: boolean): Response {
+  return delisted
+    ? notice('Not an approver', DELISTED, 403, [clearCookie(SESSION_COOKIE)])
+    : notice('Signed out', NO_SESSION, 403);
 }
 
 async function codeEntry(req: Request, env: Env, gov: DurableObjectStub<GovernorDO>): Promise<Response> {
-  const seat = await desk(req, env);
-  if (!seat) return notice('Signed out', NO_SESSION, 403);
+  const { seat, delisted } = await desk(req, env);
+  if (!seat) return noSeat(delisted);
 
   const form = await readForm(req);
   if (!form) return notice('Bad request', NOT_A_FORM, 400);
@@ -332,8 +357,8 @@ async function codeEntry(req: Request, env: Env, gov: DurableObjectStub<Governor
 }
 
 async function confirm(req: Request, env: Env, gov: DurableObjectStub<GovernorDO>): Promise<Response> {
-  const seat = await desk(req, env);
-  if (!seat) return notice('Signed out', NO_SESSION, 403);
+  const { seat, delisted } = await desk(req, env);
+  if (!seat) return noSeat(delisted);
 
   const form = await readForm(req);
   if (!form) return notice('Bad request', NOT_A_FORM, 400);
@@ -390,7 +415,10 @@ export async function handleApprove(
   if (url.pathname === '/approve') {
     if (req.method === 'POST') return codeEntry(req, env, gov);
     if (req.method !== 'GET') return notice('Not allowed', 'the approval desk answers GET and POST', 405);
-    const seat = await desk(req, env);
+    const { seat, delisted } = await desk(req, env);
+    // A de-listed browser is told so; sending it back to Pocket ID would only
+    // walk it into the same refusal one round-trip later.
+    if (delisted) return noSeat(true);
     if (!seat) return startLogin(env);
     return page('The approval desk', codeEntryForm(
       await csrfFor(seat.value, '', env.SESSION_SECRET),
