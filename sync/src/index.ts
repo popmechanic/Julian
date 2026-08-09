@@ -1,4 +1,4 @@
-import { verifyWithKeySet, keySetFor, type Env } from './auth';
+import { verifyWithKeySet, keySetFor, introspectLease, type Env } from './auth';
 export { JulianSyncDO } from './do';
 
 const SEG = /^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$|^[a-z0-9]$/;
@@ -18,10 +18,37 @@ export default {
     const parsed = parsePath(url.pathname);
     if (!parsed) return new Response('Not found', { status: 404 });
 
-    // Default-deny: no valid OIDC JWT → nothing. No public mode exists.
+    // Default-deny: no valid OIDC JWT and no valid lease → nothing. No public mode exists.
+    //
+    // Lease tokens (`jla_...`) ride in the Authorization header only — a
+    // lease token in the query string is a URL that leaks into logs/history,
+    // so it is refused outright rather than silently accepted. Legacy
+    // Pocket ID JWTs keep their existing query-string fallback unchanged.
     const bearer = req.headers.get('Authorization');
-    const token = bearer?.startsWith('Bearer ') ? bearer.slice(7) : url.searchParams.get('token') ?? '';
-    const auth = token ? await verifyWithKeySet(token, keySetFor(env), env.OIDC_ISSUER, env.OIDC_AUDIENCE) : null;
+    const headerToken = bearer?.startsWith('Bearer ') ? bearer.slice(7) : null;
+    const queryToken = url.searchParams.get('token');
+
+    if (queryToken?.startsWith('jla_')) {
+      return new Response('lease tokens ride in headers only', { status: 401 });
+    }
+
+    let auth: { sub: string } | null;
+    if (headerToken?.startsWith('jla_')) {
+      let introspection;
+      try {
+        introspection = await introspectLease(headerToken, env.GATE_URL, env.INTROSPECT_SECRET);
+      } catch {
+        // Gate unreachable: fail closed, same as an open re-auth would.
+        return new Response('introspection unavailable', { status: 503 });
+      }
+      if (!introspection.active) {
+        return new Response('lease revoked — re-knock', { status: 401 });
+      }
+      auth = { sub: `lease:${introspection.leaseId}` };
+    } else {
+      const token = headerToken ?? queryToken ?? '';
+      auth = token ? await verifyWithKeySet(token, keySetFor(env), env.OIDC_ISSUER, env.OIDC_AUDIENCE) : null;
+    }
     if (!auth) return new Response('Unauthorized', { status: 401 });
 
     const stub = env.JULIAN_SYNC.get(env.JULIAN_SYNC.idFromName(`${parsed.store}/${parsed.context}`));

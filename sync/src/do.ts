@@ -6,6 +6,24 @@ import { createMiddleware, getHash } from 'tinybase';
 import type { Middleware, Cell, Changes } from 'tinybase';
 import type { MergeableStore } from 'tinybase/mergeable-store';
 import { createStreamStore } from 'julian-shared/schema';
+import { introspectLease, type Env } from './auth';
+
+// A lease-token socket's serialized attachment (survives hibernation).
+interface LeaseAttachment {
+  leaseToken: string;
+  verifiedAt: number;
+}
+
+// Traffic-driven re-auth: an idle socket can't act, so bounding the
+// revocation SLA to "5 minutes of activity" (rather than wall-clock) is the
+// right shape here — every inbound sync message piggybacks a freshness check.
+const REAUTH_INTERVAL_MS = 300_000;
+
+function extractLeaseToken(request: Request): string | null {
+  const bearer = request.headers.get('Authorization');
+  const token = bearer?.startsWith('Bearer ') ? bearer.slice(7) : null;
+  return token?.startsWith('jla_') ? token : null;
+}
 
 // Cloudflare's WS message cap is ~1 MiB; every synchronizer sets an explicit fragment size.
 const FRAGMENT_SIZE = 262_144; // 256 KiB
@@ -26,7 +44,7 @@ export interface ExportedContent {
   exportedAt: string;
 }
 
-export class JulianSyncDO extends WsServerDurableObject {
+export class JulianSyncDO extends WsServerDurableObject<Env> {
   // Assigned in createPersister, which the parent constructor invokes (inside
   // blockConcurrencyWhile) BEFORE subclass field initializers would run — so the
   // store must NOT be a field initializer, or it would be constructed undefined
@@ -158,7 +176,47 @@ export class JulianSyncDO extends WsServerDurableObject {
     }
     // WebSocket sync path — WsServerDurableObject implements fetch at runtime,
     // but types it as the optional DurableObject.fetch, so guard the call.
-    return super.fetch?.(request) ?? new Response('Expected WebSocket', { status: 426 });
+    //
+    // The router (index.ts) has already verified this request is authorized
+    // (lease introspected active, or a valid legacy JWT) before forwarding
+    // it here — this DO trusts that and only extracts the lease token (if
+    // any) to attach to the accepted socket for later traffic-driven re-auth.
+    const isUpgrade = request.headers.get('Upgrade')?.toLowerCase() === 'websocket';
+    const leaseToken = isUpgrade ? extractLeaseToken(request) : null;
+    const clientId = isUpgrade ? request.headers.get('sec-websocket-key') : null;
+    const response = (await super.fetch?.(request)) ?? new Response('Expected WebSocket', { status: 426 });
+    if (leaseToken && clientId) {
+      const [ws] = this.ctx.getWebSockets(clientId);
+      ws?.serializeAttachment({ leaseToken, verifiedAt: Date.now() } satisfies LeaseAttachment);
+    }
+    return response;
+  }
+
+  // Re-auth on traffic, not on a timer: a lease-token socket that has gone
+  // quiet for >5 minutes of activity gets re-introspected before its next
+  // message is processed. `active:false` (revoked) closes 4001; introspection
+  // failure (gate unreachable) fails closed and closes 4002 — same failure
+  // shape as a brand-new connection being refused when the gate can't be
+  // reached.
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    const attachment = ws.deserializeAttachment() as LeaseAttachment | null;
+    if (attachment && Date.now() - attachment.verifiedAt > REAUTH_INTERVAL_MS) {
+      let introspection;
+      try {
+        introspection = await introspectLease(attachment.leaseToken, this.env.GATE_URL, this.env.INTROSPECT_SECRET);
+      } catch {
+        ws.close(4002, 'introspection unavailable');
+        return;
+      }
+      if (!introspection.active) {
+        ws.close(4001, 'lease revoked');
+        return;
+      }
+      ws.serializeAttachment({ ...attachment, verifiedAt: Date.now() } satisfies LeaseAttachment);
+    }
+    // WsServerDurableObject implements webSocketMessage at runtime, but types
+    // it as the optional DurableObject.webSocketMessage, so guard the call.
+    return super.webSocketMessage?.(ws, message);
   }
 
   exportContent(): ExportedContent {
