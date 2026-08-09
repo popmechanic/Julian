@@ -118,8 +118,12 @@ function interceptSend(): void {
     .reply(200, JSON.stringify({ message_id: 'msg_42' }), { headers: { 'content-type': 'application/json' } });
 }
 
-const FULL_HOUSE: LeaseIdentity = { leaseId: 'lease-1', doorName: 'vm-aurora', scope: 'full-house' };
-const READING_ROOM: LeaseIdentity = { leaseId: 'lease-2', doorName: 'vm-quiet', scope: 'reading-room' };
+const FULL_HOUSE: LeaseIdentity = {
+  leaseId: 'lease-1', doorName: 'vm-aurora', scope: 'full-house', principal: 'julian',
+};
+const READING_ROOM: LeaseIdentity = {
+  leaseId: 'lease-2', doorName: 'vm-quiet', scope: 'reading-room', principal: 'julian',
+};
 
 describe('lease tokens', () => {
   test('jla_ bearer routes to validateAccess and mail.send reserves under lease identity', async () => {
@@ -348,5 +352,10 @@ describe('scope→verb map (phase 2A)', () => {
   });
   test('unknown scope buys nothing', () => {
     expect(scopeAllows('nonsense', 'package', 'read')).toBe(false);
+  });
+  test('prototype-chain keys buy nothing and never throw (fail closed)', () => {
+    expect(scopeAllows('constructor', 'package', 'read')).toBe(false);
+    expect(scopeAllows('toString', 'package', 'read')).toBe(false);
+    expect(scopeAllows('__proto__', 'package', 'read')).toBe(false);
   });
 });

@@ -49,7 +49,8 @@ const SCOPE_VERBS: Readonly<Record<string, readonly string[]>> = Object.freeze({
 });
 
 export function scopeAllows(scope: string, service: string, verb: string): boolean {
-  return SCOPE_VERBS[scope]?.includes(`${service}.${verb}`) ?? false;
+  if (!Object.hasOwn(SCOPE_VERBS, scope)) return false;
+  return SCOPE_VERBS[scope].includes(`${service}.${verb}`);
 }
 
 /**
@@ -105,5 +106,5 @@ export async function authenticate(
   }
   if (!allowed) return json({ error: WINDOW_CLOSED }, 401);
 
-  return { leaseId: LEGACY_LEASE_ID, doorName: LEGACY_LEASE_ID, scope: LEGACY_SCOPE };
+  return { leaseId: LEGACY_LEASE_ID, doorName: LEGACY_LEASE_ID, scope: LEGACY_SCOPE, principal: 'julian' };
 }
