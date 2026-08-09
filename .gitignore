@@ -26,3 +26,10 @@ Thumbs.db
 
 # External repos
 openclaw/
+
+# Local tool state (ultrapowers committed-workflow installs, superpowers scratch)
+.claude/workflows/
+.superpowers/
+
+# Working copy of the Pallid Mask installation app (canonical record lives on the pallid-mask branch)
+pallid-mask/
