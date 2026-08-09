@@ -459,6 +459,27 @@ describe('the approval pages', () => {
     expect(html).toContain(`value="${await csrfFor(session, KNOCK.userCode, SECRET)}"`);
   });
 
+  test('door-name prefill does not double-prefix a client_id that already reads "door:…"', async () => {
+    const { env } = gateEnv({ knock: { ...KNOCK, clientId: 'door:julian-new-web' } });
+    const session = await mintSession(APPROVER, SECRET);
+    const res = await worker.fetch(post('/approve', session, {
+      user_code: KNOCK.userCode, csrf: await csrfFor(session, '', SECRET),
+    }), env);
+    const html = await res.text();
+    expect(html).toContain('value="door:julian-new-web"');
+    expect(html).not.toContain('door:door:julian-new-web');
+  });
+
+  test('door-name prefill prepends "door:" for a bare client_id', async () => {
+    const { env } = gateEnv({ knock: { ...KNOCK, clientId: 'aurora-vm' } });
+    const session = await mintSession(APPROVER, SECRET);
+    const res = await worker.fetch(post('/approve', session, {
+      user_code: KNOCK.userCode, csrf: await csrfFor(session, '', SECRET),
+    }), env);
+    const html = await res.text();
+    expect(html).toContain('value="door:aurora-vm"');
+  });
+
   test('a claim longer than 120 characters is cut down before it is shown', async () => {
     const { env } = gateEnv({ knock: { ...KNOCK, purpose: 'x'.repeat(500) } });
     const session = await mintSession(APPROVER, SECRET);
