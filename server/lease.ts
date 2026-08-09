@@ -6,7 +6,7 @@
 // session is live. A kiosk visitor gets neither a token nor the mint's URL.
 
 import { randomBytes } from "crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { basename, dirname, join } from "path";
 
 export interface LeaseFile {
@@ -44,6 +44,8 @@ const RENEW_TIMEOUT_MS = 10_000;
 const LOOPBACK_PORT = 8377;
 const FILE_MODE = 0o600;
 const DIR_MODE = 0o700;
+/** A lock older than this belonged to a process that died holding it. */
+const LOCK_STALE_MS = 30_000;
 
 interface LeaseRecord {
   lease: LeaseFile;
@@ -106,6 +108,37 @@ function writeLeaseAtomic(path: string, record: Record<string, unknown>): void {
   }
 }
 
+// The cross-process rotation lock. `mkdir` is atomic on every filesystem this
+// runs on, and the door-side CLI takes the same `<leasePath>.lock` — the two
+// must never present the same refresh token, because the gate reads a replayed
+// refresh as theft and kills the lease.
+function lockPath(path: string): string {
+  return `${path}.lock`;
+}
+
+function acquireRotationLock(path: string): boolean {
+  const lock = lockPath(path);
+  try {
+    mkdirSync(lock, { mode: DIR_MODE });
+    return true;
+  } catch {
+    // Held. Steal it only if its holder plainly died — mtime is wall clock,
+    // so this comparison uses the real clock, never the injected one.
+    try {
+      if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
+        rmdirSync(lock);
+        mkdirSync(lock, { mode: DIR_MODE });
+        return true;
+      }
+    } catch { /* someone else won the race — fall through */ }
+    return false;
+  }
+}
+
+function releaseRotationLock(path: string): void {
+  try { rmdirSync(lockPath(path)); } catch { /* already gone */ }
+}
+
 function json(body: unknown, status: number): Response {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
@@ -134,9 +167,9 @@ export async function startLeaseHolder(opts: LeaseHolderOptions): Promise<LeaseH
   // the same refresh token twice and the gate kills the lease as a replay, so
   // a timer tick and a subprocess asking at the same moment must share one
   // request, never race into two.
-  function renew(): Promise<boolean> {
+  function renew(windowMs: number): Promise<boolean> {
     if (!renewInFlight) {
-      renewInFlight = renewOnce().finally(() => { renewInFlight = null; });
+      renewInFlight = renewOnce(windowMs).finally(() => { renewInFlight = null; });
     }
     return renewInFlight;
   }
@@ -151,12 +184,30 @@ export async function startLeaseHolder(opts: LeaseHolderOptions): Promise<LeaseH
     return false;
   }
 
-  async function renewOnce(): Promise<boolean> {
-    // Re-read rather than trusting an in-memory copy: a door-side CLI may have
-    // rotated the file since the last check, and a stale refresh token reads
-    // as a replay.
+  async function renewOnce(windowMs: number): Promise<boolean> {
+    if (!acquireRotationLock(opts.path)) {
+      // A door-side CLI is rotating right now. Let it finish — the next tick
+      // reads its result rather than racing it into a replay kill.
+      return false;
+    }
+    try {
+      return await rotate(windowMs);
+    } finally {
+      releaseRotationLock(opts.path);
+    }
+  }
+
+  async function rotate(windowMs: number): Promise<boolean> {
+    // Read under the lock, never from an in-memory copy: whoever held the lock
+    // before us may have already rotated, and a stale refresh token reads as a
+    // replay.
     const current = readLeaseRecord(opts.path);
     if (!current) return false;
+    // Someone else refreshed while we waited — nothing left to do.
+    if (current.lease.access_expires - now() >= windowMs) {
+      consecutiveFailures = 0;
+      return true;
+    }
 
     let resp: Response;
     try {
@@ -213,17 +264,15 @@ export async function startLeaseHolder(opts: LeaseHolderOptions): Promise<LeaseH
     return true;
   }
 
-  function dueForRenewal(lease: LeaseFile): boolean {
-    const window = RENEW_WINDOW_MS * (1 + (Math.random() * 2 - 1) * JITTER);
-    return lease.access_expires - now() < window;
-  }
-
   async function check(): Promise<void> {
     if (stopped) return;
     const current = readLeaseRecord(opts.path);
     if (!current) return; // no lease enrolled — nothing to keep alive
-    if (!dueForRenewal(current.lease)) return;
-    await renew();
+    // ±10% on the window, so a fleet of doors never renews in lockstep. The
+    // same jittered value is what the rotation re-checks under the lock.
+    const window = RENEW_WINDOW_MS * (1 + (Math.random() * 2 - 1) * JITTER);
+    if (current.lease.access_expires - now() >= window) return;
+    await renew(window);
   }
 
   /** The lease as it stands, renewed first if it is inside the window. */
@@ -231,7 +280,7 @@ export async function startLeaseHolder(opts: LeaseHolderOptions): Promise<LeaseH
     let current = readLeaseRecord(opts.path);
     if (!current) return null;
     if (current.lease.access_expires - now() < RENEW_WINDOW_MS) {
-      await renew();
+      await renew(RENEW_WINDOW_MS);
       current = readLeaseRecord(opts.path) ?? current;
     }
     // A renewal that failed leaves the old token: still usable until it

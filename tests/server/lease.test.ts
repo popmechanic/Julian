@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { connect } from 'node:net';
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadLeaseFile, startLeaseHolder } from '../../server/lease';
@@ -107,6 +107,12 @@ function mode(path: string): number {
   return statSync(path).mode & 0o777;
 }
 
+// The rotation lock dir comes and goes during a run; what matters is that no
+// half-written temp file is ever left behind.
+function entriesIgnoringLock(dir: string): string[] {
+  return readdirSync(dir).filter((name) => !name.endsWith('.lock'));
+}
+
 // A raw HTTP/1.1 request, because `fetch` refuses to set the Host header and
 // the mint's DNS-rebinding guard is a Host check.
 function rawGet(port: number, path: string, host: string): Promise<{ status: number; body: string }> {
@@ -187,7 +193,7 @@ describe('lease renewal', () => {
     });
     expect(mode(path)).toBe(0o600);
     // temp+rename, not truncate-in-place: nothing left behind in the directory
-    expect(readdirSync(dir)).toEqual(['gate-lease.json']);
+    expect(entriesIgnoringLock(dir)).toEqual(['gate-lease.json']);
     // the door's own metadata survives a rewrite
     expect(JSON.parse(readFileSync(path, 'utf-8')).door_name).toBe('mac-studio');
 
@@ -236,7 +242,7 @@ describe('lease renewal', () => {
       access_token: 'jla_TESTSEED',
       access_expires: T0 + 20 * MIN,
     });
-    expect(readdirSync(dir)).toEqual(['gate-lease.json']);
+    expect(entriesIgnoringLock(dir)).toEqual(['gate-lease.json']);
 
     gate.fail(false);
     await waitFor(() => loadLeaseFile(path)?.access_token === 'jla_TESTNEW1', 'the lease file after recovery');
@@ -245,6 +251,46 @@ describe('lease renewal', () => {
     // every attempt presented the seeded refresh token — a failed rotation
     // must not advance the generation
     expect(gate.hits.every((h) => h.refresh_token === 'jlr_TESTSEED')).toBe(true);
+  });
+
+  test('a door-side CLI holding the rotation lock is never raced into a replay', async () => {
+    const gate = makeGate();
+    const { path } = seedLease();
+    // The lock the door-side lease client takes while it rotates.
+    mkdirSync(`${path}.lock`);
+    await startHolder({
+      path,
+      brokerUrl: gate.url,
+      isDemoActive: () => false,
+      now: () => T0,
+      port: 0,
+      checkIntervalMs: 5,
+    });
+    await Bun.sleep(80);
+    expect(gate.hits.length).toBe(0);
+    expect(loadLeaseFile(path)?.refresh_token).toBe('jlr_TESTSEED');
+
+    // The CLI finishes and drops the lock — the next tick renews.
+    rmdirSync(`${path}.lock`);
+    await waitFor(() => loadLeaseFile(path)?.access_token === 'jla_TESTNEW1', 'renewal once the lock is free');
+    expect(existsSync(`${path}.lock`)).toBe(false);
+  });
+
+  test('a lock left behind by a dead process goes stale and is taken', async () => {
+    const gate = makeGate();
+    const { path } = seedLease();
+    mkdirSync(`${path}.lock`);
+    const longAgo = new Date(Date.now() - 120_000);
+    utimesSync(`${path}.lock`, longAgo, longAgo);
+    await startHolder({
+      path,
+      brokerUrl: gate.url,
+      isDemoActive: () => false,
+      now: () => T0,
+      port: 0,
+      checkIntervalMs: 5,
+    });
+    await waitFor(() => loadLeaseFile(path)?.access_token === 'jla_TESTNEW1', 'renewal after stealing the stale lock');
   });
 
   test('concurrent demand rotates once — a replayed refresh token would kill the lease', async () => {
