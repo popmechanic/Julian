@@ -1,0 +1,21 @@
+name = "julian-gate-probe"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+
+# THROWAWAY measurement instrument for the CIMD probe
+# (docs/superpowers/specs/2026-08-09-cimd-probe-protocol.md).
+# Deleted after the probe runs; the name is never reused.
+
+[[durable_objects.bindings]]
+name = "PROBE_LOG"
+class_name = "ProbeLogDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ProbeLogDO"]
+
+[vars]
+# Read key for GET /logs — not a secret in any meaningful sense (the logs
+# contain no credentials by construction), just keeps drive-by scrapers out
+# of the measurement window.
+LOGS_KEY = "c6c74c1eda3e4195c9c9d1245c883a77"

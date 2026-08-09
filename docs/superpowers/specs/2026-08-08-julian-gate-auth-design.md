@@ -392,13 +392,25 @@ issue #26 beyond the `{final:true}` trap; the web app's leaked socket/reader tea
 Recorded now so v1's schema and ceremonies stay compatible; **not planned until the design
 input below is measured.**
 
-- **Design input, must be measured first:** whether the MCP clients that matter (Claude
-  Code, claude.ai connectors) identify by CIMD or still require DCR. The whole
-  "zero code at the door" property rests on it. A throwaway-AS client probe answers it in
-  an afternoon; its result decides bespoke-vs-library for the auth-code flow. If the
-  library is adopted: its grants live in KV, so revocation must atomically cover both
-  stores, and its lost-response grace semantics (previous token valid until successor
-  used) — which match §4 — replace any library-default assumption.
+- **Design input — MEASURED 2026-08-09** (protocol and full results:
+  `docs/superpowers/specs/2026-08-09-cimd-probe-protocol.md`): **all three clients that
+  matter are DCR-native; none attempted CIMD.** Measured client list: Claude Code CLI
+  v2.1.226 (DCR at connection time, loopback redirect, dynamic port), MCP Inspector
+  v2.1.0 (DCR, `application_type: native`), claude.ai custom connector (DCR as
+  `client_name: "Claude"`, `application_type: web`, exact https callback; requests the
+  advertised scope explicitly). The "zero code at the door" property therefore does not
+  hold today: **phase 2 ships DCR, capped to `reading-room` per the review's M3**, with
+  rate caps and registration-record expiry (all three clients register eagerly and
+  automatically, so unauthenticated writes are routine traffic). CIMD support may be added
+  as the preferred path when real clients ship it; until then it is unexercised surface.
+  Uniform measured facts to build against: PKCE S256 universal; all public clients
+  (`token_endpoint_auth_method: none` — no client-secret handling needed); RFC 8707
+  `resource` indicators sent by all three on authorize and token (validate and
+  audience-bind); only the **path-suffixed** protected-resource-metadata path is fetched;
+  redirect policy must allow loopback http for native/CLI clients and exact https for web
+  clients (RFC 8252/9700). Bespoke-vs-library: stays **bespoke** — the DCR shape measured
+  is small (public clients only), and the library's KV-only grants remain disqualified by
+  the atomic-revocation requirement (v1 finding, unchanged).
 - **Security requirements carried from review:** redirect URI exact-string match against
   the CIMD document, same-origin with the client_id URL, `application_type` gating
   loopback/custom schemes (RFC 9700); CIMD fetch rules — https only, no redirects, size and

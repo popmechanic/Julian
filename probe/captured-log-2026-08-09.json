@@ -1,0 +1,362 @@
+[
+    {
+        "id": 1,
+        "ts": "2026-08-09T21:02:37.473Z",
+        "method": "GET",
+        "path": "/.well-known/oauth-protected-resource/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"*/*\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b3ebef6fccd1\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"user-agent\":\"curl/8.7.1\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "PRM fetch via path-suffixed path"
+    },
+    {
+        "id": 2,
+        "ts": "2026-08-09T21:03:01.326Z",
+        "method": "GET",
+        "path": "/.well-known/oauth-authorization-server",
+        "query": null,
+        "headers": "{\"accept\":\"*/*\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b4814c6ec146\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"user-agent\":\"curl/8.7.1\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "AS metadata fetch via /.well-known/oauth-authorization-server"
+    },
+    {
+        "id": 3,
+        "ts": "2026-08-09T21:03:19.465Z",
+        "method": "POST",
+        "path": "/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"*/*\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b4f2af27cb73\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"content-length\":\"2\",\"content-type\":\"application/json\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"user-agent\":\"curl/8.7.1\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": "{}",
+        "note": "mcp request without/with-foreign token -> 401 challenge"
+    },
+    {
+        "id": 4,
+        "ts": "2026-08-09T21:03:38.395Z",
+        "method": "POST",
+        "path": "/register",
+        "query": null,
+        "headers": "{\"accept\":\"*/*\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b568fe68758f\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"content-length\":\"68\",\"content-type\":\"application/json\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"user-agent\":\"curl/8.7.1\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": "{\"client_name\":\"smoke\",\"redirect_uris\":[\"http://localhost:1234/cb\"]}",
+        "note": "DCR REGISTRATION \u2014 client chose /register"
+    },
+    {
+        "id": 5,
+        "ts": "2026-08-09T21:03:38.530Z",
+        "method": "GET",
+        "path": "/authorize",
+        "query": "?client_id=https%3A%2F%2Fexample.com%2Fclient.json&redirect_uri=http%3A%2F%2Flocalhost%3A1234%2Fcb&state=xyz&code_challenge=abc&code_challenge_method=S256",
+        "headers": "{\"accept\":\"*/*\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b569cb102f25\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"user-agent\":\"curl/8.7.1\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "AUTHORIZE \u2014 CIMD (client_id is an https URL)"
+    },
+    {
+        "id": 6,
+        "ts": "2026-08-09T21:03:38.664Z",
+        "method": "GET",
+        "path": "/authorize",
+        "query": "?client_id=probe-dcr-123",
+        "headers": "{\"accept\":\"*/*\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b56a9dbe8b10\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"user-agent\":\"curl/8.7.1\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "AUTHORIZE \u2014 DCR (client_id minted at /register)"
+    },
+    {
+        "id": 7,
+        "ts": "2026-08-09T21:03:38.800Z",
+        "method": "POST",
+        "path": "/token",
+        "query": null,
+        "headers": "{\"accept\":\"*/*\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b56b7ed93e6d\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"content-length\":\"66\",\"content-type\":\"application/x-www-form-urlencoded\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"user-agent\":\"curl/8.7.1\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": "grant_type=authorization_code&code=probe-fake-code&code_verifier=v",
+        "note": "TOKEN exchange \u2014 observe grant_type/verifier/auth style"
+    },
+    {
+        "id": 8,
+        "ts": "2026-08-09T21:03:38.943Z",
+        "method": "POST",
+        "path": "/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"*/*\",\"accept-encoding\":\"gzip, br\",\"authorization\":\"<redacted:26 chars>\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b56c5ca2fb74\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"content-length\":\"88\",\"content-type\":\"application/json\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"user-agent\":\"curl/8.7.1\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\"}}",
+        "note": "mcp request WITH dummy bearer (post-token behavior)"
+    },
+    {
+        "id": 9,
+        "ts": "2026-08-09T21:04:14.037Z",
+        "method": "POST",
+        "path": "/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"application/json, text/event-stream\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b647bfa868f1\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"content-length\":\"323\",\"content-type\":\"application/json\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"user-agent\":\"claude-code/2.1.226 (sdk-cli)\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"roots\":{\"listChanged\":true},\"elicitation\":{}},\"clientInfo\":{\"name\":\"claude-code\",\"title\":\"Claude Code\",\"version\":\"2.1.226\",\"description\":\"Anthropic's agentic coding tool\",\"websiteUrl\":\"https://claude.com/claude-code\"}},\"jsonrpc\":\"2.0\",\"id\":0}",
+        "note": "mcp request without/with-foreign token -> 401 challenge"
+    },
+    {
+        "id": 10,
+        "ts": "2026-08-09T21:04:14.113Z",
+        "method": "GET",
+        "path": "/.well-known/oauth-protected-resource/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"*/*\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b648389168f1\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"mcp-protocol-version\":\"2025-11-25\",\"user-agent\":\"claude-code/2.1.226 (sdk-cli)\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "PRM fetch via path-suffixed path"
+    },
+    {
+        "id": 11,
+        "ts": "2026-08-09T21:04:14.230Z",
+        "method": "GET",
+        "path": "/.well-known/oauth-authorization-server",
+        "query": null,
+        "headers": "{\"accept\":\"application/json\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b648e9b468f1\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"mcp-protocol-version\":\"2025-11-25\",\"user-agent\":\"claude-code/2.1.226 (sdk-cli)\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "AS metadata fetch via /.well-known/oauth-authorization-server"
+    },
+    {
+        "id": 12,
+        "ts": "2026-08-09T21:04:14.346Z",
+        "method": "POST",
+        "path": "/register",
+        "query": null,
+        "headers": "{\"accept\":\"application/json, text/event-stream\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b649aae368f1\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"content-length\":\"208\",\"content-type\":\"application/json\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"user-agent\":\"claude-code/2.1.226 (sdk-cli)\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": "{\"client_name\":\"Claude Code (gate-probe)\",\"redirect_uris\":[\"http://localhost:3118/callback\"],\"grant_types\":[\"authorization_code\",\"refresh_token\"],\"response_types\":[\"code\"],\"token_endpoint_auth_method\":\"none\"}",
+        "note": "DCR REGISTRATION \u2014 client chose /register"
+    },
+    {
+        "id": 13,
+        "ts": "2026-08-09T21:05:14.024Z",
+        "method": "GET",
+        "path": "/.well-known/oauth-protected-resource/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"*/*\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b7be99a78969\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"mcp-protocol-version\":\"2025-11-25\",\"user-agent\":\"Bun/1.4.0\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "PRM fetch via path-suffixed path"
+    },
+    {
+        "id": 14,
+        "ts": "2026-08-09T21:05:14.104Z",
+        "method": "GET",
+        "path": "/.well-known/oauth-authorization-server",
+        "query": null,
+        "headers": "{\"accept\":\"application/json\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b7bf2a568969\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"mcp-protocol-version\":\"2025-11-25\",\"user-agent\":\"Bun/1.4.0\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "AS metadata fetch via /.well-known/oauth-authorization-server"
+    },
+    {
+        "id": 15,
+        "ts": "2026-08-09T21:05:14.190Z",
+        "method": "GET",
+        "path": "/.well-known/oauth-authorization-server",
+        "query": null,
+        "headers": "{\"accept\":\"application/json\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b7bfab388969\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"mcp-protocol-version\":\"2025-11-25\",\"user-agent\":\"Bun/1.4.0\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "AS metadata fetch via /.well-known/oauth-authorization-server"
+    },
+    {
+        "id": 16,
+        "ts": "2026-08-09T21:05:14.269Z",
+        "method": "GET",
+        "path": "/.well-known/oauth-protected-resource/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"*/*\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b7c02bf88969\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"mcp-protocol-version\":\"2025-11-25\",\"user-agent\":\"Bun/1.4.0\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "PRM fetch via path-suffixed path"
+    },
+    {
+        "id": 17,
+        "ts": "2026-08-09T21:05:14.547Z",
+        "method": "GET",
+        "path": "/authorize",
+        "query": "?response_type=code&client_id=probe-dcr-4ba00368-f0f7-4844-8fbf-6dad611404b5&code_challenge=ZNTCUrEpI19zh_sR_7G3Q_LBdpgmVd-Idmp6u4YbI1E&code_challenge_method=S256&redirect_uri=http%3A%2F%2Flocalhost%3A3118%2Fcallback&state=Py24nnWBoroyWAt6s2JjTmaG1fYJNphiSeV1QgYbrlo&resource=https%3A%2F%2Fjulian-gate-probe.julian-memory.workers.dev%2Fmcp",
+        "headers": "{\"accept\":\"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8\",\"accept-encoding\":\"gzip, br\",\"accept-language\":\"en-US,en;q=0.6\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b7c1ee820c31\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"priority\":\"u=0, i\",\"sec-ch-ua\":\"\\\"Not=A?Brand\\\";v=\\\"99\\\", \\\"Brave\\\";v=\\\"151\\\", \\\"Chromium\\\";v=\\\"151\\\"\",\"sec-ch-ua-mobile\":\"?0\",\"sec-ch-ua-platform\":\"\\\"macOS\\\"\",\"sec-fetch-dest\":\"document\",\"sec-fetch-mode\":\"navigate\",\"sec-fetch-site\":\"none\",\"sec-fetch-user\":\"?1\",\"sec-gpc\":\"1\",\"upgrade-insecure-requests\":\"1\",\"user-agent\":\"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "AUTHORIZE \u2014 DCR (client_id minted at /register)"
+    },
+    {
+        "id": 18,
+        "ts": "2026-08-09T21:05:14.781Z",
+        "method": "GET",
+        "path": "/favicon.ico",
+        "query": null,
+        "headers": "{\"accept\":\"image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8\",\"accept-encoding\":\"gzip, br\",\"accept-language\":\"en-US,en;q=0.6\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b7c3593f0c31\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"priority\":\"u=1, i\",\"referer\":\"https://julian-gate-probe.julian-memory.workers.dev/authorize?response_type=code&client_id=probe-dcr-4ba00368-f0f7-4844-8fbf-6dad611404b5&code_challenge=ZNTCUrEpI19zh_sR_7G3Q_LBdpgmVd-Idmp6u4YbI1E&code_challenge_method=S256&redirect_uri=http%3A%2F%2Flocalhost%3A3118%2Fcallback&state=Py24nnWBoroyWAt6s2JjTmaG1fYJNphiSeV1QgYbrlo&resource=https%3A%2F%2Fjulian-gate-probe.julian-memory.workers.dev%2Fmcp\",\"sec-ch-ua\":\"\\\"Not=A?Brand\\\";v=\\\"99\\\", \\\"Brave\\\";v=\\\"151\\\", \\\"Chromium\\\";v=\\\"151\\\"\",\"sec-ch-ua-mobile\":\"?0\",\"sec-ch-ua-platform\":\"\\\"macOS\\\"\",\"sec-fetch-dest\":\"image\",\"sec-fetch-mode\":\"no-cors\",\"sec-fetch-site\":\"same-origin\",\"sec-gpc\":\"1\",\"user-agent\":\"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "unmatched path"
+    },
+    {
+        "id": 19,
+        "ts": "2026-08-09T21:05:17.751Z",
+        "method": "GET",
+        "path": "/.well-known/oauth-authorization-server",
+        "query": null,
+        "headers": "{\"accept\":\"application/json\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b7d5ee528969\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"mcp-protocol-version\":\"2025-11-25\",\"user-agent\":\"Bun/1.4.0\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "AS metadata fetch via /.well-known/oauth-authorization-server"
+    },
+    {
+        "id": 20,
+        "ts": "2026-08-09T21:05:17.838Z",
+        "method": "GET",
+        "path": "/.well-known/oauth-protected-resource/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"*/*\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b7d67f468969\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"mcp-protocol-version\":\"2025-11-25\",\"user-agent\":\"Bun/1.4.0\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "PRM fetch via path-suffixed path"
+    },
+    {
+        "id": 21,
+        "ts": "2026-08-09T21:05:17.983Z",
+        "method": "POST",
+        "path": "/token",
+        "query": null,
+        "headers": "{\"accept\":\"application/json\",\"accept-encoding\":\"gzip, br\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b7d768b88969\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"content-length\":\"292\",\"content-type\":\"application/x-www-form-urlencoded\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"user-agent\":\"Bun/1.4.0\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": "grant_type=authorization_code&code=probe-fake-code&code_verifier=IUUMdV4NKieyG9HZ7tg3Tu1VRhWyP-nlNcaV-ZjQQyX&redirect_uri=http%3A%2F%2Flocalhost%3A3118%2Fcallback&resource=https%3A%2F%2Fjulian-gate-probe.julian-memory.workers.dev%2Fmcp&client_id=probe-dcr-4ba00368-f0f7-4844-8fbf-6dad611404b5",
+        "note": "TOKEN exchange \u2014 observe grant_type/verifier/auth style"
+    },
+    {
+        "id": 22,
+        "ts": "2026-08-09T21:05:18.139Z",
+        "method": "POST",
+        "path": "/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"application/json, text/event-stream\",\"accept-encoding\":\"gzip, br\",\"authorization\":\"<redacted:61 chars>\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b7d85a4e8969\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"content-length\":\"323\",\"content-type\":\"application/json\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"user-agent\":\"claude-code/2.1.226 (cli)\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"roots\":{\"listChanged\":true},\"elicitation\":{}},\"clientInfo\":{\"name\":\"claude-code\",\"title\":\"Claude Code\",\"version\":\"2.1.226\",\"description\":\"Anthropic's agentic coding tool\",\"websiteUrl\":\"https://claude.com/claude-code\"}},\"jsonrpc\":\"2.0\",\"id\":0}",
+        "note": "mcp request WITH dummy bearer (post-token behavior)"
+    },
+    {
+        "id": 23,
+        "ts": "2026-08-09T21:05:18.215Z",
+        "method": "POST",
+        "path": "/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"application/json, text/event-stream\",\"accept-encoding\":\"gzip, br\",\"authorization\":\"<redacted:61 chars>\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b7d8db1a8969\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"content-length\":\"54\",\"content-type\":\"application/json\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"mcp-protocol-version\":\"2025-11-25\",\"user-agent\":\"claude-code/2.1.226 (cli)\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}",
+        "note": "mcp request WITH dummy bearer (post-token behavior)"
+    },
+    {
+        "id": 24,
+        "ts": "2026-08-09T21:05:18.295Z",
+        "method": "GET",
+        "path": "/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"text/event-stream\",\"accept-encoding\":\"gzip, br\",\"authorization\":\"<redacted:61 chars>\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b7d95bdb8969\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"mcp-protocol-version\":\"2025-11-25\",\"user-agent\":\"claude-code/2.1.226 (cli)\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "mcp request WITH dummy bearer (post-token behavior)"
+    },
+    {
+        "id": 25,
+        "ts": "2026-08-09T21:05:18.358Z",
+        "method": "POST",
+        "path": "/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"application/json, text/event-stream\",\"accept-encoding\":\"gzip, br\",\"authorization\":\"<redacted:61 chars>\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289b7d9b8078b90\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"content-length\":\"46\",\"content-type\":\"application/json\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"mcp-protocol-version\":\"2025-11-25\",\"user-agent\":\"claude-code/2.1.226 (cli)\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}",
+        "note": "mcp request WITH dummy bearer (post-token behavior)"
+    },
+    {
+        "id": 26,
+        "ts": "2026-08-09T21:07:57.536Z",
+        "method": "POST",
+        "path": "/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"application/json, text/event-stream\",\"accept-encoding\":\"gzip, br\",\"accept-language\":\"*\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289bbbc9816fef0\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"content-length\":\"467\",\"content-type\":\"application/json\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"sec-fetch-mode\":\"cors\",\"user-agent\":\"node\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"sampling\":{},\"elicitation\":{\"form\":{},\"url\":{}},\"roots\":{\"listChanged\":true},\"tasks\":{\"list\":{},\"cancel\":{},\"requests\":{\"sampling\":{\"createMessage\":{}},\"elicitation\":{\"create\":{}}}},\"extensions\":{\"io.modelcontextprotocol/tasks\":{},\"io.modelcontextprotocol/ui\":{\"mimeTypes\":[\"text/html;profile=mcp-app\"]}}},\"clientInfo\":{\"name\":\"mcp-inspector\",\"version\":\"0.0.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}",
+        "note": "mcp request without/with-foreign token -> 401 challenge"
+    },
+    {
+        "id": 27,
+        "ts": "2026-08-09T21:07:58.249Z",
+        "method": "GET",
+        "path": "/.well-known/oauth-protected-resource/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"*/*\",\"accept-encoding\":\"gzip, br\",\"accept-language\":\"*\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289bbc10f4dfef0\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"mcp-protocol-version\":\"2025-11-25\",\"sec-fetch-mode\":\"cors\",\"user-agent\":\"node\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "PRM fetch via path-suffixed path"
+    },
+    {
+        "id": 28,
+        "ts": "2026-08-09T21:07:58.337Z",
+        "method": "GET",
+        "path": "/.well-known/oauth-authorization-server",
+        "query": null,
+        "headers": "{\"accept\":\"application/json\",\"accept-encoding\":\"gzip, br\",\"accept-language\":\"*\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289bbc19814fef0\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"mcp-protocol-version\":\"2025-11-25\",\"sec-fetch-mode\":\"cors\",\"user-agent\":\"node\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "AS metadata fetch via /.well-known/oauth-authorization-server"
+    },
+    {
+        "id": 29,
+        "ts": "2026-08-09T21:07:58.425Z",
+        "method": "POST",
+        "path": "/register",
+        "query": null,
+        "headers": "{\"accept\":\"*/*\",\"accept-encoding\":\"gzip, br\",\"accept-language\":\"*\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289bbc228e6fef0\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"content-length\":\"307\",\"content-type\":\"application/json\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"sec-fetch-mode\":\"cors\",\"user-agent\":\"node\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": "{\"redirect_uris\":[\"http://localhost:6274/oauth/callback\"],\"token_endpoint_auth_method\":\"none\",\"grant_types\":[\"authorization_code\",\"refresh_token\"],\"response_types\":[\"code\"],\"client_name\":\"MCP Inspector\",\"client_uri\":\"https://github.com/modelcontextprotocol/inspector\",\"scope\":\"\",\"application_type\":\"native\"}",
+        "note": "DCR REGISTRATION \u2014 client chose /register"
+    },
+    {
+        "id": 30,
+        "ts": "2026-08-09T21:07:58.570Z",
+        "method": "GET",
+        "path": "/authorize",
+        "query": "?response_type=code&client_id=probe-dcr-834a51da-64fd-4fa8-9b5d-ebbf8bd329db&code_challenge=ZmWTclIJG8AgFEh4WMoa9JqL5QBEIwNO-WubJjfp1HI&code_challenge_method=S256&redirect_uri=http%3A%2F%2Flocalhost%3A6274%2Foauth%2Fcallback&state=45b3863ee75bc56a3c7f19f681bcb2706e66025617f164440f4ca1d8ad2513c9&resource=https%3A%2F%2Fjulian-gate-probe.julian-memory.workers.dev%2Fmcp",
+        "headers": "{\"accept\":\"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7\",\"accept-encoding\":\"gzip, br\",\"accept-language\":\"en-US,en;q=0.9\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289bbc30d998969\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"priority\":\"u=0, i\",\"referer\":\"http://localhost:6274/\",\"sec-fetch-dest\":\"document\",\"sec-fetch-mode\":\"navigate\",\"sec-fetch-site\":\"cross-site\",\"sec-fetch-user\":\"?1\",\"upgrade-insecure-requests\":\"1\",\"user-agent\":\"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "AUTHORIZE \u2014 DCR (client_id minted at /register)"
+    },
+    {
+        "id": 31,
+        "ts": "2026-08-09T21:07:58.667Z",
+        "method": "GET",
+        "path": "/favicon.ico",
+        "query": null,
+        "headers": "{\"accept\":\"image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8\",\"accept-encoding\":\"gzip, br\",\"accept-language\":\"en-US,en;q=0.9\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289bbc3ae5e8969\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"priority\":\"u=1, i\",\"referer\":\"https://julian-gate-probe.julian-memory.workers.dev/authorize?response_type=code&client_id=probe-dcr-834a51da-64fd-4fa8-9b5d-ebbf8bd329db&code_challenge=ZmWTclIJG8AgFEh4WMoa9JqL5QBEIwNO-WubJjfp1HI&code_challenge_method=S256&redirect_uri=http%3A%2F%2Flocalhost%3A6274%2Foauth%2Fcallback&state=45b3863ee75bc56a3c7f19f681bcb2706e66025617f164440f4ca1d8ad2513c9&resource=https%3A%2F%2Fjulian-gate-probe.julian-memory.workers.dev%2Fmcp\",\"sec-fetch-dest\":\"image\",\"sec-fetch-mode\":\"no-cors\",\"sec-fetch-site\":\"same-origin\",\"user-agent\":\"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "unmatched path"
+    },
+    {
+        "id": 32,
+        "ts": "2026-08-09T21:08:23.123Z",
+        "method": "POST",
+        "path": "/token",
+        "query": null,
+        "headers": "{\"accept\":\"application/json\",\"accept-encoding\":\"gzip, br\",\"accept-language\":\"*\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289bc5c7d76884d\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"content-length\":\"302\",\"content-type\":\"application/x-www-form-urlencoded\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"sec-fetch-mode\":\"cors\",\"user-agent\":\"node\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": "grant_type=authorization_code&code=probe-fake-code&code_verifier=Dt%7EvB4Rp88GPwptx.VZkuQjYzuAUGWWdWGjLv8LIvbn&redirect_uri=http%3A%2F%2Flocalhost%3A6274%2Foauth%2Fcallback&resource=https%3A%2F%2Fjulian-gate-probe.julian-memory.workers.dev%2Fmcp&client_id=probe-dcr-834a51da-64fd-4fa8-9b5d-ebbf8bd329db",
+        "note": "TOKEN exchange \u2014 observe grant_type/verifier/auth style"
+    },
+    {
+        "id": 33,
+        "ts": "2026-08-09T21:08:23.231Z",
+        "method": "POST",
+        "path": "/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"application/json, text/event-stream\",\"accept-encoding\":\"gzip, br\",\"accept-language\":\"*\",\"authorization\":\"<redacted:61 chars>\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289bc5d2ec9884d\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"content-length\":\"467\",\"content-type\":\"application/json\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"sec-fetch-mode\":\"cors\",\"user-agent\":\"node\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"sampling\":{},\"elicitation\":{\"form\":{},\"url\":{}},\"roots\":{\"listChanged\":true},\"tasks\":{\"list\":{},\"cancel\":{},\"requests\":{\"sampling\":{\"createMessage\":{}},\"elicitation\":{\"create\":{}}}},\"extensions\":{\"io.modelcontextprotocol/tasks\":{},\"io.modelcontextprotocol/ui\":{\"mimeTypes\":[\"text/html;profile=mcp-app\"]}}},\"clientInfo\":{\"name\":\"mcp-inspector\",\"version\":\"0.0.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}",
+        "note": "mcp request WITH dummy bearer (post-token behavior)"
+    },
+    {
+        "id": 34,
+        "ts": "2026-08-09T21:08:23.320Z",
+        "method": "POST",
+        "path": "/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"application/json, text/event-stream\",\"accept-encoding\":\"gzip, br\",\"accept-language\":\"*\",\"authorization\":\"<redacted:61 chars>\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289bc5dbfed884d\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"content-length\":\"54\",\"content-type\":\"application/json\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"sec-fetch-mode\":\"cors\",\"user-agent\":\"node\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}",
+        "note": "mcp request WITH dummy bearer (post-token behavior)"
+    },
+    {
+        "id": 35,
+        "ts": "2026-08-09T21:08:23.422Z",
+        "method": "POST",
+        "path": "/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"application/json, text/event-stream\",\"accept-encoding\":\"gzip, br\",\"accept-language\":\"*\",\"authorization\":\"<redacted:61 chars>\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289bc5e591f884d\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"content-length\":\"85\",\"content-type\":\"application/json\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"sec-fetch-mode\":\"cors\",\"user-agent\":\"node\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1,\"params\":{\"_meta\":{\"progressToken\":1}}}",
+        "note": "mcp request WITH dummy bearer (post-token behavior)"
+    },
+    {
+        "id": 36,
+        "ts": "2026-08-09T21:08:23.458Z",
+        "method": "GET",
+        "path": "/mcp",
+        "query": null,
+        "headers": "{\"accept\":\"text/event-stream\",\"accept-encoding\":\"gzip, br\",\"accept-language\":\"*\",\"authorization\":\"<redacted:61 chars>\",\"cf-connecting-ip\":\"174.174.54.138\",\"cf-ipcountry\":\"US\",\"cf-ray\":\"a289bc5e9f53e102\",\"cf-visitor\":\"{\\\"scheme\\\":\\\"https\\\"}\",\"connection\":\"Keep-Alive\",\"host\":\"julian-gate-probe.julian-memory.workers.dev\",\"sec-fetch-mode\":\"cors\",\"user-agent\":\"node\",\"x-forwarded-proto\":\"https\",\"x-real-ip\":\"174.174.54.138\"}",
+        "body": null,
+        "note": "mcp request WITH dummy bearer (post-token behavior)"
+    }
+]
