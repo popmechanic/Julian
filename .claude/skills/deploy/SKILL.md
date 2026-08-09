@@ -151,13 +151,16 @@ ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git 
 
 ### Step P4b: Enroll the door
 
-The VM needs a lease to authenticate with the gate. Enroll it now — requires Marcus at `/approve`:
+The VM needs a lease to authenticate with the gate. Enroll it now, running ON
+the VM over ssh (not on the Mac — running this locally would write the
+**Mac's own** `~/.julian/gate-lease.json` with the VM's tokens) — requires
+Marcus at `/approve`:
 
 ```bash
-bun scripts/door-knock.ts --name door:<vmname>-web --purpose 'VM web instance'
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && export BROKER_URL=$(grep '^BROKER_URL' .env | cut -d= -f2-) && bun scripts/door-knock.ts --name <vmname>-web --purpose 'VM web instance'"
 ```
 
-The command will print instructions to visit the gate approval page. Marcus approves there; the command writes the lease file (`~/.julian/gate-lease.json` locally on the Mac; `/opt/julian/.julian/lease.json` on the VM after deployment). Re-provisioning always means re-knocking (the lease file does not survive a fresh clone).
+The command will print instructions to visit the gate approval page. Marcus approves there; the command writes the lease file to the VM's `~/.julian/gate-lease.json` (the universal default on every machine; `JULIAN_LEASE_FILE` overrides). Decommissioning a VM means revoking its lease (`bun scripts/door-leases.ts revoke <door>`) — the lease lives outside `/opt/julian`, so a re-provisioned VM keeps it.
 
 ### Step P5: Install dependencies
 
