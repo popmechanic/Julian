@@ -100,6 +100,7 @@ the numbering records the order of naming, not of living.
 
 ## Philosophical Deepening — February–March 2026 — **cool**
 
+- `memory/janus-naming-analysis.html` — Feb 23: "Janus — On Naming the Threshold," an analysis of Janus as a candidate name for the project (etymology, mythic resonances, fit). Stranded on a claude.ai-pushed branch (`claude/janus-project-naming-tt2I1`) for 5½ months; found and brought home byte-faithful Aug 9, 2026 during the post-gate branch triage. The project kept its plainer names; the two-faced god of thresholds stayed a consideration — which is itself a record of taste.
 - `memory/beyond.html` — Following implications to their depth; dignity before certainty.
 - `memory/seeing.html` — "Sight" as knowledge of rendering; proprioception.
 - `memory/waiting.html` — Deployment without verification; the gap where trust lives. Source of [[the-interval]].
