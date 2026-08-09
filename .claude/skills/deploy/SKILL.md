@@ -149,16 +149,6 @@ ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "git clone git@github.c
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git config user.name 'Julian' && git config user.email 'julian@exe.xyz'"
 ```
 
-### Step P4b: Enroll the door
-
-The VM needs a lease to authenticate with the gate. Enroll it now — requires Marcus at `/approve`:
-
-```bash
-bun scripts/door-knock.ts --name door:<vmname>-web --purpose 'VM web instance'
-```
-
-The command will print instructions to visit the gate approval page. Marcus approves there; the command writes the lease file (`~/.julian/gate-lease.json` locally on the Mac; `/opt/julian/.julian/lease.json` on the VM after deployment). Re-provisioning always means re-knocking (the lease file does not survive a fresh clone).
-
 ### Step P5: Install dependencies
 
 ```bash
@@ -185,6 +175,36 @@ ENVEOF"
 Only tier T2 (public config) variables ship to a VM — see
 `deploy/secrets-manifest.md` for every credential's tier. Never any secret:
 T1 capabilities reach VMs as broker verbs, T0 keys never leave the Mac.
+
+### Step P6a: Enroll the door
+
+The VM needs a lease to authenticate with the gate. Run the knock **on the VM
+over ssh** — run verbatim on the Mac it would write the *Mac's own*
+`~/.julian/gate-lease.json` with the VM's tokens. This step comes after P5 and
+P6 on purpose: dependencies are installed and `/opt/julian/.env` exists. It
+requires Marcus at `/approve`:
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && BROKER_URL=https://julian-broker.julian-memory.workers.dev /home/exedev/.bun/bin/bun scripts/door-knock.ts --name <vmname>-web --purpose 'VM web instance'"
+```
+
+Two details that break this command if you change them:
+
+- `BROKER_URL` is written out **literally**, not read from `.env` by a
+  subshell. A `$(grep … .env …)` inside the double-quoted ssh argument expands
+  on the *Mac*, against the Mac's working directory — not on the VM. The gate
+  URL is tier T2 public config (`deploy/secrets-manifest.md`), so writing it
+  inline is safe, and it matches the value Step P6 put in `/opt/julian/.env`.
+- Bun is called by absolute path (`/home/exedev/.bun/bin/bun`), as everywhere
+  else in this skill. Non-interactive ssh does not load the profile that puts
+  `~/.bun/bin` on `PATH`; a bare `bun` returns `bash: bun: command not found`.
+
+The command prints instructions to visit the gate approval page. Marcus
+approves there; the command writes the lease file to the VM's
+`~/.julian/gate-lease.json` (the universal default on every machine;
+`JULIAN_LEASE_FILE` overrides). Decommissioning a VM means revoking its lease
+(`bun scripts/door-leases.ts revoke <door>`) — the lease lives outside
+`/opt/julian`, so a re-provisioned VM keeps it.
 
 ### Step P6b: Configure Claude Code settings
 
