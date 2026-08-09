@@ -33,3 +33,6 @@ openclaw/
 
 # Working copy of the Pallid Mask installation app (canonical record lives on the pallid-mask branch)
 pallid-mask/
+
+# Design sources (large binaries; originals kept locally)
+assets/*.psd
