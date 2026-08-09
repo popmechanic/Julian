@@ -187,6 +187,7 @@ describe('GET /leases', () => {
     const roster: LeaseSummary[] = [{
       leaseId: 'lease-1', doorName: 'door:aurora', scope: 'full-house',
       status: 'living', born: 1_700_000_000_000, lastRenewal: null, lastVerb: null,
+      principal: 'julian', flow: 'device',
     }];
     const { env } = gateEnv({ leaseList: () => roster });
     const res = await worker.fetch(
