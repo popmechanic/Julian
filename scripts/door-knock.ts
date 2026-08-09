@@ -3,10 +3,11 @@
 // for access, Marcus approves at /approve, this tool polls until a lease
 // pair arrives and writes it to the lease file this door will use.
 
-import { hostname, homedir } from 'node:os';
+import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promises as fs } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { resolveLeasePath } from './lib/lease-client';
 
 interface Flags {
   name?: string;
@@ -73,7 +74,7 @@ async function main(): Promise<void> {
     console.error('BROKER_URL not set — cannot knock. Tell Marcus.');
     process.exit(2);
   }
-  const leasePath = process.env.JULIAN_LEASE_FILE ?? join(homedir(), '.julian', 'gate-lease.json');
+  const leasePath = resolveLeasePath(process.env);
 
   const deviceRes = await fetch(`${trimSlash(brokerUrl)}/device`, {
     method: 'POST',

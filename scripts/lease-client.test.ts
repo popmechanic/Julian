@@ -1,9 +1,10 @@
 import { describe, expect, test, vi } from 'vitest';
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:http';
-import { resolveAccessToken } from './lib/lease-client';
+import { resolveAccessToken, resolveLeasePath } from './lib/lease-client';
+import { fetchLeaseList } from './door-leases';
 
 // vitest runs under a node worker pool (even when invoked via `bunx`), so
 // the global `Bun.serve` isn't reliably available here — plain `node:http`
@@ -212,5 +213,89 @@ describe('resolveAccessToken — mint-on-demand refresh', () => {
       expect(r1.token).toBe(r2.token);
       expect(r1.token).toBe('jla_fresh_1');
     }
+  });
+});
+
+describe('resolveLeasePath — the single lease-path story', () => {
+  test('defaults to ~/.julian/gate-lease.json when JULIAN_LEASE_FILE is unset', () => {
+    const env = {} as NodeJS.ProcessEnv;
+    expect(resolveLeasePath(env)).toBe(join(homedir(), '.julian', 'gate-lease.json'));
+  });
+
+  test('JULIAN_LEASE_FILE overrides the default', () => {
+    const env = { JULIAN_LEASE_FILE: '/tmp/custom/lease.json' } as NodeJS.ProcessEnv;
+    expect(resolveLeasePath(env)).toBe('/tmp/custom/lease.json');
+  });
+
+  test('the override is respected end-to-end: resolveAccessToken reads from the overridden path, not the default', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lease-client-override-'));
+    const overridePath = join(dir, 'custom-lease.json');
+    seedLeaseFile(overridePath, { accessToken: 'jla_override', remainingMs: 3600_000 });
+    const env = { JULIAN_LEASE_FILE: overridePath } as NodeJS.ProcessEnv;
+
+    const leasePath = resolveLeasePath(env);
+    expect(leasePath).toBe(overridePath);
+
+    const result = await resolveAccessToken(env, leasePath, 'http://unused.invalid');
+
+    expect(result).toEqual({ token: 'jla_override', source: 'lease-file' });
+  });
+});
+
+describe('door-leases.ts list — /leases response parsing', () => {
+  test('parses the gate\'s real {"leases": [...]} shape (not a bare array)', async () => {
+    const leases = [
+      {
+        leaseId: 'l1',
+        doorName: 'door:julian-new-web',
+        scope: 'full-house',
+        status: 'living',
+        born: 1,
+        lastRenewal: null,
+        lastVerb: null,
+      },
+    ];
+    const server = createServer((req, res) => {
+      expect(req.headers['x-breakglass-secret']).toBe('test-secret');
+      jsonBody(res, 200, { leases });
+    });
+    const base = await listen(server);
+
+    const result = await fetchLeaseList(base, 'test-secret');
+    await stop(server);
+
+    expect(result).toEqual(leases);
+  });
+
+  test('tolerates a bare array defensively', async () => {
+    const leases = [
+      {
+        leaseId: 'l2',
+        doorName: 'door:julian-vm',
+        scope: 'reading-room',
+        status: 'living',
+        born: 2,
+        lastRenewal: null,
+        lastVerb: null,
+      },
+    ];
+    const server = createServer((_req, res) => jsonBody(res, 200, leases));
+    const base = await listen(server);
+
+    const result = await fetchLeaseList(base, 'test-secret');
+    await stop(server);
+
+    expect(result).toEqual(leases);
+  });
+
+  test('non-ok response throws with the body text', async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(401);
+      res.end('unauthorized');
+    });
+    const base = await listen(server);
+
+    await expect(fetchLeaseList(base, 'wrong-secret')).rejects.toThrow('unauthorized');
+    await stop(server);
   });
 });
