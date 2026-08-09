@@ -9,8 +9,11 @@ hosts it may be presented to, and how to rotate it. Spec:
 - **Tiers.** T0 mac-only: never leaves the Mac's `.env` — controls identity
   or spend at the root. T1 broker: Cloudflare worker secret on
   `julian-broker`; VMs get verbs, never the key. T2 public config: fine on
-  any VM. Only T2 ships to VMs — the deploy skill enforces this by citing
-  this file.
+  any VM. T3 door lease: revocable, capped authority; lives with the door
+  that owns it (`~/.julian/gate-lease.json` on the Mac, `/opt/julian/.julian/lease.json` on a VM, 0600, gitignored);
+  rotation is automatic on renewal; revocation is `bun scripts/door-leases.ts revoke <door>`; re-provisioning a VM
+  clones fresh, so **re-provision means re-knock**. Only T2 ships to VMs
+  — the deploy skill enforces this by citing this file.
 - **Archive, never delete.** A retired credential keeps its row (status,
   date, reason); the secret itself is revoked and purged. Rotation changes
   only the value — name and service binding are immutable; a new binding is
@@ -32,6 +35,9 @@ hosts it may be presented to, and how to rotate it. Spec:
 | `ANTHROPIC_API_KEY` | Anthropic API spend | T0 | Mac `.env` | `api.anthropic.com` | console.anthropic.com → new key → replace in Mac `.env` | unknown (pre-manifest) | active |
 | `ELEVENLABS_API_KEY` | ElevenLabs voice synthesis (account credit) | T0 | Mac `.env` | `api.elevenlabs.io` | ElevenLabs dashboard → new key → replace in Mac `.env` | unknown (pre-manifest) | active |
 | `AGENTMAIL_API_KEY` | Full read/send as julian-marcus@agentmail.to | T1 | Cloudflare worker secret on `julian-broker` + Mac `.env` | `api.agentmail.to` | AgentMail dashboard → new key → replace in Mac `.env` → `cd broker && bunx wrangler secret put AGENTMAIL_API_KEY` (Marcus types the value) | 2026-07-31 — installed by Marcus via wrangler secret put, Julian present; verified by `wrangler secret list` | active |
+| `SESSION_SECRET` | Sign approver sessions on the gate | T1 | Cloudflare worker secret on `julian-broker` | `https://julian-broker.julian-memory.workers.dev` | `cd broker && bunx wrangler secret put SESSION_SECRET` (generate 64 random hex or base64url chars locally, Marcus types) | not yet rotated | active |
+| `INTROSPECT_SECRET` | Verify introspection requests from sync and doors | T1 | Cloudflare worker secret on `julian-broker` | `https://julian-broker.julian-memory.workers.dev` | `cd broker && bunx wrangler secret put INTROSPECT_SECRET` (generate 64 random hex or base64url chars locally, Marcus types) | not yet rotated | active |
+| `GATE_BREAKGLASS_SECRET` | Admin break-glass path to lease list/revoke/export | T0 (Mac) + T1 (worker) | Mac `.env` + Cloudflare worker secret `BREAKGLASS_SECRET` on `julian-broker` | `https://julian-broker.julian-memory.workers.dev` | Same value on both sides: generate locally, replace in Mac `.env`, then `cd broker && bunx wrangler secret put BREAKGLASS_SECRET` (same value) | not yet rotated | active |
 
 ## Public config (T2 — ships to VMs)
 

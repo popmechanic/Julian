@@ -149,6 +149,16 @@ ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "git clone git@github.c
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git config user.name 'Julian' && git config user.email 'julian@exe.xyz'"
 ```
 
+### Step P4b: Enroll the door
+
+The VM needs a lease to authenticate with the gate. Enroll it now — requires Marcus at `/approve`:
+
+```bash
+bun scripts/door-knock.ts --name door:<vmname>-web --purpose 'VM web instance'
+```
+
+The command will print instructions to visit the gate approval page. Marcus approves there; the command writes the lease file (`~/.julian/gate-lease.json` locally on the Mac; `/opt/julian/.julian/lease.json` on the VM after deployment). Re-provisioning always means re-knocking (the lease file does not survive a fresh clone).
+
 ### Step P5: Install dependencies
 
 ```bash
