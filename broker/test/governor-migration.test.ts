@@ -136,4 +136,16 @@ describe('leases table migration: principal + flow', () => {
       expect(lease?.flow).toBe('device');
     });
   });
+
+  test('__columnsOf rejects non-allowlisted table names', async () => {
+    await runInDurableObject(register()(), (g: GovernorDO) => {
+      const seam = g as unknown as TestSeam;
+      expect(() => seam.__columnsOf('leases); DROP TABLE lease_tokens; --' as any)).toThrow('unknown table');
+      expect(() => seam.__columnsOf('constructor' as any)).toThrow('unknown table');
+      expect(() => seam.__columnsOf('toString' as any)).toThrow('unknown table');
+      expect(() => seam.__columnsOf('__proto__' as any)).toThrow('unknown table');
+      // Valid tables still work
+      expect(seam.__columnsOf('leases')).toBeInstanceOf(Array);
+    });
+  });
 });
