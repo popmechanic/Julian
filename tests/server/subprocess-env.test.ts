@@ -7,7 +7,7 @@ import { bearerToken, subprocessEnv } from '../../server/lib';
 
 describe('subprocessEnv', () => {
   test('injects the session token and keeps the existing spawn flags', () => {
-    const env = subprocessEnv({ PATH: '/bin', BROKER_URL: 'https://broker.example' }, { CLAUDE_CODE_OAUTH_TOKEN: 't' }, 'oidc-token-xyz');
+    const env = subprocessEnv({ PATH: '/bin', BROKER_URL: 'https://broker.example' }, { CLAUDE_CODE_OAUTH_TOKEN: 't' }, 'oidc-token-xyz', '');
     expect(env.JULIAN_OIDC_TOKEN).toBe('oidc-token-xyz');
     expect(env.BROKER_URL).toBe('https://broker.example'); // rides through from base
     expect(env.PATH).toBe('/bin');
@@ -17,8 +17,35 @@ describe('subprocessEnv', () => {
     expect(env.CLAUDE_CODE_ENTRYPOINT).toBe('');
   });
   test('empty token → no JULIAN_OIDC_TOKEN key at all (no stale empty var)', () => {
-    const env = subprocessEnv({}, {}, '');
+    const env = subprocessEnv({}, {}, '', '');
     expect('JULIAN_OIDC_TOKEN' in env).toBe(false);
+  });
+  test('leaseUrl set → JULIAN_LEASE_URL present; empty → absent (no stale var)', () => {
+    const set = subprocessEnv({ PATH: '/bin' }, {}, '', 'http://127.0.0.1:8377/lease/token');
+    expect(set.JULIAN_LEASE_URL).toBe('http://127.0.0.1:8377/lease/token');
+    expect('JULIAN_LEASE_URL' in subprocessEnv({ PATH: '/bin' }, {}, '', '')).toBe(false);
+    // and an inherited one is scrubbed, exactly as the bearer is
+    expect('JULIAN_LEASE_URL' in subprocessEnv({ JULIAN_LEASE_URL: 'http://127.0.0.1:8377/lease/token' }, {}, '', '')).toBe(false);
+    // the live mint wins over one inherited from the server's own env
+    expect(subprocessEnv({ JULIAN_LEASE_URL: 'http://127.0.0.1:9999/lease/token' }, {}, '', 'http://127.0.0.1:8377/lease/token').JULIAN_LEASE_URL)
+      .toBe('http://127.0.0.1:8377/lease/token');
+  });
+  test('demo spawn: neither JULIAN_LEASE_URL nor JULIAN_OIDC_TOKEN survives', () => {
+    // The kiosk invariant at the env layer: a demo spawn passes '' for both,
+    // so a visitor's subprocess has no bearer to spend AND no mint to ask.
+    const env = subprocessEnv(
+      { JULIAN_OIDC_TOKEN: 'operators-bearer', JULIAN_LEASE_URL: 'http://127.0.0.1:8377/lease/token', PATH: '/bin' },
+      { CLAUDE_CODE_OAUTH_TOKEN: 't' },
+      '',
+      '',
+    );
+    expect(env).toEqual({
+      PATH: '/bin',
+      CLAUDE_CODE_OAUTH_TOKEN: 't',
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+      CLAUDECODE: '',
+      CLAUDE_CODE_ENTRYPOINT: '',
+    });
   });
   test('demo sessions carry no token: empty token also scrubs an inherited one', () => {
     // The server's own env must never hand a previous door's token to a new
@@ -26,17 +53,18 @@ describe('subprocessEnv', () => {
     // what makes the demo call site safe — /api/session/start passes '' for a
     // demo session, so an anonymous kiosk visitor's subprocess has no bearer
     // to spend at the broker, whatever the server process inherited.
-    expect('JULIAN_OIDC_TOKEN' in subprocessEnv({ JULIAN_OIDC_TOKEN: 'someone-elses-token' }, {}, '')).toBe(false);
-    expect('JULIAN_OIDC_TOKEN' in subprocessEnv({ JULIAN_OIDC_TOKEN: 'stale-from-server-env' }, {}, '')).toBe(false);
+    expect('JULIAN_OIDC_TOKEN' in subprocessEnv({ JULIAN_OIDC_TOKEN: 'someone-elses-token' }, {}, '', '')).toBe(false);
+    expect('JULIAN_OIDC_TOKEN' in subprocessEnv({ JULIAN_OIDC_TOKEN: 'stale-from-server-env' }, {}, '', '')).toBe(false);
   });
   test('the captured token wins over one inherited from the base env', () => {
-    const env = subprocessEnv({ JULIAN_OIDC_TOKEN: 'stale' }, {}, 'fresh');
+    const env = subprocessEnv({ JULIAN_OIDC_TOKEN: 'stale' }, {}, 'fresh', '');
     expect(env.JULIAN_OIDC_TOKEN).toBe('fresh');
   });
   test('authEnv overrides base, and the spawn flags override both', () => {
     const env = subprocessEnv(
       { CLAUDE_CODE_OAUTH_TOKEN: 'base', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli', CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '0' },
       { CLAUDE_CODE_OAUTH_TOKEN: 'auth' },
+      '',
       '',
     );
     expect(env).toEqual({
@@ -49,7 +77,7 @@ describe('subprocessEnv', () => {
   test('does not mutate the base or authEnv objects it was given', () => {
     const base = { JULIAN_OIDC_TOKEN: 'stale', PATH: '/bin' };
     const authEnv = { CLAUDE_CODE_OAUTH_TOKEN: 't' };
-    subprocessEnv(base, authEnv, 'fresh');
+    subprocessEnv(base, authEnv, 'fresh', 'http://127.0.0.1:8377/lease/token');
     expect(base).toEqual({ JULIAN_OIDC_TOKEN: 'stale', PATH: '/bin' });
     expect(authEnv).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: 't' });
   });
@@ -180,6 +208,9 @@ describe('POST /api/session/start under the kiosk lock', () => {
         PORT: String(port),
         ALLOWED_ORIGIN: baseUrl,
         DEMO_MODE: '1',
+        // No lease enrolled for this test server: it must not boot a lease
+        // holder, which would fight the operator's live one for port 8377.
+        JULIAN_LEASE_FILE: join(stubDir, 'no-such-lease.json'),
         // Remote mode: spawnClaude takes the no-subprocess path, so the handler
         // is exercised without a local Claude process.
         REMOTE_SESSION: 'kiosk-lock-test',
