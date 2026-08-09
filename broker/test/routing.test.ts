@@ -57,6 +57,12 @@ describe('default-deny', () => {
     const res = await SELF.fetch(`${BASE}/health`, { headers: { Authorization: 'Bearer not-a-jwt' } });
     expect(res.status).toBe(401);
   });
+
+  test('/ledger is an approver-gated register action, not a lease verb', async () => {
+    const { token, testEnv } = await authedEnv();
+    const res = await worker.fetch(authed(token, '/ledger'), testEnv);
+    expect(res.status).toBe(401); // a lease token is not an approver credential
+  });
 });
 
 describe('mail routes', () => {
@@ -86,6 +92,7 @@ describe('mail routes', () => {
 
   test('send: 21st send of the day → 429 quoting the policy; refusal is in the ledger', async () => {
     const { token, testEnv } = await authedEnv();
+    testEnv.BREAKGLASS_SECRET = 'test-breakglass-secret';
     for (let i = 0; i < 20; i++) {
       fetchMock.get('https://api.agentmail.to')
         .intercept({ method: 'POST', path: `${INBOX_PATH}/messages/send` })
@@ -104,7 +111,10 @@ describe('mail routes', () => {
     const body = await refused.json() as { policy: string };
     expect(body.policy).toBe('mail.send: 20/day');
 
-    const ledger = await worker.fetch(authed(token, '/ledger?limit=50'), testEnv);
+    const ledger = await worker.fetch(
+      new Request(`${BASE}/ledger?limit=50`, { headers: { 'X-Breakglass-Secret': 'test-breakglass-secret' } }),
+      testEnv,
+    );
     const { entries } = await ledger.json() as { entries: Array<{ verb: string; allowed: number; sub: string }> };
     const sends = entries.filter((e) => e.verb === 'send');
     expect(sends.length).toBe(21);

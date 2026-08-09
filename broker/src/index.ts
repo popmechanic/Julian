@@ -97,7 +97,7 @@ export default {
     if (path === '/approve' || path.startsWith('/approve/') || path === '/auth/callback') {
       return handleApprove(req, env, gov);
     }
-    if (path === '/introspect' || path === '/leases' || path.startsWith('/leases/')) {
+    if (path === '/introspect' || path === '/leases' || path.startsWith('/leases/') || path === '/ledger') {
       return handleAdmin(req, env, gov);
     }
 
@@ -135,15 +135,6 @@ export default {
       const refusal = await reserve(gov, auth, 'mail', 'health', '');
       if (refusal) return refusal;
       return json({ services: { mail: await mailHealth(env) } });
-    }
-
-    if (path === '/ledger' && req.method === 'GET') {
-      const limit = parseInt(url.searchParams.get('limit') ?? '50', 10) || 50;
-      try {
-        return json({ entries: await gov.entries(limit) });
-      } catch {
-        return json({ error: 'governor unavailable' }, 503);
-      }
     }
 
     return new Response('Not found', { status: 404 });

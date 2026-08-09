@@ -21,6 +21,7 @@ interface Script {
   leaseList?: () => LeaseSummary[];
   leaseRevoke?: (doorNameOrId: string, by: string) => boolean;
   leaseExport?: () => LeaseExport;
+  entries?: (limit: number) => unknown[];
   governorDown?: boolean;
 }
 
@@ -52,7 +53,10 @@ function gateEnv(script: Script = {}, overrides: Partial<Env> = {}): { env: Env;
     },
     async legacyAllowed(): Promise<boolean> { return false; },
     async reserveLease(): Promise<never> { throw new Error('not used by admin tests'); },
-    async entries(): Promise<unknown[]> { return []; },
+    async entries(limit = 50): Promise<unknown[]> {
+      if (script.governorDown) throw new Error('governor down');
+      return script.entries ? script.entries(limit) : [];
+    },
     async knockCreate(): Promise<never> { throw new Error('not used by admin tests'); },
     async knockByUserCode(): Promise<null> { return null; },
     async knockDecide(): Promise<boolean> { return false; },
@@ -119,13 +123,15 @@ describe('POST /introspect', () => {
     expect(calls.validateAccess).toEqual([]);
   });
 
-  test('living lease token → active:true with lease_id/door_name/scope snake_case', async () => {
-    const identity: LeaseIdentity = { leaseId: 'lease-1', doorName: 'door:aurora', scope: 'full-house' };
+  test('living lease token → active:true with lease_id/door_name/scope/principal snake_case', async () => {
+    const identity: LeaseIdentity = {
+      leaseId: 'lease-1', doorName: 'door:aurora', scope: 'full-house', principal: 'julian',
+    };
     const { env, calls } = gateEnv({ validateAccess: (token) => (token === 'jla_good' ? identity : null) });
     const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, 'jla_good'), env);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
-      active: true, lease_id: 'lease-1', door_name: 'door:aurora', scope: 'full-house',
+      active: true, lease_id: 'lease-1', door_name: 'door:aurora', scope: 'full-house', principal: 'julian',
     });
     expect(calls.validateAccess).toEqual(['jla_good']);
   });
@@ -263,6 +269,69 @@ describe('GET /leases/export', () => {
     const text = await res.text();
     expect(text).not.toMatch(/jla_|jlr_/);
     expect(JSON.parse(text)).toEqual(dump);
+  });
+});
+
+describe('GET /ledger', () => {
+  test('without a credential is refused', async () => {
+    const { env } = gateEnv();
+    const res = await worker.fetch(new Request(`${BASE}/ledger`), env);
+    expect(res.status).toBe(401);
+  });
+
+  test('the wrong breakglass secret is refused, not merely ignored', async () => {
+    const { env } = gateEnv();
+    const res = await worker.fetch(
+      new Request(`${BASE}/ledger`, { headers: { 'X-Breakglass-Secret': 'wrong' } }), env,
+    );
+    expect(res.status).toBe(401);
+  });
+
+  test('break-glass secret returns entries', async () => {
+    const entries = [{ ts: 1, sub: 'lease:legacy-window', service: 'mail', verb: 'send', detail: '', allowed: 1 }];
+    const { env } = gateEnv({ entries: () => entries });
+    const res = await worker.fetch(
+      new Request(`${BASE}/ledger`, { headers: { 'X-Breakglass-Secret': BREAKGLASS_SECRET } }), env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ entries });
+  });
+
+  test('an approver session returns entries too', async () => {
+    const { env } = gateEnv({ entries: () => [] });
+    const session = await mintSession(APPROVER, SESSION_SECRET);
+    const res = await worker.fetch(
+      new Request(`${BASE}/ledger`, { headers: { Cookie: `gate_session=${session}` } }), env,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ entries: [] });
+  });
+
+  test('a session for a sub off the approver allowlist is refused, same as no session', async () => {
+    const { env } = gateEnv();
+    const session = await mintSession('someone-else', SESSION_SECRET);
+    const res = await worker.fetch(
+      new Request(`${BASE}/ledger`, { headers: { Cookie: `gate_session=${session}` } }), env,
+    );
+    expect(res.status).toBe(401);
+  });
+
+  test('governor unreachable → 503, fail closed', async () => {
+    const { env } = gateEnv({ governorDown: true });
+    const res = await worker.fetch(
+      new Request(`${BASE}/ledger`, { headers: { 'X-Breakglass-Secret': BREAKGLASS_SECRET } }), env,
+    );
+    expect(res.status).toBe(503);
+  });
+
+  test('limit query param is forwarded to the governor', async () => {
+    let calledLimit: number | undefined;
+    const { env } = gateEnv({ entries: (limit) => { calledLimit = limit; return []; } });
+    const res = await worker.fetch(
+      new Request(`${BASE}/ledger?limit=5`, { headers: { 'X-Breakglass-Secret': BREAKGLASS_SECRET } }), env,
+    );
+    expect(res.status).toBe(200);
+    expect(calledLimit).toBe(5);
   });
 });
 

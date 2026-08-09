@@ -59,7 +59,10 @@ async function introspect(req: Request, env: Env, gov: DurableObjectStub<Governo
     return json({ error: GOVERNOR_DOWN }, 503);
   }
   if (!identity) return json({ active: false });
-  return json({ active: true, lease_id: identity.leaseId, door_name: identity.doorName, scope: identity.scope });
+  return json({
+    active: true, lease_id: identity.leaseId, door_name: identity.doorName,
+    scope: identity.scope, principal: identity.principal,
+  });
 }
 
 async function listLeases(gov: DurableObjectStub<GovernorDO>): Promise<Response> {
@@ -111,6 +114,16 @@ async function exportLeases(gov: DurableObjectStub<GovernorDO>): Promise<Respons
   return json(dump);
 }
 
+/** The ledger, same as `/leases*` — a register action, not a lease verb. */
+async function readLedger(req: Request, gov: DurableObjectStub<GovernorDO>): Promise<Response> {
+  const limit = parseInt(new URL(req.url).searchParams.get('limit') ?? '50', 10) || 50;
+  try {
+    return json({ entries: await gov.entries(limit) });
+  } catch {
+    return json({ error: GOVERNOR_DOWN }, 503);
+  }
+}
+
 export async function handleAdmin(
   req: Request, env: Env, gov: DurableObjectStub<GovernorDO>,
 ): Promise<Response> {
@@ -121,12 +134,13 @@ export async function handleAdmin(
     return introspect(req, env, gov);
   }
 
-  if (path === '/leases' || path === '/leases/revoke' || path === '/leases/export') {
+  if (path === '/leases' || path === '/leases/revoke' || path === '/leases/export' || path === '/ledger') {
     const authorized = await authorizeRegister(req, env);
     if (!authorized) return json({ error: NO_CREDENTIAL }, 401);
     if (path === '/leases' && req.method === 'GET') return listLeases(gov);
     if (path === '/leases/revoke' && req.method === 'POST') return revokeLease(req, gov, authorized);
     if (path === '/leases/export' && req.method === 'GET') return exportLeases(gov);
+    if (path === '/ledger' && req.method === 'GET') return readLedger(req, gov);
     return json({ error: 'no such register action' }, 404);
   }
 
