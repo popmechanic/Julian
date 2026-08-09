@@ -266,13 +266,12 @@ describe('the legacy window', () => {
 });
 
 describe('the four faces', () => {
-  test('stubbed faces respond 501 at /device, /approve, /introspect', async () => {
+  // The approval face is live (approve.test.ts owns it); the rest are still stubs.
+  test('faces still stubbed respond 501 at /device, /introspect, /leases', async () => {
     const { env } = gateEnv();
     const cases: Array<[string, RequestInit]> = [
       ['/device', { method: 'POST' }],
       ['/token', { method: 'POST' }],
-      ['/approve', { method: 'GET' }],
-      ['/auth/callback', { method: 'GET' }],
       ['/introspect', { method: 'POST' }],
       ['/leases', { method: 'GET' }],
     ];
