@@ -493,6 +493,9 @@ export class GovernorDO extends DurableObject {
 
   /** Test seam: column names of a table, for migration assertions. */
   __columnsOf(table: 'leases' | 'lease_tokens' | 'knocks' | 'ledger'): string[] {
+    if (!['leases', 'lease_tokens', 'knocks', 'ledger'].includes(table)) {
+      throw new Error('unknown table');
+    }
     return (this.sql.exec(`PRAGMA table_info(${table})`).toArray() as Array<{ name: string }>).map((r) => r.name);
   }
 
