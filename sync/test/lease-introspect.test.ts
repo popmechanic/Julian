@@ -113,7 +113,9 @@ describe('router: lease-token bearer handling', () => {
 
     fetchMock.get(GATE)
       .intercept({ method: 'POST', path: '/introspect' })
-      .reply(200, JSON.stringify({ active: true, lease_id: 'l3', door_name: 'door:z', scope: 'full-house' }),
+      .reply(200, JSON.stringify({
+        active: true, lease_id: 'l3', door_name: 'door:z', scope: 'full-house', principal: 'store',
+      }),
         { headers: { 'content-type': 'application/json' } });
 
     let stubFetchCalled = false;

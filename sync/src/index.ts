@@ -3,6 +3,12 @@ export { JulianSyncDO } from './do';
 
 const SEG = /^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$|^[a-z0-9]$/;
 
+// Lease scopes that may read the stream. `reading-room` is package-only
+// (identity, not confidentiality) and must never reach here — the private
+// stream (`julian/chat`) is bound to one principal and is never readable by
+// another principal or by a `reading-room` lease. This is the hard constraint.
+const STREAM_SCOPES = new Set(['stream-read', 'full-house']);
+
 export function parsePath(pathname: string): { store: string; context: string; isExport: boolean } | null {
   const segs = pathname.split('/').filter(Boolean);
   if (segs.length === 3 && segs[2] !== 'export') return null;
@@ -43,6 +49,16 @@ export default {
       }
       if (!introspection.active) {
         return new Response('lease revoked — re-knock', { status: 401 });
+      }
+      if (!STREAM_SCOPES.has(introspection.scope ?? '')) {
+        return new Response('this lease may not read the stream', { status: 403 });
+      }
+      // The store segment is the owning principal (e.g. `julian/chat` is
+      // owned by `julian`). A lease whose principal doesn't match never
+      // reads another principal's stream, even with a stream-capable scope.
+      const storeOwner = parsed.store;
+      if ((introspection.principal ?? '') !== storeOwner) {
+        return new Response('this lease does not own this store', { status: 403 });
       }
       auth = { sub: `lease:${introspection.leaseId}` };
     } else {

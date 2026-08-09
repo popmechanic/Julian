@@ -43,6 +43,7 @@ export interface LeaseIntrospection {
   leaseId?: string;
   doorName?: string;
   scope?: string;
+  principal?: string;
 }
 
 interface IntrospectCacheEntry {
@@ -102,9 +103,13 @@ export async function introspectLease(
     lease_id?: string;
     door_name?: string;
     scope?: string;
+    principal?: string;
   };
   const result: LeaseIntrospection = body.active
-    ? { active: true, leaseId: body.lease_id, doorName: body.door_name, scope: body.scope }
+    ? {
+        active: true, leaseId: body.lease_id, doorName: body.door_name,
+        scope: body.scope, principal: body.principal,
+      }
     : { active: false };
 
   introspectCache.set(key, { result, expiresAt: now + INTROSPECT_CACHE_TTL_MS });
