@@ -8,7 +8,17 @@
 
 import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+
+// The single lease-path story: every door script that reads or writes a
+// lease file resolves it through this one function, so `JULIAN_LEASE_FILE`
+// means the same thing everywhere it's honored — door-knock.ts (writes the
+// file a knock produces) and this module (mints-on-demand against it) both
+// call this rather than each carrying their own copy of the default.
+export function resolveLeasePath(env: NodeJS.ProcessEnv): string {
+  return env.JULIAN_LEASE_FILE ?? join(homedir(), '.julian', 'gate-lease.json');
+}
 
 export interface LeaseFileContents {
   access_token: string;
