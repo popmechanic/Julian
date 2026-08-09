@@ -58,14 +58,22 @@ async function sha256Hex(input: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Note: a fetch() failure (gate unreachable — DNS/connect error, not an HTTP
-// error status) is deliberately NOT caught here and propagates to the caller.
-// Callers distinguish "gate said inactive" (401/close 4001, revoked — safe to
-// tell the door to re-knock) from "couldn't ask the gate" (503/close 4002,
-// fail closed) by catching the throw; collapsing both into `{active:false}`
-// here would erase that distinction. A non-200 HTTP response IS treated as
-// inactive, per the introspect contract (only 401 on a bad shared secret, and
-// that should never happen from server-held config).
+// A governor blip must not read as revocation. Only a definitive 200 is ever
+// a verdict on the lease itself:
+//   - 200 {active:true, ...}  -> a living lease.
+//   - 200 {active:false}      -> a definitive revocation.
+// Anything else — a fetch() failure (gate unreachable, DNS/connect error), a
+// 401 (bad shared secret / config error), or any 5xx / other non-200 status —
+// means the gate did not give a definitive answer, not that it said no.
+// These are deliberately NOT caught here and propagate as a throw, same
+// shape for all of them: callers catch it and fail closed for the request at
+// hand (503 / WS close 4002, "introspection unavailable") WITHOUT telling
+// the door its lease was revoked (401 / WS close 4001, "lease revoked").
+// Collapsing either into `{active:false}` here would erase that distinction.
+//
+// Only the two definitive 200 outcomes are cached — a transient failure must
+// never be, or it would keep refusing reconnects for the rest of the 60s
+// window even after the gate recovers.
 export async function introspectLease(
   token: string,
   gateUrl: string,
@@ -85,20 +93,19 @@ export async function introspectLease(
     body: new URLSearchParams({ token }),
   });
 
-  let result: LeaseIntrospection;
   if (!res.ok) {
-    result = { active: false };
-  } else {
-    const body = await res.json() as {
-      active: boolean;
-      lease_id?: string;
-      door_name?: string;
-      scope?: string;
-    };
-    result = body.active
-      ? { active: true, leaseId: body.lease_id, doorName: body.door_name, scope: body.scope }
-      : { active: false };
+    throw new Error(`introspect: gate responded ${res.status}`);
   }
+
+  const body = await res.json() as {
+    active: boolean;
+    lease_id?: string;
+    door_name?: string;
+    scope?: string;
+  };
+  const result: LeaseIntrospection = body.active
+    ? { active: true, leaseId: body.lease_id, doorName: body.door_name, scope: body.scope }
+    : { active: false };
 
   introspectCache.set(key, { result, expiresAt: now + INTROSPECT_CACHE_TTL_MS });
   return result;
