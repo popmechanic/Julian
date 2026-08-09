@@ -10,7 +10,7 @@ export interface LeaseReserveResult {
   ok: boolean; refusedBy?: 'global' | 'lease'; count: number; cap: number | null;
 }
 
-export type LeaseScope = 'full-house' | 'reading-room';
+export type LeaseScope = 'full-house' | 'reading-room' | 'stream-read';
 export type KnockDecision = 'approved' | 'refused';
 
 export interface KnockCreated { deviceCode: string; userCode: string; expiresIn: number; interval: number }
@@ -25,10 +25,11 @@ export type MintResult =
   | { status: 'ok'; accessToken: string; refreshToken: string; expiresIn: number; scope: string }
   | { status: 'killed' }
   | { status: 'invalid' };
-export interface LeaseIdentity { leaseId: string; doorName: string; scope: string }
+export interface LeaseIdentity { leaseId: string; doorName: string; scope: string; principal: string }
 export interface LeaseSummary {
   leaseId: string; doorName: string; scope: string; status: string;
   born: number; lastRenewal: number | null; lastVerb: string | null;
+  principal: string; flow: string;
 }
 export interface LeaseExport { leases: unknown[]; tokens: unknown[]; knocks: unknown[] }
 
@@ -49,7 +50,7 @@ const LEGACY_LEASE_ID = 'legacy-window';
 const USER_CODE_ALPHABET = 'BCDFGHJKLMNPQRSTVWXZ';
 const USER_CODE_HALF = 4;
 const TOKEN_BYTES = 32;                // 256 bits → 43 base64url characters
-const SCOPES: readonly string[] = ['full-house', 'reading-room'];
+const SCOPES: readonly string[] = ['full-house', 'reading-room', 'stream-read'];
 
 type Row = Record<string, unknown>;
 
@@ -122,6 +123,20 @@ export class GovernorDO extends DurableObject {
          born INTEGER NOT NULL, last_renewal INTEGER, last_verb TEXT,
          send_cap_per_day INTEGER NOT NULL DEFAULT 5)`,
     );
+    // Guarded migration: a `leases` table from before `principal`/`flow`
+    // existed (or a table this same literal just created, which is
+    // identically shaped until this runs) gets the columns added here.
+    // `ALTER TABLE ADD COLUMN` is unsafe to repeat, so it is gated on
+    // `PRAGMA table_info` rather than run unconditionally.
+    const leaseCols = new Set(
+      (sql.exec('PRAGMA table_info(leases)').toArray() as Array<{ name: string }>).map((r) => r.name),
+    );
+    if (!leaseCols.has('principal')) {
+      sql.exec("ALTER TABLE leases ADD COLUMN principal TEXT NOT NULL DEFAULT 'julian'");
+    }
+    if (!leaseCols.has('flow')) {
+      sql.exec("ALTER TABLE leases ADD COLUMN flow TEXT NOT NULL DEFAULT 'device'");
+    }
     sql.exec(
       `CREATE TABLE IF NOT EXISTS lease_tokens (
          hash TEXT PRIMARY KEY, lease_id TEXT NOT NULL,
@@ -411,13 +426,16 @@ export class GovernorDO extends DurableObject {
   async validateAccess(accessToken: string): Promise<LeaseIdentity | null> {
     const hash = await sha256Hex(accessToken);
     const row = this.sql.exec(
-      `SELECT l.lease_id AS lease_id, l.door_name AS door_name, l.scope AS scope
+      `SELECT l.lease_id AS lease_id, l.door_name AS door_name, l.scope AS scope, l.principal AS principal
          FROM lease_tokens t JOIN leases l ON l.lease_id = t.lease_id
         WHERE t.hash = ? AND t.kind = 'access' AND t.expires > ? AND l.status = 'living'`,
       hash, this.now(),
     ).toArray()[0] as Row | undefined;
     if (!row) return null;
-    return { leaseId: String(row.lease_id), doorName: String(row.door_name), scope: String(row.scope) };
+    return {
+      leaseId: String(row.lease_id), doorName: String(row.door_name), scope: String(row.scope),
+      principal: String(row.principal),
+    };
   }
 
   legacyAllowed(): boolean {
@@ -444,7 +462,7 @@ export class GovernorDO extends DurableObject {
 
   leaseList(): LeaseSummary[] {
     return (this.sql.exec(
-      `SELECT lease_id, door_name, scope, status, born, last_renewal, last_verb
+      `SELECT lease_id, door_name, scope, status, born, last_renewal, last_verb, principal, flow
          FROM leases ORDER BY born ASC, door_name ASC`,
     ).toArray() as Row[]).map((row) => ({
       leaseId: String(row.lease_id),
@@ -454,6 +472,8 @@ export class GovernorDO extends DurableObject {
       born: Number(row.born),
       lastRenewal: row.last_renewal === null ? null : Number(row.last_renewal),
       lastVerb: row.last_verb === null ? null : String(row.last_verb),
+      principal: String(row.principal),
+      flow: String(row.flow),
     }));
   }
 
@@ -469,6 +489,11 @@ export class GovernorDO extends DurableObject {
            FROM knocks ORDER BY created ASC`,
       ).toArray(),
     };
+  }
+
+  /** Test seam: column names of a table, for migration assertions. */
+  __columnsOf(table: 'leases' | 'lease_tokens' | 'knocks' | 'ledger'): string[] {
+    return (this.sql.exec(`PRAGMA table_info(${table})`).toArray() as Array<{ name: string }>).map((r) => r.name);
   }
 
   // ── internals ─────────────────────────────────────────────────────────────

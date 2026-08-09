@@ -72,4 +72,16 @@ describe('GovernorDO', () => {
       expect(g.reserve('door-c', 'mail', 'send', 'd', 2).ok).toBe(false);
     });
   });
+
+  test('validateAccess returns principal on a living lease', async () => {
+    await runInDurableObject(stub(), async (g: GovernorDO) => {
+      const knock = await g.knockCreate('client', 'host', 'purpose');
+      if ('error' in knock) throw new Error('knock refused');
+      expect(g.knockDecide(knock.userCode, 'approved', 'door:principal-test', 'full-house')).toBe(true);
+      const ready = await g.devicePoll(knock.deviceCode, 'client');
+      if (ready.status !== 'ready') throw new Error(`expected ready, got ${ready.status}`);
+      const identity = await g.validateAccess(ready.accessToken);
+      expect(identity?.principal).toBe('julian');
+    });
+  });
 });

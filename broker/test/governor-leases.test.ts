@@ -75,7 +75,7 @@ describe('knock → approve → poll lifecycle', () => {
       if (ready.status !== 'ready') throw new Error('unreachable');
 
       expect(await g.validateAccess(ready.accessToken)).toEqual({
-        leaseId: expect.any(String), doorName: DOOR, scope: 'full-house',
+        leaseId: expect.any(String), doorName: DOOR, scope: 'full-house', principal: 'julian',
       });
     });
   });
@@ -528,6 +528,7 @@ describe('admin', () => {
       expect(list.find((l) => l.doorName === 'door:one')).toEqual({
         leaseId: expect.any(String), doorName: 'door:one', scope: 'full-house',
         status: 'living', born: START + 5000, lastRenewal: null, lastVerb: null,
+        principal: 'julian', flow: 'device',
       });
       expect(list.find((l) => l.doorName === 'door:two')?.scope).toBe('reading-room');
       expect(list.find((l) => l.doorName === 'legacy-window')?.status).toBe('living');
