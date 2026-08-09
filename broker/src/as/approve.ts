@@ -54,6 +54,16 @@ function claim(value: string): string {
   return flat.length > CLAIM_MAX ? `${flat.slice(0, CLAIM_MAX - 1)}…` : flat;
 }
 
+/**
+ * The prefilled door name. Doors are documented as knocking with client_id
+ * values that already read "door:whatever" (see door-knock.ts), so blindly
+ * prepending "door:" here produced "door:door:whatever". Use the client_id
+ * verbatim when it already carries the prefix; prepend it otherwise.
+ */
+function defaultDoorName(clientId: string): string {
+  return clientId.startsWith('door:') ? clientId : `door:${clientId}`;
+}
+
 function issuerOf(env: Env): string {
   return (env.OIDC_ISSUER ?? '').replace(/\/+$/, '');
 }
@@ -142,7 +152,7 @@ function confirmForm(knock: KnockView, csrf: string): string {
     + `<input type="hidden" name="user_code" value="${esc(knock.userCode)}">`
     + '<label for="door_name">Name this door (yours to choose, not the door’s)</label>'
     + `<input id="door_name" name="door_name" maxlength="${DOOR_NAME_MAX}" autocomplete="off"`
-    + ` spellcheck="false" value="${esc(claim(`door:${knock.clientId}`))}">`
+    + ` spellcheck="false" value="${esc(claim(defaultDoorName(knock.clientId)))}">`
     + '<div class="row">'
     + '<button class="open" type="submit" name="decision" value="open">Open</button>'
     + '<button type="submit" name="decision" value="refuse">Refuse</button>'
