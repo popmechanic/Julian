@@ -28,6 +28,9 @@ async function authedEnv(): Promise<{ token: string; testEnv: Env }> {
   testEnv.OIDC_AUDIENCE = AUDIENCE;
   testEnv.AGENTMAIL_API_KEY = 'test-key-abc';
   testEnv.AGENTMAIL_INBOX_ID = 'julian-marcus@agentmail.to';
+  // These Pocket ID bearers now enter through the legacy window, so the tests
+  // must hold it open on their own clock rather than on the deploy placeholder.
+  testEnv.LEGACY_WINDOW_END = '2099-01-01T00:00:00.000Z';
   const token = await new SignJWT({ sub: 'user_marcus' })
     .setProtectedHeader({ alg: 'RS256', kid: 'k1' })
     .setIssuer(ISSUER).setAudience(AUDIENCE).setIssuedAt()
@@ -106,7 +109,9 @@ describe('mail routes', () => {
     const sends = entries.filter((e) => e.verb === 'send');
     expect(sends.length).toBe(21);
     expect(sends[0].allowed).toBe(0);
-    expect(sends[0].sub).toBe('user_marcus');
+    // Every gate-authenticated act is ledgered under the lease, not the person:
+    // a Pocket ID bearer inside the window is the `legacy-window` pseudo-lease.
+    expect(sends[0].sub).toBe('lease:legacy-window');
   });
 
   test('list and read: authed passthrough with reservation logged', async () => {

@@ -1,11 +1,27 @@
-// The broker's bindings. AGENTMAIL_API_KEY arrives as a worker secret;
-// everything else is a plain var from wrangler.toml.
+// The gate's bindings. Everything under "secrets" arrives as a worker secret
+// (`wrangler secret put`); everything else is a plain var from wrangler.toml.
 export interface Env {
   GOVERNOR: DurableObjectNamespace;
+
+  // Pocket ID — the approver's login, and (until the window closes) the legacy
+  // bearer identity.
   OIDC_ISSUER: string;
   OIDC_JWKS_URL: string;
   OIDC_JWKS_JSON?: string; // test seam: inline JWKS instead of remote fetch
   OIDC_AUDIENCE?: string;
+
+  // The gate's own face.
+  APPROVER_SUBS: string;      // comma-separated Pocket ID subs; empty refuses every approval
+  GATE_CLIENT_ID: string;     // Pocket ID client for the approval login
+  GATE_REDIRECT_URI: string;  // must match the client's registered callback
+  PUBLIC_URL: string;         // the gate's own origin, as a door sees it
+  LEGACY_WINDOW_END: string;  // ISO date; after it, Pocket ID bearers are refused
+
+  // Secrets.
+  SESSION_SECRET: string;     // signs the approver session cookie
+  INTROSPECT_SECRET: string;  // shared with julian-sync for POST /introspect
+  BREAKGLASS_SECRET: string;  // the CLI's way into /leases when no browser will do
   AGENTMAIL_API_KEY: string;
+
   AGENTMAIL_INBOX_ID: string;
 }
