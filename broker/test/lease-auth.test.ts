@@ -266,39 +266,44 @@ describe('the legacy window', () => {
 });
 
 describe('the four faces', () => {
-  // The knock (device-flow.test.ts) and the approval (approve.test.ts) are live
-  // and owned by their own suites; only the register is still a stub. What this
-  // suite still owns is the *mounting*: which paths sit ahead of the lease gate.
-  test('the register is still a stub — 501 at /introspect and /leases', async () => {
-    const { env } = gateEnv();
-    const cases: Array<[string, RequestInit]> = [
-      ['/introspect', { method: 'POST' }],
-      ['/leases', { method: 'GET' }],
-    ];
-    for (const [path, init] of cases) {
-      const res = await worker.fetch(new Request(`${BASE}${path}`, init), env);
-      expect(res.status, path).toBe(501);
-      expect(await res.json(), path).toEqual({ error: 'not implemented' });
-    }
-  });
-
-  test('every face is mounted ahead of lease auth — no bearer required to reach one', async () => {
+  // The knock (device-flow.test.ts), the approval (approve.test.ts) and now
+  // the register (admin.test.ts) are all live and owned by their own suites.
+  // What this suite still owns is the *mounting*: which paths sit ahead of
+  // the lease gate, and with which identity the gate itself is asked.
+  test('device, approval and callback need no bearer to reach them', async () => {
     const { env, calls } = gateEnv();
     // Each face answers on its own terms with no Authorization header at all:
-    // the knock refuses the empty form, the desk sends the browser to Pocket ID,
-    // the callback refuses a flow it never started, the register says 501. None
-    // of them is a 401, and none of them consults the lease gate.
+    // the knock refuses the empty form, the desk sends the browser to Pocket
+    // ID, the callback refuses a flow it never started. None of them is a
+    // 401, and none of them consults the lease gate.
     const cases: Array<[string, RequestInit]> = [
       ['/device', { method: 'POST' }],
       ['/token', { method: 'POST' }],
       ['/approve', { method: 'GET' }],
       ['/auth/callback', { method: 'GET' }],
+    ];
+    for (const [path, init] of cases) {
+      const res = await worker.fetch(new Request(`${BASE}${path}`, init), env);
+      expect(res.status, path).not.toBe(401);
+    }
+    expect(calls.validateAccess).toEqual([]);
+    expect(calls.legacyAllowed).toBe(0);
+    expect(calls.reserveLease).toEqual([]);
+  });
+
+  test('the register answers its own credential check, never the lease gate', async () => {
+    const { env, calls } = gateEnv();
+    // Without an X-Introspect-Secret or an X-Breakglass-Secret/approver
+    // session, the register refuses on its own terms (admin.test.ts owns
+    // that copy and those cases) — but it never falls through to the
+    // Bearer-token lease gate to do it.
+    const cases: Array<[string, RequestInit]> = [
       ['/introspect', { method: 'POST' }],
       ['/leases', { method: 'GET' }],
     ];
     for (const [path, init] of cases) {
       const res = await worker.fetch(new Request(`${BASE}${path}`, init), env);
-      expect(res.status, path).not.toBe(401);
+      expect(res.status, path).toBe(401);
     }
     expect(calls.validateAccess).toEqual([]);
     expect(calls.legacyAllowed).toBe(0);
