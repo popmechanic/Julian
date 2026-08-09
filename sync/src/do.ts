@@ -19,6 +19,14 @@ interface LeaseAttachment {
 // right shape here — every inbound sync message piggybacks a freshness check.
 const REAUTH_INTERVAL_MS = 300_000;
 
+// Lease scopes whose grant includes the private live record. Held mirrors
+// gate 2A's SCOPE_VERBS: 'reading-room' is package-verbs-only (identity, not
+// confidentiality) and must never hold an open sync socket — defense in
+// depth alongside the router's upgrade-time check (broker/src/index.ts),
+// since the router is no longer the only guard once multiple scopes share
+// the register.
+const STREAM_SCOPES = new Set(['stream-read', 'full-house']);
+
 function extractLeaseToken(request: Request): string | null {
   const bearer = request.headers.get('Authorization');
   const token = bearer?.startsWith('Bearer ') ? bearer.slice(7) : null;
@@ -212,6 +220,16 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
       }
       if (!introspection.active) {
         ws.close(4001, 'lease revoked');
+        return;
+      }
+      // Defense in depth: even though the router already refused a
+      // non-stream-capable scope at upgrade time, re-check here on every
+      // traffic-driven re-auth so a socket that predates a scope downgrade
+      // (or any router bug) is independently closed rather than trusted
+      // indefinitely. A scope-lost close is neither a revocation (4001) nor
+      // an unavailable governor (4002) — it gets its own code.
+      if (!STREAM_SCOPES.has(introspection.scope ?? '')) {
+        ws.close(4003, 'lease scope may not read the stream');
         return;
       }
       ws.serializeAttachment({ ...attachment, verifiedAt: Date.now() } satisfies LeaseAttachment);
