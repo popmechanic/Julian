@@ -18,11 +18,11 @@ AGENTMAIL_INBOX_ID = "julian-marcus@agentmail.to"        # public address, not a
 
 # The gate's own face. These are placeholders so `wrangler dev` and the test
 # runtime have the right shape; the real values are set at deploy.
-APPROVER_SUBS = ""                                       # comma-separated Pocket ID subs; empty refuses every approval
-GATE_CLIENT_ID = "set-at-deploy"                         # Pocket ID client for the approval login
+APPROVER_SUBS = "94d31ef6-0b1f-441e-b67c-c037a8993924"                                       # comma-separated Pocket ID subs; empty refuses every approval
+GATE_CLIENT_ID = "79ff255e-dd77-4ade-adc8-db4fd833f361"                         # Pocket ID client for the approval login
 GATE_REDIRECT_URI = "https://julian-broker.julian-memory.workers.dev/auth/callback"
 PUBLIC_URL = "https://julian-broker.julian-memory.workers.dev"
-LEGACY_WINDOW_END = "2026-10-01T00:00:00Z"               # after this, Pocket ID bearers are refused
+LEGACY_WINDOW_END = "2026-08-23T00:00:00Z"               # after this, Pocket ID bearers are refused
 
 # Worker secrets (wrangler secret put) — never vars, never in this file:
 #   AGENTMAIL_API_KEY, SESSION_SECRET, INTROSPECT_SECRET, BREAKGLASS_SECRET
