@@ -91,8 +91,10 @@
     cursor: pointer;
     text-transform: uppercase;
   }
-  /* Deliberate final end: visually quieter than the pause control — lowercase,
-     dimmer, no filled background — so it reads as the rarer, weightier action. */
+  /* Deliberate final end: smaller and unfilled next to the primary REST
+     control, but outlined in danger red — the rarer, weightier action, never a
+     second pause button. Its casing stays uppercase so the rendered label is
+     the one the title promises: END FOR GOOD. */
   .end-final {
     font-family: var(--font-terminal);
     font-size: 0.7rem;
@@ -102,12 +104,10 @@
     border-radius: 4px;
     padding: 4px 8px;
     cursor: pointer;
-    text-transform: lowercase;
-    opacity: 1;
-    transition: opacity 200ms ease, color 200ms ease;
+    text-transform: uppercase;
+    transition: color 200ms ease, border-color 200ms ease;
   }
   .end-final:hover {
-    opacity: 1;
     color: var(--j-red);
   }
   .end-final.danger {
