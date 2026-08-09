@@ -11,6 +11,7 @@ import { fetchMock } from 'cloudflare:test';
 import { SignJWT, generateKeyPair, exportJWK } from 'jose';
 import type { KeyLike } from 'jose';
 import worker from '../src/index';
+import { scopeAllows } from '../src/lease-auth';
 import type { Env } from '../src/env';
 import type { LeaseIdentity, LeaseReserveResult } from '../src/governor';
 
@@ -190,14 +191,21 @@ describe('lease tokens', () => {
     ]);
   });
 
-  test('reading-room lease may still read the mailbox', async () => {
+  // Gate 2A closes the reading-room/mail bug: reading-room is package-only
+  // now, so it may no longer read the mailbox either — this test used to
+  // assert the old model (reading-room could still list mail) and is updated
+  // to the new invariant, matching the reading-room/mail.send refusal above.
+  test('reading-room lease may no longer read the mailbox (package-only invariant)', async () => {
     const { env, calls } = gateEnv({ validateAccess: () => READING_ROOM });
-    fetchMock.get('https://api.agentmail.to')
-      .intercept({ method: 'GET', path: `${INBOX_PATH}/messages` })
-      .reply(200, JSON.stringify({ messages: [] }), { headers: { 'content-type': 'application/json' } });
     const res = await worker.fetch(bearer(LEASE_TOKEN, '/mail/messages'), env);
-    expect(res.status).toBe(200);
-    expect(calls.reserveLease).toEqual([['lease-2', 'vm-quiet', 'mail', 'list', '', null, null]]);
+
+    expect(res.status).toBe(403);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain('reading-room');
+    expect(body.error).toContain('mail.list');
+    expect(calls.reserveLease).toEqual([
+      ['lease-2', 'vm-quiet', 'mail', 'list', 'refused: scope reading-room may not mail.list', 0, 0],
+    ]);
   });
 
   test('governor unreachable → 503, nothing reaches upstream (fail closed)', async () => {
@@ -314,5 +322,31 @@ describe('the four faces', () => {
     const { env } = gateEnv({ validateAccess: () => FULL_HOUSE });
     const res = await worker.fetch(bearer(LEASE_TOKEN, '/mail/delete-everything'), env);
     expect(res.status).toBe(404);
+  });
+});
+
+describe('scope→verb map (phase 2A)', () => {
+  test('reading-room grants package reads only — no mail, no stream', () => {
+    expect(scopeAllows('reading-room', 'package', 'list')).toBe(true);
+    expect(scopeAllows('reading-room', 'package', 'read')).toBe(true);
+    expect(scopeAllows('reading-room', 'mail', 'read')).toBe(false);
+    expect(scopeAllows('reading-room', 'mail', 'list')).toBe(false);
+    expect(scopeAllows('reading-room', 'mail', 'send')).toBe(false);
+    expect(scopeAllows('reading-room', 'stream', 'recent')).toBe(false);
+  });
+  test('stream-read grants package + stream, never mail', () => {
+    expect(scopeAllows('stream-read', 'package', 'read')).toBe(true);
+    expect(scopeAllows('stream-read', 'stream', 'recent')).toBe(true);
+    expect(scopeAllows('stream-read', 'stream', 'session')).toBe(true);
+    expect(scopeAllows('stream-read', 'stream', 'search')).toBe(true);
+    expect(scopeAllows('stream-read', 'mail', 'send')).toBe(false);
+  });
+  test('full-house grants everything including mail and stream', () => {
+    expect(scopeAllows('full-house', 'mail', 'send')).toBe(true);
+    expect(scopeAllows('full-house', 'stream', 'recent')).toBe(true);
+    expect(scopeAllows('full-house', 'package', 'read')).toBe(true);
+  });
+  test('unknown scope buys nothing', () => {
+    expect(scopeAllows('nonsense', 'package', 'read')).toBe(false);
   });
 });

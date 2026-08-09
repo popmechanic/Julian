@@ -34,10 +34,18 @@ export function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-/** What each scope may ask for. Unknown scopes buy nothing. */
+/** What each scope may ask for. Unknown scopes buy nothing.
+ *  reading-room = the public identity package only (attribution, not confidentiality).
+ *  stream-read  = package + the private live record, read-only.
+ *  full-house   = everything, incl. mail verbs — held by home doors, not MCP leases. */
+const PACKAGE_VERBS = ['package.list', 'package.read'] as const;
+const STREAM_VERBS = ['stream.recent', 'stream.session', 'stream.search'] as const;
+const MAIL_VERBS = ['mail.send', 'mail.list', 'mail.read', 'mail.health'] as const;
+
 const SCOPE_VERBS: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  'full-house': Object.freeze(['mail.send', 'mail.list', 'mail.read', 'mail.health']),
-  'reading-room': Object.freeze(['mail.list', 'mail.read', 'mail.health']),
+  'reading-room': Object.freeze([...PACKAGE_VERBS]),
+  'stream-read': Object.freeze([...PACKAGE_VERBS, ...STREAM_VERBS]),
+  'full-house': Object.freeze([...PACKAGE_VERBS, ...STREAM_VERBS, ...MAIL_VERBS]),
 });
 
 export function scopeAllows(scope: string, service: string, verb: string): boolean {
