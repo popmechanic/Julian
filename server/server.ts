@@ -21,6 +21,7 @@ import {
   ServerEvent,
   type TailMessage,
 } from "./lib";
+import { startLeaseHolder } from "./lease";
 import { extractStructured } from "./extract";
 import { buildVerifier } from "./auth";
 import { buildRoomDoc } from "./room";
@@ -476,6 +477,14 @@ const AGENT_NAME = process.env.AGENT_NAME || "Julian";
 const FORCE_DEMO_MODE = process.env.DEMO_MODE === "1";
 const REMOTE_SESSION = process.env.REMOTE_SESSION || "";
 
+// ── This door's lease ────────────────────────────────────────────────────
+// If a lease is enrolled here, the holder keeps its access token fresh and
+// mints it to subprocesses over loopback. LEASE_MINT_URL is the address a
+// normal session's subprocess is handed; a demo session is handed "".
+const LEASE_FILE_PATH = process.env.JULIAN_LEASE_FILE ?? join(homedir(), ".julian", "gate-lease.json");
+const GATE_URL = process.env.BROKER_URL || "https://julian-broker.julian-memory.workers.dev";
+let LEASE_MINT_URL = "";
+
 // ── Agent inbox constants ────────────────────────────────────────────────
 const TEAM_NAME = 'julian-agents';
 const TEAMS_DIR = join(homedir(), '.claude', 'teams');
@@ -742,7 +751,7 @@ function saveSessionState(state: SessionState) {
 // The harness session id is the id everywhere — events, store rows, resume.
 // A fresh spawn mints one and hands it to the CLI with --session-id; a resume
 // adopts the id the state file remembers.
-function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '', decision: SpawnDecision = { mode: 'fresh' }) {
+function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '', decision: SpawnDecision = { mode: 'fresh' }, leaseUrl = '') {
   sessionId = decision.mode === 'resume' ? decision.claudeSessionId : crypto.randomUUID();
   currentSessionDemo = mode === 'demo';
   sessionCostUsd = 0;
@@ -803,7 +812,7 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '', decisio
   const proc = spawn({
     cmd,
     cwd: WORKING_DIR,
-    env: subprocessEnv(process.env, authEnv, oidcToken),
+    env: subprocessEnv(process.env, authEnv, oidcToken, leaseUrl),
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -1512,8 +1521,9 @@ const server = Bun.serve({
         : { mode: 'fresh' };
       // Demo mode is the visitor-facing path: an anonymous kiosk session must
       // never inherit the operator's bearer, or it could spend broker verbs
-      // (mail.send) with only the behavioral send gate in the way.
-      spawnClaude(demoMode ? 'demo' : 'normal', demoMode ? '' : oidcToken, decision);
+      // (mail.send) with only the behavioral send gate in the way. It is
+      // handed no mint URL either — no bearer, and no way to make one.
+      spawnClaude(demoMode ? 'demo' : 'normal', demoMode ? '' : oidcToken, decision, demoMode ? '' : LEASE_MINT_URL);
       lastActivity = Date.now();
 
       // Resume must never fail silently into amnesia: if the resumed process
@@ -1525,7 +1535,7 @@ const server = Bun.serve({
           console.error(`[Session] RESUME FAILED for ${decision.claudeSessionId} — fresh spawn with inherited tail`);
           clearSessionState(SESSION_STATE_PATH);
           decision = { mode: 'fresh' };
-          spawnClaude('normal', oidcToken, decision);
+          spawnClaude('normal', oidcToken, decision, LEASE_MINT_URL);
         }
       }
 
@@ -1998,6 +2008,27 @@ const server = Bun.serve({
 (async () => {
   // Try refreshing token at startup if it's expiring soon
   await refreshTokenIfNeeded();
+
+  // The lease holder only exists if this door has actually knocked. No lease
+  // file, no holder, no mint — the door falls back to the legacy bearer path.
+  if (existsSync(LEASE_FILE_PATH)) {
+    try {
+      const holder = await startLeaseHolder({
+        path: LEASE_FILE_PATH,
+        brokerUrl: GATE_URL,
+        // The live session's mode decides: a demo session shuts the mint even
+        // for a subprocess that somehow learned its address.
+        isDemoActive: () => currentSessionDemo || FORCE_DEMO_MODE,
+      });
+      LEASE_MINT_URL = `http://127.0.0.1:${holder.port}/lease/token`;
+      console.log(`[Lease] Holder up — minting at ${LEASE_MINT_URL}`);
+    } catch (e) {
+      LEASE_MINT_URL = "";
+      console.error("[Lease] Holder failed to start — sessions run without a mint:", e);
+    }
+  } else {
+    console.log(`[Lease] No lease enrolled at ${LEASE_FILE_PATH} — run: bun scripts/door-knock.ts`);
+  }
 
   const startupClaudeCreds = loadClaudeCredentials();
   const startupSculptorCreds = loadSculptorCredentials();

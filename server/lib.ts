@@ -360,10 +360,16 @@ export function bearerToken(headers: { get(name: string): string | null }): stri
 // No token captured means no token passed: any JULIAN_OIDC_TOKEN inherited
 // from the server's own env is removed, so one door never spawns with
 // another's bearer.
+//
+// JULIAN_LEASE_URL is the same discipline for the gate era: it names this
+// door's loopback mint, from which a subprocess fetches a fresh lease access
+// token on demand. Demo/kiosk spawns pass "" for BOTH — a visitor's
+// subprocess gets neither a bearer nor a way to mint one.
 export function subprocessEnv(
   base: Record<string, string | undefined>,
   authEnv: Record<string, string>,
   oidcToken: string,
+  leaseUrl: string,
 ): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = {
     ...base,
@@ -374,6 +380,8 @@ export function subprocessEnv(
   };
   if (oidcToken) env.JULIAN_OIDC_TOKEN = oidcToken;
   else delete env.JULIAN_OIDC_TOKEN;
+  if (leaseUrl) env.JULIAN_LEASE_URL = leaseUrl;
+  else delete env.JULIAN_LEASE_URL;
   return env;
 }
 
