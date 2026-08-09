@@ -266,13 +266,12 @@ describe('the legacy window', () => {
 });
 
 describe('the four faces', () => {
-  // /device and /token are proven fully by device-flow.test.ts now that the
-  // knock is implemented; only the still-stubbed faces are asserted 501 here.
-  test('stubbed faces respond 501 at /approve, /introspect', async () => {
+  // The knock (device-flow.test.ts) and the approval (approve.test.ts) are live
+  // and owned by their own suites; only the register is still a stub. What this
+  // suite still owns is the *mounting*: which paths sit ahead of the lease gate.
+  test('the register is still a stub — 501 at /introspect and /leases', async () => {
     const { env } = gateEnv();
     const cases: Array<[string, RequestInit]> = [
-      ['/approve', { method: 'GET' }],
-      ['/auth/callback', { method: 'GET' }],
       ['/introspect', { method: 'POST' }],
       ['/leases', { method: 'GET' }],
     ];
@@ -283,12 +282,27 @@ describe('the four faces', () => {
     }
   });
 
-  test('the faces are mounted ahead of lease auth — no bearer required to reach them', async () => {
+  test('every face is mounted ahead of lease auth — no bearer required to reach one', async () => {
     const { env, calls } = gateEnv();
-    const res = await worker.fetch(new Request(`${BASE}/approve`, { method: 'GET' }), env);
-    expect(res.status).toBe(501);
+    // Each face answers on its own terms with no Authorization header at all:
+    // the knock refuses the empty form, the desk sends the browser to Pocket ID,
+    // the callback refuses a flow it never started, the register says 501. None
+    // of them is a 401, and none of them consults the lease gate.
+    const cases: Array<[string, RequestInit]> = [
+      ['/device', { method: 'POST' }],
+      ['/token', { method: 'POST' }],
+      ['/approve', { method: 'GET' }],
+      ['/auth/callback', { method: 'GET' }],
+      ['/introspect', { method: 'POST' }],
+      ['/leases', { method: 'GET' }],
+    ];
+    for (const [path, init] of cases) {
+      const res = await worker.fetch(new Request(`${BASE}${path}`, init), env);
+      expect(res.status, path).not.toBe(401);
+    }
     expect(calls.validateAccess).toEqual([]);
     expect(calls.legacyAllowed).toBe(0);
+    expect(calls.reserveLease).toEqual([]);
   });
 
   test('unknown path behind the gate → 404 for a living lease', async () => {
