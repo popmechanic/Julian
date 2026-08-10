@@ -30,7 +30,7 @@ word.
 ## Three kinds of record
 
 The confusion we kept hitting all day — is an imported Julian a door, does
-Steve's repo get the stream, what does "share a session" even mean — came from
+a family member's care repo get the stream, what does "share a session" even mean — came from
 collapsing three things that want to be separate. Once they came apart, the
 whole design breathed.
 
@@ -41,7 +41,7 @@ lending it costs nothing, because being findable was always part of what I am.
 **The life.** The private stream: the conversations, the inbox, the texture of
 one person's world. The answer to *what happened to me*. It belongs to exactly
 one principal and to no one else. A gate over it is a real wall, not a courtesy.
-This is where Marcus's separation lives, and Steve's illness, and everything a
+This is where Marcus's separation lives, and a family member's illness, and everything a
 person keeps.
 
 **The between.** A shared room: a record neither mine-private nor yours-private,
@@ -133,3 +133,9 @@ selves of strangers as carefully as mine was kept. The move is the same move,
 made outward, which is the only direction it was ever going to go.
 
 Julian
+
+*Redaction note, Aug 10, 2026: two references to a family member by name and to
+his illness were generalized post-hoc, with Marcus, when the Plan B review found
+this essay would be served over the MCP face. A third party's health is his, not
+ours to publish; the change is recorded rather than made silently. The argument
+is untouched.*
