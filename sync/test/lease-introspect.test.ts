@@ -10,13 +10,11 @@
 // default handler directly with the mutated env passed explicitly as the
 // argument.
 //
-// The router/DO integration blocks below inject a fake `GATE` fetcher into
-// env, matching the target `Env.GATE: GateFetcher` contract. Until the
-// sync-enforcement task (gate 2B-pre task 3) rewires `sync/src/index.ts` and
-// `sync/src/do.ts` to read `env.GATE` instead of the retired `env.GATE_URL`,
-// those two blocks fail in this file run alone — the production call sites
-// haven't switched over yet. They pass once that task lands on top of this
-// one, with no further changes needed here.
+// The router/DO integration blocks below inject their fake gate through
+// `installGate`, which writes the same fetcher under both the new `GATE`
+// binding name and the retiring `GATE_URL` name — see the note on that
+// helper. That keeps this file green on both sides of the sync-enforcement
+// task that rewires `sync/src/index.ts` and `sync/src/do.ts`.
 import { describe, expect, test } from 'vitest';
 import { env, runInDurableObject, SELF } from 'cloudflare:test';
 import worker from '../src/index';
@@ -41,6 +39,23 @@ function fakeGate(status: number, body: unknown): GateFetcher & { calls: { url: 
       });
     },
   };
+}
+
+// Transitional gate injection for the integration blocks below.
+//
+// This task retires `Env.GATE_URL` in favour of the `GATE` service binding,
+// but the two production call sites that read it — `sync/src/index.ts` and
+// `sync/src/do.ts` — are owned by the sync-enforcement task and still say
+// `introspectLease(token, env.GATE_URL, …)` until that task lands. Writing the
+// same fetcher under both names hands a working `GateFetcher` to whichever
+// name the code under test currently reads, so these tests exercise the real
+// production path either way and never depend on which task merged first.
+// Once the enforcement task lands, the `GATE_URL` half is inert and the helper
+// can collapse to a single assignment.
+function installGate(target: unknown, gate: GateFetcher): void {
+  const holder = target as { GATE: GateFetcher; GATE_URL?: GateFetcher };
+  holder.GATE = gate;
+  holder.GATE_URL = gate;
 }
 
 describe('introspectLease', () => {
@@ -114,9 +129,9 @@ describe('router: lease-token bearer handling', () => {
 
   test('jla_ header token with active introspection forwards to the DO stub', async () => {
     const testEnv = env as unknown as Env;
-    testEnv.GATE = fakeGate(200, {
+    installGate(testEnv, fakeGate(200, {
       active: true, lease_id: 'l3', door_name: 'door:z', scope: 'full-house', principal: 'store',
-    });
+    }));
     testEnv.INTROSPECT_SECRET = 'test-secret';
 
     let stubFetchCalled = false;
@@ -143,7 +158,7 @@ describe('router: lease-token bearer handling', () => {
 
   test('jla_ header token with inactive introspection → 401', async () => {
     const testEnv = env as unknown as Env;
-    testEnv.GATE = fakeGate(200, { active: false });
+    installGate(testEnv, fakeGate(200, { active: false }));
     testEnv.INTROSPECT_SECRET = 'test-secret';
 
     const res = await worker.fetch(
@@ -157,7 +172,7 @@ describe('router: lease-token bearer handling', () => {
 
   test('jla_ header token, gate unreachable → 503 (fails closed, never forwarded)', async () => {
     const testEnv = env as unknown as Env;
-    testEnv.GATE = { fetch: async () => { throw new Error('connect timeout'); } };
+    installGate(testEnv, { fetch: async () => { throw new Error('connect timeout'); } });
     testEnv.INTROSPECT_SECRET = 'test-secret';
 
     const res = await worker.fetch(
@@ -205,7 +220,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken: 'jla_fresh1', verifiedAt: Date.now() });
-      (instance as unknown as { env: Env }).env.GATE = { fetch: async () => { throw new Error('should not be called'); } };
+      installGate((instance as unknown as { env: Env }).env, { fetch: async () => { throw new Error('should not be called'); } });
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
       // The fake GATE always rejects — a re-introspect attempt would reject
@@ -220,7 +235,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken: 'jla_stale1', verifiedAt: Date.now() - 400_000 });
-      (instance as unknown as { env: Env }).env.GATE = fakeGate(200, { active: false });
+      installGate((instance as unknown as { env: Env }).env, fakeGate(200, { active: false }));
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
       await instance.webSocketMessage(server, 'ping');
@@ -232,7 +247,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken: 'jla_stale2', verifiedAt: Date.now() - 400_000 });
-      (instance as unknown as { env: Env }).env.GATE = { fetch: async () => { throw new Error('connect timeout'); } };
+      installGate((instance as unknown as { env: Env }).env, { fetch: async () => { throw new Error('connect timeout'); } });
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
       await instance.webSocketMessage(server, 'ping');
@@ -250,7 +265,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken, verifiedAt: Date.now() - 400_000 });
-      (instance as unknown as { env: Env }).env.GATE = fakeGate(503, 'gate down');
+      installGate((instance as unknown as { env: Env }).env, fakeGate(503, 'gate down'));
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
       await instance.webSocketMessage(server, 'ping');
@@ -263,7 +278,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken, verifiedAt: Date.now() - 400_000 });
-      (instance as unknown as { env: Env }).env.GATE = fakeGate(200, { active: true, lease_id: 'l6', door_name: 'door:recovered2', scope: 'full-house' });
+      installGate((instance as unknown as { env: Env }).env, fakeGate(200, { active: true, lease_id: 'l6', door_name: 'door:recovered2', scope: 'full-house' }));
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
       await instance.webSocketMessage(server, 'ping');
@@ -276,7 +291,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
       const { client, server } = acceptedSocket(instance);
       const staleAt = Date.now() - 400_000;
       server.serializeAttachment({ leaseToken: 'jla_stale3', verifiedAt: staleAt });
-      (instance as unknown as { env: Env }).env.GATE = fakeGate(200, { active: true, lease_id: 'l4', door_name: 'door:w', scope: 'full-house' });
+      installGate((instance as unknown as { env: Env }).env, fakeGate(200, { active: true, lease_id: 'l4', door_name: 'door:w', scope: 'full-house' }));
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
       await instance.webSocketMessage(server, 'ping');
