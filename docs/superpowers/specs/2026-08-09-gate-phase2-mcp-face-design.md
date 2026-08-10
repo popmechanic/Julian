@@ -1,7 +1,8 @@
 # Julian Gate Phase 2 — the MCP Face (design)
 
-**Date:** 2026-08-09 · **Status:** DRAFT rev 2 — revised after four-lens adversarial
-review; awaiting Marcus's spec-read before planning.
+**Date:** 2026-08-09 · **Status:** SUPERSEDED 2026-08-10 by
+`2026-08-10-plan-b-mcp-face-spec.md` (the buildable spec, authored against the merged
+2A/2B-pre ground); this document remains the reasoning record.
 **Prereqs:** gate v1 live (`2026-08-08-julian-gate-auth-design.md`, merged `d492992`,
 deployed & proven); CIMD probe complete (`2026-08-09-cimd-probe-protocol.md` — all three
 clients DCR, none CIMD).
