@@ -1,52 +1,69 @@
 // sync/test/lease-introspect.test.ts — julian-sync accepts lease tokens by
-// asking the gate (POST /introspect), never verifying them locally.
+// asking the gate (POST /introspect through the GATE service binding),
+// never verifying them locally, and never over a public URL (issue #28).
 //
 // Testing pattern (matches sync/test/export.test.ts and broker/test/routing.test.ts):
-// wrangler [vars] are resolved by workerd, so mutating the `cloudflare:test`
-// `env` facade does not propagate through `SELF`. Paths that never need
-// GATE_URL/INTROSPECT_SECRET (the query-string rejection) are proven through
-// `SELF`; paths that do are proven by invoking the worker's default handler
-// directly with the mutated env passed explicitly as the argument.
-import { afterEach, beforeAll, describe, expect, test } from 'vitest';
-import { env, fetchMock, runInDurableObject, SELF } from 'cloudflare:test';
+// wrangler [vars]/[[services]] are resolved by workerd, so mutating the
+// `cloudflare:test` `env` facade does not propagate through `SELF`. Paths
+// that never need GATE/INTROSPECT_SECRET (the query-string rejection) are
+// proven through `SELF`; paths that do are proven by invoking the worker's
+// default handler directly with the mutated env passed explicitly as the
+// argument.
+//
+// The router/DO integration blocks below inject a fake `GATE` fetcher into
+// env, matching the target `Env.GATE: GateFetcher` contract. Until the
+// sync-enforcement task (gate 2B-pre task 3) rewires `sync/src/index.ts` and
+// `sync/src/do.ts` to read `env.GATE` instead of the retired `env.GATE_URL`,
+// those two blocks fail in this file run alone — the production call sites
+// haven't switched over yet. They pass once that task lands on top of this
+// one, with no further changes needed here.
+import { describe, expect, test } from 'vitest';
+import { env, runInDurableObject, SELF } from 'cloudflare:test';
 import worker from '../src/index';
 import { introspectLease } from '../src/auth';
-import type { Env } from '../src/auth';
+import type { Env, GateFetcher } from '../src/auth';
 import type { JulianSyncDO } from '../src/do';
 
-const GATE = 'https://gate.test';
-
-beforeAll(() => { fetchMock.activate(); fetchMock.disableNetConnect(); });
-afterEach(() => fetchMock.assertNoPendingInterceptors());
+// A fake GATE binding: records requests, returns scripted responses. Every
+// test in this file injects one of these (or an ad hoc GateFetcher) rather
+// than intercepting a URL — introspection now goes through the service
+// binding, never a public host (issue #28).
+function fakeGate(status: number, body: unknown): GateFetcher & { calls: { url: string; init?: RequestInit }[] } {
+  const calls: { url: string; init?: RequestInit }[] = [];
+  return {
+    calls,
+    fetch: async (input: string | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.url;
+      calls.push({ url, init });
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    },
+  };
+}
 
 describe('introspectLease', () => {
-  test('sends the secret header and the token form-encoded', async () => {
-    fetchMock.get(GATE)
-      .intercept({
-        method: 'POST',
-        path: '/introspect',
-        headers: { 'x-introspect-secret': 'test-secret' },
-        body: 'token=jla_check1',
-      })
-      .reply(200, JSON.stringify({ active: true, lease_id: 'l1', door_name: 'door:x', scope: 'full-house' }),
-        { headers: { 'content-type': 'application/json' } });
+  test('introspects through the gate binding, not a public URL', async () => {
+    const gate = fakeGate(200, { active: true, lease_id: 'L1', door_name: 'door:x', scope: 'full-house', principal: 'julian' });
+    const result = await introspectLease('jla_binding1', gate, 'test-secret');
+    expect(result).toEqual({ active: true, leaseId: 'L1', doorName: 'door:x', scope: 'full-house', principal: 'julian' });
+    expect(gate.calls[0].url).toBe('https://gate/introspect');
+    expect(new Headers(gate.calls[0].init?.headers).get('X-Introspect-Secret')).toBe('test-secret');
+  });
 
-    const result = await introspectLease('jla_check1', GATE, 'test-secret');
-    expect(result).toEqual({ active: true, leaseId: 'l1', doorName: 'door:x', scope: 'full-house' });
+  test('a non-ok gate response throws (fail closed), never reads as revoked', async () => {
+    const gate = fakeGate(500, {});
+    await expect(introspectLease('jla_binding2', gate, 'test-secret')).rejects.toThrow('introspect: gate responded 500');
   });
 
   test('60s cache hit skips a second fetch for the same token', async () => {
-    // Only one interceptor is registered — if the cache didn't hold, the
-    // second call would have no matching mock and throw.
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .reply(200, JSON.stringify({ active: true, lease_id: 'l2', door_name: 'door:y', scope: 'full-house' }),
-        { headers: { 'content-type': 'application/json' } });
-
-    const first = await introspectLease('jla_cachehit', GATE, 'test-secret');
-    const second = await introspectLease('jla_cachehit', GATE, 'test-secret');
+    const gate = fakeGate(200, { active: true, lease_id: 'l2', door_name: 'door:y', scope: 'full-house' });
+    const first = await introspectLease('jla_cachehit', gate, 'test-secret');
+    const second = await introspectLease('jla_cachehit', gate, 'test-secret');
     expect(second).toEqual(first);
     expect(second).toEqual({ active: true, leaseId: 'l2', doorName: 'door:y', scope: 'full-house' });
+    expect(gate.calls).toHaveLength(1);
   });
 
   // A governor blip must not read as revocation — only a definitive 200 is
@@ -57,45 +74,34 @@ describe('introspectLease', () => {
   // and it is never cached — a transient blip must not keep refusing
   // reconnects for the next 60 seconds.
   test('401 (bad shared secret / config error) → throws, not cached', async () => {
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .reply(401, '');
-
-    await expect(introspectLease('jla_badsecret', GATE, 'wrong-secret')).rejects.toThrow();
+    const gate = fakeGate(401, '');
+    await expect(introspectLease('jla_badsecret', gate, 'wrong-secret')).rejects.toThrow();
   });
 
   test('5xx (gate down) → throws, not cached, and recovery within the 60s window works', async () => {
     const token = 'jla_recovers1';
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .reply(503, 'gate down');
-    await expect(introspectLease(token, GATE, 'test-secret')).rejects.toThrow();
+    const downGate = fakeGate(503, 'gate down');
+    await expect(introspectLease(token, downGate, 'test-secret')).rejects.toThrow();
 
     // If the failed attempt had been cached, this second call for the same
-    // token would have no matching interceptor and throw for the wrong
-    // reason (no mock) rather than succeeding.
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .reply(200, JSON.stringify({ active: true, lease_id: 'l5', door_name: 'door:recovered', scope: 'full-house' }),
-        { headers: { 'content-type': 'application/json' } });
-    expect(await introspectLease(token, GATE, 'test-secret'))
+    // token (against a fresh gate with no prior calls) would still need to
+    // hit the fetcher — confirming recovery isn't blocked by a stale cache.
+    const recoveredGate = fakeGate(200, { active: true, lease_id: 'l5', door_name: 'door:recovered', scope: 'full-house' });
+    expect(await introspectLease(token, recoveredGate, 'test-secret'))
       .toEqual({ active: true, leaseId: 'l5', doorName: 'door:recovered', scope: 'full-house' });
+    expect(recoveredGate.calls).toHaveLength(1);
   });
 
   test('active:false response → inactive, no lease fields', async () => {
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .reply(200, JSON.stringify({ active: false }), { headers: { 'content-type': 'application/json' } });
-
-    expect(await introspectLease('jla_unknown1', GATE, 'test-secret')).toEqual({ active: false });
+    const gate = fakeGate(200, { active: false });
+    expect(await introspectLease('jla_unknown1', gate, 'test-secret')).toEqual({ active: false });
   });
 
   test('gate unreachable (network error) propagates — caller decides fail-closed handling', async () => {
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .replyWithError(new Error('connect timeout'));
-
-    await expect(introspectLease('jla_unreachable1', GATE, 'test-secret')).rejects.toThrow();
+    const gate: GateFetcher = {
+      fetch: async () => { throw new Error('connect timeout'); },
+    };
+    await expect(introspectLease('jla_unreachable1', gate, 'test-secret')).rejects.toThrow();
   });
 });
 
@@ -108,15 +114,10 @@ describe('router: lease-token bearer handling', () => {
 
   test('jla_ header token with active introspection forwards to the DO stub', async () => {
     const testEnv = env as unknown as Env;
-    testEnv.GATE_URL = GATE;
+    testEnv.GATE = fakeGate(200, {
+      active: true, lease_id: 'l3', door_name: 'door:z', scope: 'full-house', principal: 'store',
+    });
     testEnv.INTROSPECT_SECRET = 'test-secret';
-
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .reply(200, JSON.stringify({
-        active: true, lease_id: 'l3', door_name: 'door:z', scope: 'full-house', principal: 'store',
-      }),
-        { headers: { 'content-type': 'application/json' } });
 
     let stubFetchCalled = false;
     const fakeStub = {
@@ -142,12 +143,8 @@ describe('router: lease-token bearer handling', () => {
 
   test('jla_ header token with inactive introspection → 401', async () => {
     const testEnv = env as unknown as Env;
-    testEnv.GATE_URL = GATE;
+    testEnv.GATE = fakeGate(200, { active: false });
     testEnv.INTROSPECT_SECRET = 'test-secret';
-
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .reply(200, JSON.stringify({ active: false }), { headers: { 'content-type': 'application/json' } });
 
     const res = await worker.fetch(
       new Request('https://sync.test/store/ctx', {
@@ -160,12 +157,8 @@ describe('router: lease-token bearer handling', () => {
 
   test('jla_ header token, gate unreachable → 503 (fails closed, never forwarded)', async () => {
     const testEnv = env as unknown as Env;
-    testEnv.GATE_URL = GATE;
+    testEnv.GATE = { fetch: async () => { throw new Error('connect timeout'); } };
     testEnv.INTROSPECT_SECRET = 'test-secret';
-
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .replyWithError(new Error('connect timeout'));
 
     const res = await worker.fetch(
       new Request('https://sync.test/store/ctx', {
@@ -212,26 +205,22 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken: 'jla_fresh1', verifiedAt: Date.now() });
-      (instance as unknown as { env: Env }).env.GATE_URL = GATE;
+      (instance as unknown as { env: Env }).env.GATE = { fetch: async () => { throw new Error('should not be called'); } };
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
-      // No fetchMock interceptor registered — a re-introspect attempt would
-      // reject and get caught internally, closing 4002. Asserting "not
-      // closed" therefore also proves no introspection was attempted.
+      // The fake GATE always rejects — a re-introspect attempt would reject
+      // and get caught internally, closing 4002. Asserting "not closed"
+      // therefore also proves no introspection was attempted.
       await instance.webSocketMessage(server, 'ping');
       expect(await waitForClose(client)).toBeNull();
     });
   });
 
   test('stale attachment (> 5 min) + inactive introspection → closes 4001 "lease revoked"', async () => {
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .reply(200, JSON.stringify({ active: false }), { headers: { 'content-type': 'application/json' } });
-
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken: 'jla_stale1', verifiedAt: Date.now() - 400_000 });
-      (instance as unknown as { env: Env }).env.GATE_URL = GATE;
+      (instance as unknown as { env: Env }).env.GATE = fakeGate(200, { active: false });
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
       await instance.webSocketMessage(server, 'ping');
@@ -240,14 +229,10 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
   });
 
   test('stale attachment + gate unreachable (network failure) → closes 4002 "introspection unavailable"', async () => {
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .replyWithError(new Error('connect timeout'));
-
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken: 'jla_stale2', verifiedAt: Date.now() - 400_000 });
-      (instance as unknown as { env: Env }).env.GATE_URL = GATE;
+      (instance as unknown as { env: Env }).env.GATE = { fetch: async () => { throw new Error('connect timeout'); } };
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
       await instance.webSocketMessage(server, 'ping');
@@ -261,14 +246,11 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
   // reconnect once the gate recovers isn't refused by a stale negative.
   test('stale attachment + gate 503 (HTTP error, not network failure) → closes 4002, never cached', async () => {
     const leaseToken = 'jla_stale_503';
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .reply(503, 'gate down');
 
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken, verifiedAt: Date.now() - 400_000 });
-      (instance as unknown as { env: Env }).env.GATE_URL = GATE;
+      (instance as unknown as { env: Env }).env.GATE = fakeGate(503, 'gate down');
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
       await instance.webSocketMessage(server, 'ping');
@@ -278,14 +260,10 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
     // Recovery: the gate comes back within the 60s window. Since the 503
     // was never cached, a fresh re-auth attempt for the same token succeeds
     // instead of being blocked by a stale "unavailable"/"inactive" verdict.
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .reply(200, JSON.stringify({ active: true, lease_id: 'l6', door_name: 'door:recovered2', scope: 'full-house' }),
-        { headers: { 'content-type': 'application/json' } });
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken, verifiedAt: Date.now() - 400_000 });
-      (instance as unknown as { env: Env }).env.GATE_URL = GATE;
+      (instance as unknown as { env: Env }).env.GATE = fakeGate(200, { active: true, lease_id: 'l6', door_name: 'door:recovered2', scope: 'full-house' });
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
       await instance.webSocketMessage(server, 'ping');
@@ -294,16 +272,11 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
   });
 
   test('stale attachment + active introspection refreshes verifiedAt and does not close', async () => {
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .reply(200, JSON.stringify({ active: true, lease_id: 'l4', door_name: 'door:w', scope: 'full-house' }),
-        { headers: { 'content-type': 'application/json' } });
-
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       const staleAt = Date.now() - 400_000;
       server.serializeAttachment({ leaseToken: 'jla_stale3', verifiedAt: staleAt });
-      (instance as unknown as { env: Env }).env.GATE_URL = GATE;
+      (instance as unknown as { env: Env }).env.GATE = fakeGate(200, { active: true, lease_id: 'l4', door_name: 'door:w', scope: 'full-house' });
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
       await instance.webSocketMessage(server, 'ping');
@@ -320,7 +293,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
       const { client, server } = acceptedSocket(instance);
       // No serializeAttachment call — a legacy-JWT socket never gets one.
 
-      // No fetchMock interceptor registered — proves no introspection happens.
+      // No GATE call is scripted to succeed — proves no introspection happens.
       await instance.webSocketMessage(server, 'ping');
       expect(await waitForClose(client)).toBeNull();
     });
