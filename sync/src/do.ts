@@ -229,22 +229,36 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
       // bug) is independently closed rather than trusted indefinitely. A
       // scope- or ownership-lost close is neither a revocation (4001) nor an
       // unavailable governor (4002) — it gets its own code.
-      const owner = (this.getPathId() ?? '').split('/')[0];
+      // Production sockets always carry [clientId, pathId] tags (tinybase's
+      // WsServerDurableObject tags them at accept in fetch(); webSocketClose
+      // reads both tags) — an owner-less socket means path identity is
+      // unavailable, and that must fail closed rather than let an absent
+      // owner accidentally equal an absent principal.
+      const pathId = this.getPathId();
+      const ownerAvailable = pathId !== undefined && pathId !== '';
+      const owner = ownerAvailable ? pathId.split('/')[0] : '';
       const scopeOk = introspection.scope === 'full-house';
-      const ownerOk = (introspection.principal ?? '') === owner;
+      const ownerOk = ownerAvailable && (introspection.principal ?? '') === owner;
       if (!scopeOk || !ownerOk) {
+        const detail = !scopeOk
+          ? `refused: scope ${introspection.scope} may not hold a socket`
+          : !ownerAvailable
+          ? 'refused: store identity unavailable for socket re-auth'
+          : `refused: principal ${introspection.principal} does not own ${owner}`;
+        const reason = !scopeOk
+          ? 'a sync socket requires full-house'
+          : !ownerAvailable
+          ? 'store identity unavailable'
+          : 'lease does not own this store';
         void this.env.GATE.fetch('https://gate/refusals', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Introspect-Secret': this.env.INTROSPECT_SECRET },
           body: JSON.stringify({
             lease_id: introspection.leaseId ?? '', door_name: introspection.doorName ?? '',
-            service: 'stream', verb: 'socket',
-            detail: scopeOk
-              ? `refused: principal ${introspection.principal} does not own ${owner}`
-              : `refused: scope ${introspection.scope} may not hold a socket`,
+            service: 'stream', verb: 'socket', detail,
           }),
         }).catch(() => undefined);
-        ws.close(4003, scopeOk ? 'lease does not own this store' : 'a sync socket requires full-house');
+        ws.close(4003, reason);
         return;
       }
       ws.serializeAttachment({ ...attachment, verifiedAt: Date.now() } satisfies LeaseAttachment);

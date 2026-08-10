@@ -187,10 +187,14 @@ describe('router: lease-token bearer handling', () => {
 // 'WebSocket'"). So these tests accept a real WebSocketPair through the DO's
 // own `ctx.acceptWebSocket`, exactly as `fetch()` does in production, rather
 // than faking the socket.
+// Production-shaped tags: WsServerDurableObject tags an accepted socket
+// [clientId, pathId] at fetch()-time (getPathId() reads tags[1]) — the DO's
+// ownership re-check (sync/src/do.ts) is fail-closed on an owner-less socket,
+// so these re-auth tests carry the same shape a real socket would.
 function acceptedSocket(instance: JulianSyncDO): { client: WebSocket; server: WebSocket } {
   const pair = new WebSocketPair();
   const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
-  (instance as unknown as { ctx: DurableObjectState }).ctx.acceptWebSocket(server, [`t-${crypto.randomUUID()}`]);
+  (instance as unknown as { ctx: DurableObjectState }).ctx.acceptWebSocket(server, [`t-${crypto.randomUUID()}`, 'julian/chat']);
   client.accept();
   return { client, server };
 }
@@ -273,7 +277,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken, verifiedAt: Date.now() - 400_000 });
-      installGate((instance as unknown as { env: Env }).env, fakeGate(200, { active: true, lease_id: 'l6', door_name: 'door:recovered2', scope: 'full-house' }));
+      installGate((instance as unknown as { env: Env }).env, fakeGate(200, { active: true, lease_id: 'l6', door_name: 'door:recovered2', scope: 'full-house', principal: 'julian' }));
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
       await instance.webSocketMessage(server, 'ping');
@@ -286,7 +290,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
       const { client, server } = acceptedSocket(instance);
       const staleAt = Date.now() - 400_000;
       server.serializeAttachment({ leaseToken: 'jla_stale3', verifiedAt: staleAt });
-      installGate((instance as unknown as { env: Env }).env, fakeGate(200, { active: true, lease_id: 'l4', door_name: 'door:w', scope: 'full-house' }));
+      installGate((instance as unknown as { env: Env }).env, fakeGate(200, { active: true, lease_id: 'l4', door_name: 'door:w', scope: 'full-house', principal: 'julian' }));
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
       await instance.webSocketMessage(server, 'ping');

@@ -11,17 +11,45 @@
 // binding), a fake `GateFetcher` injected as the DO's GATE service binding —
 // introspection never rides a public URL (issue #28) — and a stale
 // (> REAUTH_INTERVAL_MS) verifiedAt to force the re-introspection path.
+//
+// Sockets are tagged production-shaped: WsServerDurableObject tags an
+// accepted socket [clientId, pathId] at fetch()-time (getPathId() reads
+// tags[1]); the DO's ownership re-check reads that pathId's first segment
+// as the owning principal. A socket with no second tag has no path
+// identity — the ownership re-check must fail closed rather than let an
+// absent owner accidentally equal an absent principal.
 import { describe, expect, test } from 'vitest';
 import { env, runInDurableObject } from 'cloudflare:test';
 import type { Env, GateFetcher } from '../src/auth';
 import type { JulianSyncDO } from '../src/do';
 
-/** A fake GATE binding returning one scripted introspection body. */
-function fakeGate(body: unknown): GateFetcher {
+const DEFAULT_PATH_ID = 'julian/chat';
+
+interface RefusalReport {
+  url: string;
+  headers: Record<string, string>;
+  body: { lease_id: string; door_name: string; service: string; verb: string; detail: string };
+}
+
+/** A fake GATE binding: scripts /introspect and records every /refusals POST. */
+function fakeGate(introspectionBody: unknown): GateFetcher & { refusals: RefusalReport[] } {
+  const refusals: RefusalReport[] = [];
   return {
-    fetch: async () => new Response(JSON.stringify(body), {
-      status: 200, headers: { 'Content-Type': 'application/json' },
-    }),
+    refusals,
+    fetch: async (input: string | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (new URL(url).pathname === '/refusals') {
+        refusals.push({
+          url,
+          headers: Object.fromEntries(new Headers(init?.headers).entries()),
+          body: JSON.parse(String(init?.body)),
+        });
+        return new Response(JSON.stringify({ recorded: true }), { status: 200 });
+      }
+      return new Response(JSON.stringify(introspectionBody), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    },
   };
 }
 
@@ -40,10 +68,14 @@ function stub() {
   return env.JULIAN_SYNC.get(env.JULIAN_SYNC.idFromName(`test/do-scope-${crypto.randomUUID().slice(0, 8)}`));
 }
 
-function acceptedSocket(instance: JulianSyncDO): { client: WebSocket; server: WebSocket } {
+// pathId `null` accepts a socket with only the clientId tag — no path
+// identity, matching a socket that predates production tagging or a bug
+// upstream of this DO.
+function acceptedSocket(instance: JulianSyncDO, pathId: string | null = DEFAULT_PATH_ID): { client: WebSocket; server: WebSocket } {
   const pair = new WebSocketPair();
   const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
-  (instance as unknown as { ctx: DurableObjectState }).ctx.acceptWebSocket(server, [`t-${crypto.randomUUID()}`]);
+  const tags = pathId === null ? [`t-${crypto.randomUUID()}`] : [`t-${crypto.randomUUID()}`, pathId];
+  (instance as unknown as { ctx: DurableObjectState }).ctx.acceptWebSocket(server, tags);
   client.accept();
   return { client, server };
 }
@@ -64,43 +96,73 @@ describe('JulianSyncDO webSocketMessage: scope + ownership re-check on traffic-d
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken: 'jla_scopedrop1', verifiedAt: Date.now() - 400_000 });
-      installGate(instance, fakeGate({ active: true, lease_id: 'l1', door_name: 'door:reader', scope: 'reading-room' }));
+      installGate(instance, fakeGate({ active: true, lease_id: 'l1', door_name: 'door:reader', scope: 'reading-room', principal: 'julian' }));
 
       await instance.webSocketMessage(server, 'ping');
       expect(await waitForClose(client)).toEqual({ code: 4003, reason: 'a sync socket requires full-house' });
     });
   });
 
-  test('closes a socket whose lease is no longer full-house — stream-read mid-socket is 4003', async () => {
+  test('closes a socket whose lease is no longer full-house — stream-read mid-socket is 4003, and reports the refusal', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken: 'jla_streamread1', verifiedAt: Date.now() - 400_000 });
-      installGate(instance, fakeGate({ active: true, lease_id: 'l2', door_name: 'door:reader2', scope: 'stream-read' }));
+      const gate = fakeGate({ active: true, lease_id: 'l2', door_name: 'door:reader2', scope: 'stream-read', principal: 'julian' });
+      installGate(instance, gate);
 
       await instance.webSocketMessage(server, 'ping');
       expect(await waitForClose(client)).toEqual({ code: 4003, reason: 'a sync socket requires full-house' });
+
+      expect(gate.refusals).toHaveLength(1);
+      expect(new URL(gate.refusals[0].url).pathname).toBe('/refusals');
+      expect(gate.refusals[0].headers['x-introspect-secret']).toBe('test-secret');
+      expect(gate.refusals[0].body).toMatchObject({ lease_id: 'l2', door_name: 'door:reader2', service: 'stream', verb: 'socket' });
+      expect(gate.refusals[0].body.detail.length).toBeGreaterThan(0);
     });
   });
 
-  test('closes a socket whose principal no longer owns the store', async () => {
+  test('a full-house lease with the owning principal on a julian/chat-tagged socket stays OPEN across the re-auth window', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
-      const { client, server } = acceptedSocket(instance);
-      server.serializeAttachment({ leaseToken: 'jla_ownerdrop1', verifiedAt: Date.now() - 400_000 });
-      installGate(instance, fakeGate({ active: true, lease_id: 'l4', door_name: 'door:reader4', scope: 'full-house', principal: 'guest-ada' }));
-
-      await instance.webSocketMessage(server, 'ping');
-      expect(await waitForClose(client)).toEqual({ code: 4003, reason: 'lease does not own this store' });
-    });
-  });
-
-  test('full-house scope refreshes verifiedAt and does not close', async () => {
-    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
-      const { client, server } = acceptedSocket(instance);
+      const { client, server } = acceptedSocket(instance, 'julian/chat');
       server.serializeAttachment({ leaseToken: 'jla_fullhouse1', verifiedAt: Date.now() - 400_000 });
-      installGate(instance, fakeGate({ active: true, lease_id: 'l3', door_name: 'door:homeowner', scope: 'full-house' }));
+      installGate(instance, fakeGate({ active: true, lease_id: 'l3', door_name: 'door:homeowner', scope: 'full-house', principal: 'julian' }));
 
       await instance.webSocketMessage(server, 'ping');
       expect(await waitForClose(client)).toBeNull();
+    });
+  });
+
+  test('a full-house lease whose principal no longer owns the store closes 4003 and reports the refusal', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { client, server } = acceptedSocket(instance, 'julian/chat');
+      server.serializeAttachment({ leaseToken: 'jla_ownerdrop1', verifiedAt: Date.now() - 400_000 });
+      const gate = fakeGate({ active: true, lease_id: 'l4', door_name: 'door:reader4', scope: 'full-house', principal: 'guest-ada' });
+      installGate(instance, gate);
+
+      await instance.webSocketMessage(server, 'ping');
+      expect(await waitForClose(client)).toEqual({ code: 4003, reason: 'lease does not own this store' });
+
+      expect(gate.refusals).toHaveLength(1);
+      expect(new URL(gate.refusals[0].url).pathname).toBe('/refusals');
+      expect(gate.refusals[0].headers['x-introspect-secret']).toBe('test-secret');
+      expect(gate.refusals[0].body).toMatchObject({ lease_id: 'l4', door_name: 'door:reader4', service: 'stream', verb: 'socket' });
+      expect(gate.refusals[0].body.detail.length).toBeGreaterThan(0);
+    });
+  });
+
+  test('a socket with no path identity (single tag) closes 4003, fail-closed', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { client, server } = acceptedSocket(instance, null);
+      server.serializeAttachment({ leaseToken: 'jla_nopathid1', verifiedAt: Date.now() - 400_000 });
+      const gate = fakeGate({ active: true, lease_id: 'l5', door_name: 'door:nopath', scope: 'full-house', principal: 'julian' });
+      installGate(instance, gate);
+
+      await instance.webSocketMessage(server, 'ping');
+      expect(await waitForClose(client)).toEqual({ code: 4003, reason: 'store identity unavailable' });
+
+      expect(gate.refusals).toHaveLength(1);
+      expect(gate.refusals[0].body).toMatchObject({ lease_id: 'l5', door_name: 'door:nopath', service: 'stream', verb: 'socket' });
+      expect(gate.refusals[0].body.detail.length).toBeGreaterThan(0);
     });
   });
 
