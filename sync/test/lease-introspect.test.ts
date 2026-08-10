@@ -11,10 +11,8 @@
 // argument.
 //
 // The router/DO integration blocks below inject their fake gate through
-// `installGate`, which writes the same fetcher under both the new `GATE`
-// binding name and the retiring `GATE_URL` name — see the note on that
-// helper. That keeps this file green on both sides of the sync-enforcement
-// task that rewires `sync/src/index.ts` and `sync/src/do.ts`.
+// `installGate`, which writes it under the `GATE` binding name that
+// `sync/src/index.ts` and `sync/src/do.ts` now read.
 import { describe, expect, test } from 'vitest';
 import { env, runInDurableObject, SELF } from 'cloudflare:test';
 import worker from '../src/index';
@@ -41,21 +39,10 @@ function fakeGate(status: number, body: unknown): GateFetcher & { calls: { url: 
   };
 }
 
-// Transitional gate injection for the integration blocks below.
-//
-// This task retires `Env.GATE_URL` in favour of the `GATE` service binding,
-// but the two production call sites that read it — `sync/src/index.ts` and
-// `sync/src/do.ts` — are owned by the sync-enforcement task and still say
-// `introspectLease(token, env.GATE_URL, …)` until that task lands. Writing the
-// same fetcher under both names hands a working `GateFetcher` to whichever
-// name the code under test currently reads, so these tests exercise the real
-// production path either way and never depend on which task merged first.
-// Once the enforcement task lands, the `GATE_URL` half is inert and the helper
-// can collapse to a single assignment.
+// Gate injection for the integration blocks below: the fake fetcher stands in
+// for the `GATE` service binding that the router and the DO both read.
 function installGate(target: unknown, gate: GateFetcher): void {
-  const holder = target as { GATE: GateFetcher; GATE_URL?: GateFetcher };
-  holder.GATE = gate;
-  holder.GATE_URL = gate;
+  (target as { GATE: GateFetcher }).GATE = gate;
 }
 
 describe('introspectLease', () => {

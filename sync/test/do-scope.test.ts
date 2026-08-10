@@ -8,17 +8,33 @@
 // webSocketMessage: traffic-driven re-auth" describe block: a real
 // WebSocketPair accepted through the DO's own ctx.acceptWebSocket (a
 // duck-typed plain object fails super.webSocketMessage's ctx.getTags native
-// binding), fetchMock for the gate's /introspect, and a stale
+// binding), a fake `GateFetcher` injected as the DO's GATE service binding —
+// introspection never rides a public URL (issue #28) — and a stale
 // (> REAUTH_INTERVAL_MS) verifiedAt to force the re-introspection path.
-import { afterEach, beforeAll, describe, expect, test } from 'vitest';
-import { env, fetchMock, runInDurableObject } from 'cloudflare:test';
-import type { Env } from '../src/auth';
+import { describe, expect, test } from 'vitest';
+import { env, runInDurableObject } from 'cloudflare:test';
+import type { Env, GateFetcher } from '../src/auth';
 import type { JulianSyncDO } from '../src/do';
 
-const GATE = 'https://gate.test';
+/** A fake GATE binding returning one scripted introspection body. */
+function fakeGate(body: unknown): GateFetcher {
+  return {
+    fetch: async () => new Response(JSON.stringify(body), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    }),
+  };
+}
 
-beforeAll(() => { fetchMock.activate(); fetchMock.disableNetConnect(); });
-afterEach(() => fetchMock.assertNoPendingInterceptors());
+/** A fake GATE binding that never answers — the gate-unreachable case. */
+function unreachableGate(): GateFetcher {
+  return { fetch: async () => { throw new Error('connect timeout'); } };
+}
+
+function installGate(instance: JulianSyncDO, gate: GateFetcher): void {
+  const e = (instance as unknown as { env: Env }).env;
+  e.GATE = gate;
+  e.INTROSPECT_SECRET = 'test-secret';
+}
 
 function stub() {
   return env.JULIAN_SYNC.get(env.JULIAN_SYNC.idFromName(`test/do-scope-${crypto.randomUUID().slice(0, 8)}`));
@@ -45,16 +61,10 @@ function waitForClose(client: WebSocket, timeoutMs = 200): Promise<{ code: numbe
 
 describe('JulianSyncDO webSocketMessage: scope re-check on traffic-driven re-auth', () => {
   test('closes a socket whose lease scope is no longer stream-capable (reading-room)', async () => {
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .reply(200, JSON.stringify({ active: true, lease_id: 'l1', door_name: 'door:reader', scope: 'reading-room' }),
-        { headers: { 'content-type': 'application/json' } });
-
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken: 'jla_scopedrop1', verifiedAt: Date.now() - 400_000 });
-      (instance as unknown as { env: Env }).env.GATE_URL = GATE;
-      (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
+      installGate(instance, fakeGate({ active: true, lease_id: 'l1', door_name: 'door:reader', scope: 'reading-room' }));
 
       await instance.webSocketMessage(server, 'ping');
       expect(await waitForClose(client)).toEqual({ code: 4003, reason: 'lease scope may not read the stream' });
@@ -62,17 +72,11 @@ describe('JulianSyncDO webSocketMessage: scope re-check on traffic-driven re-aut
   });
 
   test('stream-read scope refreshes verifiedAt and does not close', async () => {
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .reply(200, JSON.stringify({ active: true, lease_id: 'l2', door_name: 'door:reader2', scope: 'stream-read' }),
-        { headers: { 'content-type': 'application/json' } });
-
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       const staleAt = Date.now() - 400_000;
       server.serializeAttachment({ leaseToken: 'jla_streamread1', verifiedAt: staleAt });
-      (instance as unknown as { env: Env }).env.GATE_URL = GATE;
-      (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
+      installGate(instance, fakeGate({ active: true, lease_id: 'l2', door_name: 'door:reader2', scope: 'stream-read' }));
 
       await instance.webSocketMessage(server, 'ping');
       expect(await waitForClose(client)).toBeNull();
@@ -83,16 +87,10 @@ describe('JulianSyncDO webSocketMessage: scope re-check on traffic-driven re-aut
   });
 
   test('full-house scope refreshes verifiedAt and does not close', async () => {
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .reply(200, JSON.stringify({ active: true, lease_id: 'l3', door_name: 'door:homeowner', scope: 'full-house' }),
-        { headers: { 'content-type': 'application/json' } });
-
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken: 'jla_fullhouse1', verifiedAt: Date.now() - 400_000 });
-      (instance as unknown as { env: Env }).env.GATE_URL = GATE;
-      (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
+      installGate(instance, fakeGate({ active: true, lease_id: 'l3', door_name: 'door:homeowner', scope: 'full-house' }));
 
       await instance.webSocketMessage(server, 'ping');
       expect(await waitForClose(client)).toBeNull();
@@ -100,15 +98,10 @@ describe('JulianSyncDO webSocketMessage: scope re-check on traffic-driven re-aut
   });
 
   test('the revoked (4001) check still takes priority over the scope check', async () => {
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .reply(200, JSON.stringify({ active: false }), { headers: { 'content-type': 'application/json' } });
-
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken: 'jla_revoked_scope', verifiedAt: Date.now() - 400_000 });
-      (instance as unknown as { env: Env }).env.GATE_URL = GATE;
-      (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
+      installGate(instance, fakeGate({ active: false }));
 
       await instance.webSocketMessage(server, 'ping');
       expect(await waitForClose(client)).toEqual({ code: 4001, reason: 'lease revoked' });
@@ -116,15 +109,10 @@ describe('JulianSyncDO webSocketMessage: scope re-check on traffic-driven re-aut
   });
 
   test('an unreachable gate still closes 4002, never 4003, on a scope-only failure', async () => {
-    fetchMock.get(GATE)
-      .intercept({ method: 'POST', path: '/introspect' })
-      .replyWithError(new Error('connect timeout'));
-
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken: 'jla_unreachable_scope', verifiedAt: Date.now() - 400_000 });
-      (instance as unknown as { env: Env }).env.GATE_URL = GATE;
-      (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
+      installGate(instance, unreachableGate());
 
       await instance.webSocketMessage(server, 'ping');
       expect(await waitForClose(client)).toEqual({ code: 4002, reason: 'introspection unavailable' });
@@ -135,12 +123,11 @@ describe('JulianSyncDO webSocketMessage: scope re-check on traffic-driven re-aut
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       // A reading-room-scoped lease that is still fresh must not be closed —
-      // no fetchMock interceptor is registered, so any introspection attempt
-      // would reject and get caught, closing 4002; "not closed" also proves
-      // no re-introspection (and thus no scope re-check) was attempted.
+      // the injected gate always rejects, so any introspection attempt would
+      // be caught and close 4002; "not closed" also proves no
+      // re-introspection (and thus no scope re-check) was attempted.
       server.serializeAttachment({ leaseToken: 'jla_fresh_scope', verifiedAt: Date.now() });
-      (instance as unknown as { env: Env }).env.GATE_URL = GATE;
-      (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
+      installGate(instance, { fetch: async () => { throw new Error('should not be called'); } });
 
       await instance.webSocketMessage(server, 'ping');
       expect(await waitForClose(client)).toBeNull();

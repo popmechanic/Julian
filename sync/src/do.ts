@@ -213,7 +213,8 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
     if (attachment && Date.now() - attachment.verifiedAt > REAUTH_INTERVAL_MS) {
       let introspection;
       try {
-        introspection = await introspectLease(attachment.leaseToken, this.env.GATE_URL, this.env.INTROSPECT_SECRET);
+        // Through the GATE service binding, never a public URL (issue #28).
+        introspection = await introspectLease(attachment.leaseToken, this.env.GATE, this.env.INTROSPECT_SECRET);
       } catch {
         ws.close(4002, 'introspection unavailable');
         return;

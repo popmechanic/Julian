@@ -42,7 +42,8 @@ export default {
     if (headerToken?.startsWith('jla_')) {
       let introspection;
       try {
-        introspection = await introspectLease(headerToken, env.GATE_URL, env.INTROSPECT_SECRET);
+        // Through the GATE service binding, never a public URL (issue #28).
+        introspection = await introspectLease(headerToken, env.GATE, env.INTROSPECT_SECRET);
       } catch {
         // Gate unreachable: fail closed, same as an open re-auth would.
         return new Response('introspection unavailable', { status: 503 });
