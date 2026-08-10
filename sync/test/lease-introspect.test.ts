@@ -13,12 +13,17 @@
 // The router/DO integration blocks below inject their fake gate through
 // `installGate`, which writes it under the `GATE` binding name that
 // `sync/src/index.ts` and `sync/src/do.ts` now read.
-import { describe, expect, test, beforeAll, afterEach } from 'vitest';
+import { describe, expect, test, beforeAll } from 'vitest';
 import { env, runInDurableObject, SELF, fetchMock } from 'cloudflare:test';
 import worker from '../src/index';
 import { introspectLease } from '../src/auth';
 import type { Env, GateFetcher } from '../src/auth';
 import type { JulianSyncDO } from '../src/do';
+
+beforeAll(() => {
+  fetchMock.activate();
+  fetchMock.disableNetConnect();
+});
 
 // A fake GATE binding: records requests, returns scripted responses. Every
 // test in this file injects one of these (or an ad hoc GateFetcher) rather
@@ -46,10 +51,6 @@ function installGate(target: unknown, gate: GateFetcher): void {
 }
 
 describe('introspectLease', () => {
-  beforeAll(() => {
-    fetchMock.activate();
-    fetchMock.disableNetConnect();
-  });
 
   test('introspects through the gate binding, not a public URL', async () => {
     const gate = fakeGate(200, { active: true, lease_id: 'L1', door_name: 'door:x', scope: 'full-house', principal: 'julian' });
