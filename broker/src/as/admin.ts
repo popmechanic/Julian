@@ -65,6 +65,35 @@ async function introspect(req: Request, env: Env, gov: DurableObjectStub<Governo
   });
 }
 
+/** Sync-side refusals arrive here; the row is the same denied pen the broker's
+ *  own verb path uses (reserveLease with zero caps): one disallowed entry, no
+ *  quota spent. Guarded by the machine credential, like /introspect. */
+async function recordRefusal(req: Request, env: Env, gov: DurableObjectStub<GovernorDO>): Promise<Response> {
+  const presented = req.headers.get('X-Introspect-Secret') ?? '';
+  if (!env.INTROSPECT_SECRET || !timingSafeEqual(presented, env.INTROSPECT_SECRET)) {
+    return json({ error: 'no machine credential' }, 401);
+  }
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: 'body must be JSON' }, 400);
+  }
+  const b = body as Record<string, unknown>;
+  const fields = ['lease_id', 'door_name', 'service', 'verb', 'detail'] as const;
+  if (!fields.every((f) => typeof b[f] === 'string' && (b[f] as string).length > 0)) {
+    return json({ error: 'lease_id, door_name, service, verb, detail — all required strings' }, 400);
+  }
+  try {
+    await gov.reserveLease(
+      b.lease_id as string, b.door_name as string, b.service as string, b.verb as string, b.detail as string, 0, 0,
+    );
+  } catch {
+    return json({ error: GOVERNOR_DOWN }, 503);
+  }
+  return json({ recorded: true });
+}
+
 async function listLeases(gov: DurableObjectStub<GovernorDO>): Promise<Response> {
   let leases: LeaseSummary[];
   try {
@@ -132,6 +161,11 @@ export async function handleAdmin(
   if (path === '/introspect') {
     if (req.method !== 'POST') return json({ error: 'introspection is a POST' }, 405);
     return introspect(req, env, gov);
+  }
+
+  if (path === '/refusals') {
+    if (req.method !== 'POST') return json({ error: 'refusals are POSTed' }, 405);
+    return recordRefusal(req, env, gov);
   }
 
   if (path === '/leases' || path === '/leases/revoke' || path === '/leases/export' || path === '/ledger') {

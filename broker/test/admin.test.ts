@@ -28,10 +28,15 @@ interface Script {
 interface Calls {
   validateAccess: string[];
   leaseRevoke: Array<[string, string]>;
+  reserveLease: Array<[string, string, string, string, string, number | null, number | null]>;
 }
 
 function gateEnv(script: Script = {}, overrides: Partial<Env> = {}): { env: Env; calls: Calls } {
-  const calls: Calls = { validateAccess: [], leaseRevoke: [] };
+  const calls: Calls = { validateAccess: [], leaseRevoke: [], reserveLease: [] };
+  // Recorded by the fake reserveLease below, read back by the fake entries()
+  // unless a test scripts its own — mirrors the real governor's denied pen
+  // (reserveLease with zero caps writes one disallowed row).
+  const ledgerRows: Array<{ ts: number; sub: string; service: string; verb: string; detail: string; allowed: number }> = [];
   const stub = {
     async validateAccess(token: string): Promise<LeaseIdentity | null> {
       calls.validateAccess.push(token);
@@ -52,10 +57,20 @@ function gateEnv(script: Script = {}, overrides: Partial<Env> = {}): { env: Env;
       return script.leaseExport ? script.leaseExport() : { leases: [], tokens: [], knocks: [] };
     },
     async legacyAllowed(): Promise<boolean> { return false; },
-    async reserveLease(): Promise<never> { throw new Error('not used by admin tests'); },
+    async reserveLease(
+      leaseId: string, doorName: string, service: string, verb: string, detail: string,
+      capPerDay: number | null, leaseCap: number | null,
+    ): Promise<{ ok: boolean; count: number; cap: number | null }> {
+      calls.reserveLease.push([leaseId, doorName, service, verb, detail, capPerDay, leaseCap]);
+      if (script.governorDown) throw new Error('governor down');
+      ledgerRows.push({
+        ts: Date.now(), sub: `lease:${leaseId}`, service, verb, detail, allowed: 0,
+      });
+      return { ok: false, count: 0, cap: leaseCap };
+    },
     async entries(limit = 50): Promise<unknown[]> {
       if (script.governorDown) throw new Error('governor down');
-      return script.entries ? script.entries(limit) : [];
+      return script.entries ? script.entries(limit) : ledgerRows.slice(0, limit);
     },
     async knockCreate(): Promise<never> { throw new Error('not used by admin tests'); },
     async knockByUserCode(): Promise<null> { return null; },
@@ -333,6 +348,74 @@ describe('GET /ledger', () => {
     );
     expect(res.status).toBe(200);
     expect(calledLimit).toBe(5);
+  });
+});
+
+describe('POST /refusals (sync-side refusal ledger)', () => {
+  function refusalReq(body: unknown, secret?: string): Request {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (secret !== undefined) headers['X-Introspect-Secret'] = secret;
+    return new Request(`${BASE}/refusals`, { method: 'POST', headers, body: JSON.stringify(body) });
+  }
+
+  const goodBody = {
+    lease_id: 'L1', door_name: 'door:x', service: 'stream', verb: 'socket',
+    detail: 'refused: scope stream-read may not hold a socket',
+  };
+
+  test('without the introspect secret is refused 401', async () => {
+    const { env } = gateEnv();
+    const res = await worker.fetch(refusalReq(goodBody), env);
+    expect(res.status).toBe(401);
+  });
+
+  test('with a wrong secret is refused 401', async () => {
+    const { env } = gateEnv();
+    const res = await worker.fetch(refusalReq(goodBody, 'wrong'), env);
+    expect(res.status).toBe(401);
+  });
+
+  test('records a disallowed ledger row and returns 200', async () => {
+    const { env, calls } = gateEnv();
+    const res = await worker.fetch(refusalReq(goodBody, INTROSPECT_SECRET), env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ recorded: true });
+    expect(calls.reserveLease).toEqual([['L1', 'door:x', 'stream', 'socket', goodBody.detail, 0, 0]]);
+
+    const ledger = await worker.fetch(
+      new Request(`${BASE}/ledger?limit=5`, { headers: { 'X-Breakglass-Secret': BREAKGLASS_SECRET } }), env,
+    );
+    const { entries } = await ledger.json() as { entries: Array<{ sub: string; verb: string; service: string; allowed: number }> };
+    const row = entries.find((e) => e.sub === 'lease:L1' && e.verb === 'socket');
+    expect(row?.allowed).toBe(0);
+    expect(row?.service).toBe('stream');
+  });
+
+  test('malformed body is 400, nothing ledgered', async () => {
+    const { env, calls } = gateEnv();
+    const res = await worker.fetch(refusalReq({ lease_id: 42 }, INTROSPECT_SECRET), env);
+    expect(res.status).toBe(400);
+    expect(calls.reserveLease).toEqual([]);
+  });
+
+  test('missing field is 400, nothing ledgered', async () => {
+    const { env, calls } = gateEnv();
+    const { detail: _detail, ...missingDetail } = goodBody;
+    const res = await worker.fetch(refusalReq(missingDetail, INTROSPECT_SECRET), env);
+    expect(res.status).toBe(400);
+    expect(calls.reserveLease).toEqual([]);
+  });
+
+  test('wrong method → 405', async () => {
+    const { env } = gateEnv();
+    const res = await worker.fetch(new Request(`${BASE}/refusals`, { method: 'GET' }), env);
+    expect(res.status).toBe(405);
+  });
+
+  test('governor unreachable → 503, fail closed', async () => {
+    const { env } = gateEnv({ governorDown: true });
+    const res = await worker.fetch(refusalReq(goodBody, INTROSPECT_SECRET), env);
+    expect(res.status).toBe(503);
   });
 });
 
