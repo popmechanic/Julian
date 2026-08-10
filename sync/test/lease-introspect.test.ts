@@ -13,8 +13,8 @@
 // The router/DO integration blocks below inject their fake gate through
 // `installGate`, which writes it under the `GATE` binding name that
 // `sync/src/index.ts` and `sync/src/do.ts` now read.
-import { describe, expect, test } from 'vitest';
-import { env, runInDurableObject, SELF } from 'cloudflare:test';
+import { describe, expect, test, beforeAll, afterEach } from 'vitest';
+import { env, runInDurableObject, SELF, fetchMock } from 'cloudflare:test';
 import worker from '../src/index';
 import { introspectLease } from '../src/auth';
 import type { Env, GateFetcher } from '../src/auth';
@@ -46,12 +46,19 @@ function installGate(target: unknown, gate: GateFetcher): void {
 }
 
 describe('introspectLease', () => {
+  beforeAll(() => {
+    fetchMock.activate();
+    fetchMock.disableNetConnect();
+  });
+
   test('introspects through the gate binding, not a public URL', async () => {
     const gate = fakeGate(200, { active: true, lease_id: 'L1', door_name: 'door:x', scope: 'full-house', principal: 'julian' });
     const result = await introspectLease('jla_binding1', gate, 'test-secret');
     expect(result).toEqual({ active: true, leaseId: 'L1', doorName: 'door:x', scope: 'full-house', principal: 'julian' });
     expect(gate.calls[0].url).toBe('https://gate/introspect');
     expect(new Headers(gate.calls[0].init?.headers).get('X-Introspect-Secret')).toBe('test-secret');
+    expect(gate.calls[0].init?.method).toBe('POST');
+    expect(String(gate.calls[0].init?.body)).toBe('token=jla_binding1');
   });
 
   test('a non-ok gate response throws (fail closed), never reads as revoked', async () => {
