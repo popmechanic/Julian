@@ -20,7 +20,7 @@ export interface Env {
   OIDC_JWKS_URL: string;
   OIDC_JWKS_JSON?: string; // test seam: inline JWKS instead of remote fetch
   OIDC_AUDIENCE?: string;  // when set, tokens must carry this aud
-  GATE_URL: string;
+  GATE: GateFetcher;
   INTROSPECT_SECRET: string;
 }
 
@@ -44,6 +44,11 @@ export interface LeaseIntrospection {
   doorName?: string;
   scope?: string;
   principal?: string;
+}
+
+/** Structural type of a Cloudflare service binding (Fetcher). Tests inject fakes. */
+export interface GateFetcher {
+  fetch(input: string | Request, init?: RequestInit): Promise<Response>;
 }
 
 interface IntrospectCacheEntry {
@@ -77,7 +82,7 @@ async function sha256Hex(input: string): Promise<string> {
 // window even after the gate recovers.
 export async function introspectLease(
   token: string,
-  gateUrl: string,
+  gate: GateFetcher,
   secret: string,
 ): Promise<LeaseIntrospection> {
   const key = await sha256Hex(token);
@@ -85,7 +90,11 @@ export async function introspectLease(
   const cached = introspectCache.get(key);
   if (cached && cached.expiresAt > now) return cached.result;
 
-  const res = await fetch(`${gateUrl}/introspect`, {
+  // The URL's host is ignored by a service binding — https://gate/ is a
+  // conventional placeholder. Only the path matters. (Sync→gate traffic goes
+  // through the GATE binding, never a public URL — same-account workers.dev
+  // fetches do not route, issue #28.)
+  const res = await gate.fetch('https://gate/introspect', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
