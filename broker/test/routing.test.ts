@@ -63,6 +63,16 @@ describe('default-deny', () => {
     const res = await worker.fetch(authed(token, '/ledger'), testEnv);
     expect(res.status).toBe(401); // a lease token is not an approver credential
   });
+
+  test('/refusals is introspect-secret territory, not a lease verb', async () => {
+    const { token, testEnv } = await authedEnv();
+    const res = await worker.fetch(authed(token, '/refusals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lease_id: 'x', door_name: 'y', service: 'stream', verb: 'socket', detail: 'z' }),
+    }), testEnv);
+    expect(res.status).toBe(401); // a lease bearer is not the machine credential
+  });
 });
 
 describe('mail routes', () => {

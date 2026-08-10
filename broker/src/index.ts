@@ -97,7 +97,7 @@ export default {
     if (path === '/approve' || path.startsWith('/approve/') || path === '/auth/callback') {
       return handleApprove(req, env, gov);
     }
-    if (path === '/introspect' || path === '/leases' || path.startsWith('/leases/') || path === '/ledger') {
+    if (path === '/introspect' || path === '/refusals' || path === '/leases' || path.startsWith('/leases/') || path === '/ledger') {
       return handleAdmin(req, env, gov);
     }
 
