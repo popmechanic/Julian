@@ -13,6 +13,7 @@ import { GOVERNOR_DOWN, authenticate, json, leaseCapFor, scopeAllows } from './l
 import { policyFor } from './policy';
 import { mailHealth, mailList, mailRead, mailSend, validateSendBody } from './services/mail';
 export { GovernorDO } from './governor';
+export { RegistrarDO } from './registrar';
 
 function governor(env: Env): DurableObjectStub<GovernorDO> {
   return env.GOVERNOR.get(env.GOVERNOR.idFromName('governor')) as unknown as DurableObjectStub<GovernorDO>;

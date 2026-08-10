@@ -2,6 +2,11 @@
 // (`wrangler secret put`); everything else is a plain var from wrangler.toml.
 export interface Env {
   GOVERNOR: DurableObjectNamespace;
+  REGISTRAR: DurableObjectNamespace;
+
+  // The gate's own `/mcp` URL — RFC 8707 `resource` on the authcode flow is
+  // valid only for this exact value.
+  MCP_RESOURCE_URL: string;
 
   // Pocket ID — the approver's login, and (until the window closes) the legacy
   // bearer identity.

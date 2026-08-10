@@ -6,15 +6,24 @@ compatibility_date = "2026-07-01"
 name = "GOVERNOR"
 class_name = "GovernorDO"
 
+[[durable_objects.bindings]]
+name = "REGISTRAR"
+class_name = "RegistrarDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["GovernorDO"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RegistrarDO"]
 
 [vars]
 OIDC_ISSUER = "https://souls.exe.xyz"
 OIDC_JWKS_URL = "https://souls.exe.xyz/.well-known/jwks.json"
 OIDC_AUDIENCE = "0143f667-3c75-4779-b16c-e2709ffdc049"   # Pocket ID client_id for the Julian app
 AGENTMAIL_INBOX_ID = "julian-marcus@agentmail.to"        # public address, not a secret
+MCP_RESOURCE_URL = "https://julian-broker.julian-memory.workers.dev/mcp"
 
 # The gate's own face. These are placeholders so `wrangler dev` and the test
 # runtime have the right shape; the real values are set at deploy.
