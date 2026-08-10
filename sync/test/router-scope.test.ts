@@ -20,16 +20,22 @@ import { env } from 'cloudflare:test';
 import worker from '../src/index';
 import type { Env, GateFetcher } from '../src/auth';
 
-/** A fake GATE binding: counts calls, returns one scripted introspection. */
+/** A fake GATE binding: counts /introspect calls, records /refusals reports. */
 function fakeGate(body: {
-  active: boolean; leaseId?: string; scope?: string; principal?: string;
-}): GateFetcher & { calls: number } {
+  active: boolean; leaseId?: string; doorName?: string; scope?: string; principal?: string;
+}): GateFetcher & { calls: number; refusals: unknown[] } {
   const gate = {
     calls: 0,
-    fetch: async () => {
+    refusals: [] as unknown[],
+    fetch: async (input: string | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.url;
+      if (new URL(url).pathname === '/refusals') {
+        gate.refusals.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({ recorded: true }), { status: 200 });
+      }
       gate.calls += 1;
       return new Response(JSON.stringify(body.active
-        ? { active: true, lease_id: body.leaseId, door_name: 'door:x', scope: body.scope, principal: body.principal }
+        ? { active: true, lease_id: body.leaseId, door_name: body.doorName ?? 'door:x', scope: body.scope, principal: body.principal }
         : { active: false }),
         { status: 200, headers: { 'Content-Type': 'application/json' } });
     },
@@ -111,5 +117,34 @@ describe('router: lease scope + principal enforcement', () => {
     const res = await worker.fetch(exportReq('jla_v'), testEnv(gate));
     expect(res.status).toBe(403);
     expect(gate.calls).toBe(1);
+  });
+});
+
+describe('router: a socket is a write surface — full-house-only', () => {
+  test('stream-read is accepted at export', async () => {
+    const gate = fakeGate({ active: true, leaseId: 'L10', doorName: 'door:t', scope: 'stream-read', principal: 'julian' });
+    const res = await worker.fetch(exportReq('jla_sockpolicy1'), testEnvWithFakeStub(gate));
+    expect(res.status).not.toBe(403);
+  });
+
+  test('stream-read is refused at the WS upgrade — sockets are full-house-only', async () => {
+    const gate = fakeGate({ active: true, leaseId: 'L11', doorName: 'door:t', scope: 'stream-read', principal: 'julian' });
+    const res = await worker.fetch(wsUpgradeReq('jla_sockpolicy2'), testEnv(gate));
+    expect(res.status).toBe(403);
+    expect(gate.refusals).toHaveLength(1);
+    expect(gate.refusals[0]).toMatchObject({ lease_id: 'L11', service: 'stream', verb: 'socket' });
+  });
+
+  test('full-house is accepted at the WS upgrade', async () => {
+    const gate = fakeGate({ active: true, leaseId: 'L12', doorName: 'door:t', scope: 'full-house', principal: 'julian' });
+    const res = await worker.fetch(wsUpgradeReq('jla_sockpolicy3'), testEnvWithFakeStub(gate));
+    expect(res.status).not.toBe(403);
+  });
+
+  test('a foreign-principal refusal is reported to the gate ledger', async () => {
+    const gate = fakeGate({ active: true, leaseId: 'L13', doorName: 'door:t', scope: 'full-house', principal: 'guest-ada' });
+    const res = await worker.fetch(exportReq('jla_sockpolicy4'), testEnv(gate));
+    expect(res.status).toBe(403);
+    expect(gate.refusals[0]).toMatchObject({ lease_id: 'L13', service: 'stream', verb: 'export' });
   });
 });

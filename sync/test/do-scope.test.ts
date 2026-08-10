@@ -59,30 +59,37 @@ function waitForClose(client: WebSocket, timeoutMs = 200): Promise<{ code: numbe
   });
 }
 
-describe('JulianSyncDO webSocketMessage: scope re-check on traffic-driven re-auth', () => {
-  test('closes a socket whose lease scope is no longer stream-capable (reading-room)', async () => {
+describe('JulianSyncDO webSocketMessage: scope + ownership re-check on traffic-driven re-auth', () => {
+  test('closes a socket whose lease scope is not full-house (reading-room)', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment({ leaseToken: 'jla_scopedrop1', verifiedAt: Date.now() - 400_000 });
       installGate(instance, fakeGate({ active: true, lease_id: 'l1', door_name: 'door:reader', scope: 'reading-room' }));
 
       await instance.webSocketMessage(server, 'ping');
-      expect(await waitForClose(client)).toEqual({ code: 4003, reason: 'lease scope may not read the stream' });
+      expect(await waitForClose(client)).toEqual({ code: 4003, reason: 'a sync socket requires full-house' });
     });
   });
 
-  test('stream-read scope refreshes verifiedAt and does not close', async () => {
+  test('closes a socket whose lease is no longer full-house — stream-read mid-socket is 4003', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
-      const staleAt = Date.now() - 400_000;
-      server.serializeAttachment({ leaseToken: 'jla_streamread1', verifiedAt: staleAt });
+      server.serializeAttachment({ leaseToken: 'jla_streamread1', verifiedAt: Date.now() - 400_000 });
       installGate(instance, fakeGate({ active: true, lease_id: 'l2', door_name: 'door:reader2', scope: 'stream-read' }));
 
       await instance.webSocketMessage(server, 'ping');
-      expect(await waitForClose(client)).toBeNull();
+      expect(await waitForClose(client)).toEqual({ code: 4003, reason: 'a sync socket requires full-house' });
+    });
+  });
 
-      const refreshed = server.deserializeAttachment() as { leaseToken: string; verifiedAt: number };
-      expect(refreshed.verifiedAt).toBeGreaterThan(staleAt);
+  test('closes a socket whose principal no longer owns the store', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { client, server } = acceptedSocket(instance);
+      server.serializeAttachment({ leaseToken: 'jla_ownerdrop1', verifiedAt: Date.now() - 400_000 });
+      installGate(instance, fakeGate({ active: true, lease_id: 'l4', door_name: 'door:reader4', scope: 'full-house', principal: 'guest-ada' }));
+
+      await instance.webSocketMessage(server, 'ping');
+      expect(await waitForClose(client)).toEqual({ code: 4003, reason: 'lease does not own this store' });
     });
   });
 

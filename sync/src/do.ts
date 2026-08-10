@@ -19,13 +19,12 @@ interface LeaseAttachment {
 // right shape here — every inbound sync message piggybacks a freshness check.
 const REAUTH_INTERVAL_MS = 300_000;
 
-// Lease scopes whose grant includes the private live record. Held mirrors
-// gate 2A's SCOPE_VERBS: 'reading-room' is package-verbs-only (identity, not
-// confidentiality) and must never hold an open sync socket — defense in
-// depth alongside the router's upgrade-time check (broker/src/index.ts),
-// since the router is no longer the only guard once multiple scopes share
-// the register.
-const STREAM_SCOPES = new Set(['stream-read', 'full-house']);
+// A socket is a write surface: TinyBase sync is bidirectional (a socket
+// client can push ContentDiff / ContentHashes and answer diff requests, and
+// the DO relays client↔client), so only `full-house` holds one — defense in
+// depth alongside the router's upgrade-time check (sync/src/index.ts), since
+// the router is no longer the only guard once multiple scopes share the
+// register.
 
 function extractLeaseToken(request: Request): string | null {
   const bearer = request.headers.get('Authorization');
@@ -224,13 +223,28 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
         return;
       }
       // Defense in depth: even though the router already refused a
-      // non-stream-capable scope at upgrade time, re-check here on every
-      // traffic-driven re-auth so a socket that predates a scope downgrade
-      // (or any router bug) is independently closed rather than trusted
-      // indefinitely. A scope-lost close is neither a revocation (4001) nor
-      // an unavailable governor (4002) — it gets its own code.
-      if (!STREAM_SCOPES.has(introspection.scope ?? '')) {
-        ws.close(4003, 'lease scope may not read the stream');
+      // non-full-house scope (and a non-owning principal) at upgrade time,
+      // re-check both here on every traffic-driven re-auth so a socket that
+      // predates a scope downgrade or an ownership change (or any router
+      // bug) is independently closed rather than trusted indefinitely. A
+      // scope- or ownership-lost close is neither a revocation (4001) nor an
+      // unavailable governor (4002) — it gets its own code.
+      const owner = (this.getPathId() ?? '').split('/')[0];
+      const scopeOk = introspection.scope === 'full-house';
+      const ownerOk = (introspection.principal ?? '') === owner;
+      if (!scopeOk || !ownerOk) {
+        void this.env.GATE.fetch('https://gate/refusals', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Introspect-Secret': this.env.INTROSPECT_SECRET },
+          body: JSON.stringify({
+            lease_id: introspection.leaseId ?? '', door_name: introspection.doorName ?? '',
+            service: 'stream', verb: 'socket',
+            detail: scopeOk
+              ? `refused: principal ${introspection.principal} does not own ${owner}`
+              : `refused: scope ${introspection.scope} may not hold a socket`,
+          }),
+        }).catch(() => undefined);
+        ws.close(4003, scopeOk ? 'lease does not own this store' : 'a sync socket requires full-house');
         return;
       }
       ws.serializeAttachment({ ...attachment, verifiedAt: Date.now() } satisfies LeaseAttachment);
