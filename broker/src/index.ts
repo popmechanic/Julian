@@ -6,17 +6,60 @@
 // modules and is never echoed back to the caller.
 import { handleAdmin } from './as/admin';
 import { handleApprove } from './as/approve';
+import { handleAuthcode, oauthDiscovery } from './as/authcode';
 import { handleDevice } from './as/device';
 import type { Env } from './env';
 import type { GovernorDO, LeaseIdentity, LeaseReserveResult } from './governor';
 import { GOVERNOR_DOWN, authenticate, json, leaseCapFor, scopeAllows } from './lease-auth';
 import { policyFor } from './policy';
+import type { RegistrarDO } from './registrar';
 import { mailHealth, mailList, mailRead, mailSend, validateSendBody } from './services/mail';
 export { GovernorDO } from './governor';
 export { RegistrarDO } from './registrar';
 
+/** RFC 6749 §4.1: the code grant `/token` must present to reach the authcode module. */
+const AUTHCODE_GRANT_TYPE = 'authorization_code';
+
 function governor(env: Env): DurableObjectStub<GovernorDO> {
   return env.GOVERNOR.get(env.GOVERNOR.idFromName('governor')) as unknown as DurableObjectStub<GovernorDO>;
+}
+
+/** Mirrors governor(env): the DCR/authcode store is a single named instance. */
+function registrar(env: Env): DurableObjectStub<RegistrarDO> {
+  return env.REGISTRAR.get(env.REGISTRAR.idFromName('registrar')) as unknown as DurableObjectStub<RegistrarDO>;
+}
+
+/**
+ * The 401 a resource-server-unaware client gets from `/mcp` (RFC 9728 §5.1):
+ * where to fetch protected-resource metadata. `/mcp` itself is not mounted
+ * here — that is a future endpoint (B2) — but the discovery chain it will
+ * point at is wired now, so this helper is ready the moment that door opens.
+ */
+export function challenge401(env: Env): Response {
+  return new Response(null, {
+    status: 401,
+    headers: {
+      'WWW-Authenticate': `Bearer resource_metadata="${env.PUBLIC_URL}/.well-known/oauth-protected-resource/mcp"`,
+    },
+  });
+}
+
+/**
+ * Peek `grant_type` off a `/token` POST without spending the body the chosen
+ * module will parse for itself — `req.clone()` gives the peek its own stream
+ * so the module downstream still sees an unconsumed request. A body that
+ * will not parse as form data is not this router's failure to report: it
+ * falls through to the device module, exactly as an empty grant_type always
+ * has, and that module's own `parseForm` produces the right error.
+ */
+async function peekGrantType(req: Request): Promise<string> {
+  try {
+    const form = await req.clone().formData();
+    const value = form.get('grant_type');
+    return typeof value === 'string' ? value : '';
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -92,11 +135,53 @@ export default {
       return json({ error: GOVERNOR_DOWN }, 503);
     }
 
-    // The three self-authenticating faces, ahead of the lease gate: a door with
-    // no lease yet must still be able to knock.
-    if (path === '/device' || path === '/token') return handleDevice(req, env, gov);
+    // OAuth discovery: public metadata, no lease, no DO round-trip.
+    const discovery = oauthDiscovery(env, path);
+    if (discovery) return discovery;
+
+    // The authcode face — DCR registration and the consent hand-off both need
+    // the registrar; a broken binding here refuses (fail closed), never mints.
+    if (path === '/register' || path === '/authorize') {
+      let reg: DurableObjectStub<RegistrarDO>;
+      try {
+        reg = registrar(env);
+      } catch {
+        return json({ error: GOVERNOR_DOWN }, 503);
+      }
+      return handleAuthcode(req, env, gov, reg);
+    }
+
+    // The self-authenticating faces, ahead of the lease gate: a door with no
+    // lease yet must still be able to knock. `/token` forks on `grant_type`:
+    // authorization_code goes to the authcode module, everything else
+    // (device_code, refresh_token) keeps going to the device module, unchanged.
+    if (path === '/device') return handleDevice(req, env, gov);
+    if (path === '/token') {
+      const grantType = await peekGrantType(req);
+      if (grantType === AUTHCODE_GRANT_TYPE) {
+        let reg: DurableObjectStub<RegistrarDO>;
+        try {
+          reg = registrar(env);
+        } catch {
+          return json({ error: GOVERNOR_DOWN }, 503);
+        }
+        return handleAuthcode(req, env, gov, reg);
+      }
+      return handleDevice(req, env, gov);
+    }
     if (path === '/approve' || path.startsWith('/approve/') || path === '/auth/callback') {
-      return handleApprove(req, env, gov);
+      // Best-effort, not fail-closed: the device-flow desk (today's whole
+      // approval surface) never touches the registrar, so a broken binding
+      // must not turn away a device door. Once the authcode branch lands
+      // (task 5) it fails closed on its own registrar calls when this is
+      // undefined — the same way `gov` failures are handled throughout.
+      let reg: DurableObjectStub<RegistrarDO> | undefined;
+      try {
+        reg = registrar(env);
+      } catch {
+        // fall through with reg left undefined
+      }
+      return handleApprove(req, env, gov, reg as DurableObjectStub<RegistrarDO>);
     }
     if (path === '/introspect' || path === '/refusals' || path === '/leases' || path.startsWith('/leases/') || path === '/ledger') {
       return handleAdmin(req, env, gov);

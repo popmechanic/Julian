@@ -185,3 +185,56 @@ describe('mail routes', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('authcode routes: ahead of the lease gate', () => {
+  test('GET /.well-known/oauth-authorization-server advertises reading-room only, no token needed', async () => {
+    const res = await SELF.fetch(`${BASE}/.well-known/oauth-authorization-server`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as { scopes_supported: string[] };
+    expect(body.scopes_supported).toEqual(['reading-room']);
+  });
+
+  test('POST /register reaches the authcode module, not the lease gate', async () => {
+    const res = await SELF.fetch(`${BASE}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        redirect_uris: ['https://claude.ai/api/mcp/auth_callback'],
+        token_endpoint_auth_method: 'none',
+      }),
+    });
+    // 201 (registered) or 400 (rejected client metadata) both prove the
+    // authcode module answered — a 401 would mean the lease gate caught it
+    // first, which is the one outcome this test exists to rule out.
+    expect(res.status).toBe(201);
+    const body = await res.json() as { client_id: string; token_endpoint_auth_method: string };
+    expect(typeof body.client_id).toBe('string');
+    expect(body.token_endpoint_auth_method).toBe('none');
+  });
+
+  test('/token: authorization_code reaches the authcode module, device_code still reaches the device module (regression)', async () => {
+    const authcode = await SELF.fetch(`${BASE}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'authorization_code' }).toString(),
+    });
+    expect(authcode.status).toBe(400);
+    const authcodeBody = await authcode.json() as { error: string; error_description?: string };
+    expect(authcodeBody.error).toBe('invalid_request');
+    // The authcode module's own missing-fields message — proof this landed
+    // there, not in the device module (which would say 'unsupported_grant_type').
+    expect(authcodeBody.error_description).toBe('code, client_id, redirect_uri, and code_verifier are required');
+
+    const device = await SELF.fetch(`${BASE}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:device_code' }).toString(),
+    });
+    expect(device.status).toBe(400);
+    const deviceBody = await device.json() as { error: string; error_description?: string };
+    expect(deviceBody.error).toBe('invalid_request');
+    // The device module's own missing-fields message — proof the device grant
+    // still lands there, unmoved by the new authcode branch.
+    expect(deviceBody.error_description).toBe('missing client_id');
+  });
+});
