@@ -51,6 +51,14 @@ const USER_CODE_ALPHABET = 'BCDFGHJKLMNPQRSTVWXZ';
 const USER_CODE_HALF = 4;
 const TOKEN_BYTES = 32;                // 256 bits → 43 base64url characters
 const SCOPES: readonly string[] = ['full-house', 'reading-room', 'stream-read'];
+// The MCP visit (RFC 8252 authcode flow) never gets the house. This gate lives
+// in the DO mint method itself, so the absence of a `full-house` button on the
+// consent page is never the enforcement.
+const AUTHCODE_SCOPES = ['reading-room', 'stream-read'] as const;
+// Reuse-grace for the authcode path: a client that retries the very same
+// refresh request inside this window is served the pair it already earned,
+// idempotently, rather than being read as a replay and killed.
+const AUTHCODE_GRACE_MS = 10_000;
 
 type Row = Record<string, unknown>;
 
@@ -107,6 +115,16 @@ async function sha256Hex(value: string): Promise<string> {
 // token generation. Tokens live here only as SHA-256 hashes — a stolen database
 // yields no working credential.
 export class GovernorDO extends DurableObject {
+  // Reuse-grace memory for the authcode path, keyed by the presented refresh
+  // hash → the successor pair it minted and when. In memory only: a plaintext
+  // successor token is never written to any table. Losing it (DO eviction)
+  // costs nothing but the idempotency of an in-flight retry — the strict
+  // rotation path still governs correctness.
+  private authcodeGrace = new Map<
+    string,
+    { accessToken: string; refreshToken: string; mintedAt: number }
+  >();
+
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx, env as never);
     const sql = ctx.storage.sql;
@@ -356,6 +374,30 @@ export class GovernorDO extends DurableObject {
     };
   }
 
+  // ── the visit (RFC 8252 authorization-code flow) ──────────────────────────
+
+  // Mints a lease for an MCP visit. The scope gate is here, server-side: any
+  // scope outside `AUTHCODE_SCOPES` is refused before a token exists, so the
+  // house can never be handed out over the authcode flow no matter what the
+  // client asked for. Mirrors `devicePoll`'s ready branch — `newPair()` first,
+  // then `upsertLease` + `insertPair` — but stamps `flow='authcode'`.
+  async mintAuthcodeLease(
+    doorName: string, scope: string, principal: string, claims: string,
+  ): Promise<MintResult> {
+    if (!(AUTHCODE_SCOPES as readonly string[]).includes(scope)) return { status: 'invalid' };
+    const pair = await this.newPair();
+    const now = this.now();
+    const leaseId = this.upsertLease(doorName, scope, claims, now, 'authcode', principal);
+    this.insertPair(leaseId, 1, pair, now);
+    return {
+      status: 'ok',
+      accessToken: pair.accessToken,
+      refreshToken: pair.refreshToken,
+      expiresIn: ACCESS_TTL_SECONDS,
+      scope,
+    };
+  }
+
   // ── the rotation machine ──────────────────────────────────────────────────
 
   async mintFromRefresh(refreshToken: string): Promise<MintResult> {
@@ -372,9 +414,29 @@ export class GovernorDO extends DurableObject {
 
     const leaseId = String(token.lease_id);
     const lease = this.sql.exec(
-      'SELECT door_name, scope, status FROM leases WHERE lease_id = ?', leaseId,
+      'SELECT door_name, scope, status, flow FROM leases WHERE lease_id = ?', leaseId,
     ).toArray()[0] as Row | undefined;
     if (!lease || String(lease.status) !== 'living') return { status: 'invalid' };
+
+    const isAuthcode = String(lease.flow) === 'authcode';
+
+    // Reuse-grace, authcode only. A repeat of the same presented refresh inside
+    // the window is an MCP client retrying a request whose answer it may not
+    // have received; it is served the exact pair the first presentation minted,
+    // idempotently, instead of taking the tombstone kill path. Device-flow
+    // leases never enter here and keep their strict replay semantics.
+    if (isAuthcode) {
+      const cached = this.authcodeGrace.get(hash);
+      if (cached && now - cached.mintedAt <= AUTHCODE_GRACE_MS) {
+        return {
+          status: 'ok',
+          accessToken: cached.accessToken,
+          refreshToken: cached.refreshToken,
+          expiresIn: ACCESS_TTL_SECONDS,
+          scope: String(lease.scope),
+        };
+      }
+    }
 
     const generation = Number(token.generation);
     const kind = String(token.kind);
@@ -413,6 +475,17 @@ export class GovernorDO extends DurableObject {
     this.sql.exec("UPDATE lease_tokens SET kind = 'refresh_prev', used = 1 WHERE hash = ?", hash);
     this.insertPair(leaseId, maxGeneration + 1, pair, now);
     this.sql.exec('UPDATE leases SET last_renewal = ? WHERE lease_id = ?', now, leaseId);
+    // Remember this rotation so a within-window retry of the same presented
+    // refresh is served idempotently — authcode leases only. Prune stale
+    // entries opportunistically; traffic is dozens/day, so the map stays tiny.
+    if (isAuthcode) {
+      for (const [key, entry] of this.authcodeGrace) {
+        if (now - entry.mintedAt > AUTHCODE_GRACE_MS) this.authcodeGrace.delete(key);
+      }
+      this.authcodeGrace.set(hash, {
+        accessToken: pair.accessToken, refreshToken: pair.refreshToken, mintedAt: now,
+      });
+    }
     return {
       status: 'ok',
       accessToken: pair.accessToken,
@@ -526,16 +599,25 @@ export class GovernorDO extends DurableObject {
     );
   }
 
-  /** A door is one lease for life: re-knocking revives its row and buries its old tokens. */
-  private upsertLease(doorName: string, scope: string, claims: string, now: number): string {
+  /**
+   * A door is one lease for life: re-knocking revives its row and buries its
+   * old tokens. `flow`/`principal` default to the device-flow values so the
+   * knock path is unchanged; the authcode path passes `'authcode'` and its own
+   * principal, and a re-mint keeps the row on that flow.
+   */
+  private upsertLease(
+    doorName: string, scope: string, claims: string, now: number,
+    flow = 'device', principal = 'julian',
+  ): string {
     const existing = this.sql.exec(
       'SELECT lease_id FROM leases WHERE door_name = ?', doorName,
     ).toArray()[0] as Row | undefined;
     if (existing) {
       const leaseId = String(existing.lease_id);
       this.sql.exec(
-        "UPDATE leases SET client_claims = ?, scope = ?, status = 'living', last_renewal = ? WHERE lease_id = ?",
-        claims, scope, now, leaseId,
+        `UPDATE leases SET client_claims = ?, scope = ?, status = 'living',
+           last_renewal = ?, flow = ?, principal = ? WHERE lease_id = ?`,
+        claims, scope, now, flow, principal, leaseId,
       );
       this.sql.exec('DELETE FROM lease_tokens WHERE lease_id = ?', leaseId);
       return leaseId;
@@ -543,9 +625,10 @@ export class GovernorDO extends DurableObject {
     const leaseId = crypto.randomUUID();
     this.sql.exec(
       `INSERT INTO leases
-         (lease_id, door_name, client_claims, scope, status, born, last_renewal, last_verb, send_cap_per_day)
-       VALUES (?, ?, ?, ?, 'living', ?, NULL, NULL, ?)`,
-      leaseId, doorName, claims, scope, now, DEFAULT_LEASE_SEND_CAP,
+         (lease_id, door_name, client_claims, scope, status, born, last_renewal, last_verb,
+          send_cap_per_day, flow, principal)
+       VALUES (?, ?, ?, ?, 'living', ?, NULL, NULL, ?, ?, ?)`,
+      leaseId, doorName, claims, scope, now, DEFAULT_LEASE_SEND_CAP, flow, principal,
     );
     return leaseId;
   }
