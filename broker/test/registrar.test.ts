@@ -255,4 +255,80 @@ describe('RegistrarDO logic', () => {
       expect(await i.pendingView('ghost')).toBe(null);
     });
   });
+
+  // DEFECT 1 (redirect-URI spoof): a mixed acceptable/unacceptable list must
+  // store ONLY the acceptable entries, so the plain-http public redirect can
+  // never be matched at createPending — proof it was never stored.
+  test('a mixed list stores only acceptable redirects; the unacceptable one never matches', async () => {
+    await runInDurableObject(reg('t-mixed'), async (i: RegistrarDO) => {
+      const reg1 = await i.registerClient({
+        redirect_uris: ['http://evil.example.com/callback', 'https://claude.ai/api/mcp/auth_callback'],
+        token_endpoint_auth_method: 'none',
+      });
+      const clientId = (reg1 as { client_id: string }).client_id;
+      // origin must reflect the first ACCEPTABLE uri, not the unacceptable one
+      const good = await i.createPending({
+        client_id: clientId, redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+        code_challenge: 'c', resource: 'https://x/mcp', ttlSeconds: 600,
+      });
+      expect('pendingId' in good).toBe(true);
+      const view = await i.pendingView((good as { pendingId: string }).pendingId);
+      expect(view?.origin).toBe('https://claude.ai');
+      // the unacceptable plain-http public redirect was never stored → no match
+      const bad = await i.createPending({
+        client_id: clientId, redirect_uri: 'http://evil.example.com/callback',
+        code_challenge: 'c', resource: 'https://x/mcp', ttlSeconds: 600,
+      });
+      expect('error' in bad).toBe(true);
+    });
+  });
+
+  // DEFECT 2 (client eviction): a client that completed a round-trip (redeemed)
+  // is marked approved and survives the 2h sweep; a client that never redeemed
+  // is evicted.
+  test('a redeemed client survives the 2h sweep; a never-redeemed client is swept', async () => {
+    await runInDurableObject(reg('t-sweep'), async (i: RegistrarDO) => {
+      const base = Date.now();
+      i.now = () => base;
+      // client A completes a full round-trip
+      const regA = await i.registerClient({
+        redirect_uris: ['https://claude.ai/api/mcp/auth_callback'],
+        token_endpoint_auth_method: 'none',
+      });
+      const clientA = (regA as { client_id: string }).client_id;
+      const verifier = 'g'.repeat(64);
+      const challenge = await s256(verifier);
+      const pend = await i.createPending({
+        client_id: clientA, redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+        code_challenge: challenge, resource: 'https://x/mcp', ttlSeconds: 600,
+      });
+      const pendingId = (pend as { pendingId: string }).pendingId;
+      await i.attachApproval(pendingId, 'user_marcus', 'reading-room');
+      const ok = await i.redeem({
+        code: pendingId, client_id: clientA,
+        redirect_uri: 'https://claude.ai/api/mcp/auth_callback', code_verifier: verifier,
+      });
+      expect('door_name' in ok).toBe(true);
+      // client B never redeems
+      const regB = await i.registerClient({
+        redirect_uris: ['https://claude.ai/api/mcp/auth_callback'],
+        token_endpoint_auth_method: 'none',
+      });
+      const clientB = (regB as { client_id: string }).client_id;
+      // advance past created + 2h; the next write sweeps
+      i.now = () => base + 2 * 60 * 60 * 1000 + 1000;
+      // client A (redeemed → approved) still resolves; this createPending sweeps first
+      const stillA = await i.createPending({
+        client_id: clientA, redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+        code_challenge: 'c', resource: 'https://x/mcp', ttlSeconds: 600,
+      });
+      expect('pendingId' in stillA).toBe(true);
+      // client B (never redeemed) was swept → unknown_client
+      const goneB = await i.createPending({
+        client_id: clientB, redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+        code_challenge: 'c', resource: 'https://x/mcp', ttlSeconds: 600,
+      });
+      expect('error' in goneB).toBe(true);
+    });
+  });
 });

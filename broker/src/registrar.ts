@@ -117,14 +117,23 @@ export class RegistrarDO extends DurableObject {
       return { error: 'invalid_client_metadata: only public clients (token_endpoint_auth_method=none) are registered' };
     }
     const uris = Array.isArray(meta.redirect_uris) ? meta.redirect_uris : [];
-    const first = uris.map((u) => acceptableRedirect(u)).find((u): u is URL => u !== null);
-    if (!first) {
+    // Store ONLY the individually acceptable URIs. A mixed list that smuggles a
+    // plain-http public redirect alongside an https one must not have that
+    // unacceptable entry persisted: `redirectMatches` matches against the
+    // stored list without re-checking acceptability, so an unfiltered store
+    // would let a later /authorize or /token deliver the code to the attacker
+    // host while the approval page renders the https origin. Filtering here
+    // guarantees every matchable redirect is acceptable and consistent with
+    // the recorded `origin`.
+    const acceptable = uris.filter((u) => acceptableRedirect(u) !== null);
+    if (acceptable.length === 0) {
       return { error: 'invalid_redirect_uri: at least one https or http loopback redirect_uri is required' };
     }
+    const origin = acceptableRedirect(acceptable[0])!.origin;
     const clientId = randomToken();
     this.sql.exec(
       'INSERT INTO clients (client_id, redirect_uris, origin, created, approved) VALUES (?, ?, ?, ?, 0)',
-      clientId, JSON.stringify(uris), first.origin, this.now(),
+      clientId, JSON.stringify(acceptable), origin, this.now(),
     );
     return { client_id: clientId };
   }
@@ -243,6 +252,11 @@ export class RegistrarDO extends DurableObject {
       'UPDATE authcodes SET used = 1 WHERE code_hash = ? AND used = 0', codeHash,
     ).rowsWritten;
     if (burned === 0) return { error: 'invalid_grant: used' };
+    // A client that completes a round-trip is no longer abandoned scaffolding:
+    // mark it approved so the 2h `sweep()` only ever evicts clients that
+    // registered but never authorized. Without this every registered client —
+    // active ones included — is swept and forced to re-register.
+    this.sql.exec('UPDATE clients SET approved = 1 WHERE client_id = ?', p.client_id);
     let host: string;
     try {
       host = new URL(String(row.origin)).host;
