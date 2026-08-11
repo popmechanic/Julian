@@ -17,15 +17,29 @@ import { decodeJwt } from 'jose';
 import { keySetFor, verifyWithKeySet } from '../auth';
 import type { Env } from '../env';
 import type { GovernorDO, KnockDecision, KnockView } from '../governor';
+import type { RegistrarDO } from '../registrar';
 import { GOVERNOR_DOWN } from '../lease-auth';
+import { PENDING_COOKIE } from './authcode';
 import {
   FLOW_COOKIE, FLOW_TTL_SECONDS, SESSION_COOKIE, SESSION_TTL_SECONDS,
   clearCookie, cookieValue, csrfFor, mintSession, mintSigned, randomValue,
   readSession, readSigned, setCookie, timingSafeEqual, toBase64Url,
 } from './session';
 
-/** Every lease the approval desk hands out is full-house; narrowing is a re-knock. */
-const GRANTED_SCOPE = 'full-house';
+// Two flows reach this desk, told apart by the browser's cookies. The device
+// flow (a `user_code` on a door's screen) still hands out a full-house lease —
+// that is unchanged. The authcode flow (an MCP *visit*, carrying a
+// `gate_pending` cookie) elects a narrower scope, and the house is not on the
+// ballot: `full-house` is never one of the choices here, and the real gate is
+// server-side in `GovernorDO.mintAuthcodeLease`.
+/** The scope the device flow grants — the pre-selected election of that path. */
+const DEVICE_SCOPE = 'full-house';
+/** The only scopes an MCP visit may elect. The house is deliberately absent. */
+const READING_SCOPE = 'reading-room';
+const STREAM_SCOPE = 'stream-read';
+const ELECTABLE_SCOPES: readonly string[] = [READING_SCOPE, STREAM_SCOPE];
+/** stream-read is the wider of the two — it takes a second, explicit confirmation. */
+const STREAM_CONFIRM = 'yes';
 /** A door's self-description is testimony, not identity — show enough to judge, no more. */
 const CLAIM_MAX = 120;
 const DOOR_NAME_MAX = 64;
@@ -97,6 +111,14 @@ button.open { border-color: #1c1a17; background: #1c1a17; color: #faf8f4; }
   button.open { border-color: #e8e4dc; background: #e8e4dc; color: #16151a; }
 }
 p.note { opacity: 0.75; }
+.origin { font-size: 1.15rem; font-weight: 600; overflow-wrap: anywhere; }
+.banner { display: inline-block; margin: 0 0 0.75rem; padding: 0.2rem 0.6rem; border-radius: 4px;
+          font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700;
+          background: rgba(180,120,60,0.18); border: 1px solid rgba(180,120,60,0.6); }
+fieldset { border: 1px solid rgba(128,128,128,0.35); border-radius: 6px; margin: 1.2rem 0 0; padding: 0.6rem 1rem; }
+legend { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.65; }
+label.choice { display: flex; align-items: baseline; gap: 0.5rem; margin: 0.5rem 0; opacity: 1; }
+label.choice input { width: auto; }
 `.replace(/\s+/g, ' ');
 
 function page(title: string, body: string, status = 200, cookies: string[] = []): Response {
@@ -141,7 +163,7 @@ function confirmForm(knock: KnockView, csrf: string): string {
     + '<dl>'
     + `<dt>code</dt><dd>${esc(knock.userCode)}</dd>`
     + `<dt>knocked at</dt><dd>${esc(new Date(knock.created).toISOString())}</dd>`
-    + `<dt>scope asked</dt><dd>${esc(GRANTED_SCOPE)}</dd>`
+    + `<dt>scope asked</dt><dd>${esc(DEVICE_SCOPE)}</dd>`
     + '</dl>'
     + '<h2>The door claims:</h2>'
     + '<dl class="claims">'
@@ -153,6 +175,46 @@ function confirmForm(knock: KnockView, csrf: string): string {
     + '<label for="door_name">Name this door (yours to choose, not the door’s)</label>'
     + `<input id="door_name" name="door_name" maxlength="${DOOR_NAME_MAX}" autocomplete="off"`
     + ` spellcheck="false" value="${esc(claim(defaultDoorName(knock.clientId)))}">`
+    + '<div class="row">'
+    + '<button class="open" type="submit" name="decision" value="open">Open</button>'
+    + '<button type="submit" name="decision" value="refuse">Refuse</button>'
+    + '</div></form>';
+}
+
+/**
+ * The MCP visit's consent page. The decoded origin is the primary identity a
+ * homograph attack cannot hide behind — it is stated plainly and, until a visit
+ * has been seen before, flagged NEW ORIGIN. What the client says about *itself*
+ * (its id, its redirect) stays quarantined under "claims", escaped and clipped,
+ * exactly as a door's testimony is. The election offers only the two narrow
+ * scopes; `stream-read`, the wider one, is gated behind a second confirmation.
+ * The pending id is never put in the form — it rides the HttpOnly cookie, and
+ * the CSRF token below is bound to it server-side.
+ */
+function consentForm(
+  view: { client_id: string; origin: string; redirect_uri: string },
+  csrf: string, newOrigin: boolean, message?: string,
+): string {
+  const claims: Array<[string, string]> = [
+    ['client_id', view.client_id],
+    ['redirect_uri', view.redirect_uri],
+  ];
+  return '<h2>The gate knows</h2>'
+    + (newOrigin ? '<div class="banner">NEW ORIGIN</div>' : '')
+    + `<p class="origin">${esc(view.origin)}</p>`
+    + '<h2>The visit claims:</h2>'
+    + '<dl class="claims">'
+    + claims.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(claim(v))}</dd>`).join('')
+    + '</dl>'
+    + (message ? `<p class="note">${esc(message)}</p>` : '')
+    + '<form method="post" action="/approve/confirm">'
+    + `<input type="hidden" name="csrf" value="${esc(csrf)}">`
+    + '<fieldset><legend>Scope</legend>'
+    + `<label class="choice"><input type="radio" name="scope" value="${READING_SCOPE}" checked> ${READING_SCOPE}</label>`
+    + `<label class="choice"><input type="radio" name="scope" value="${STREAM_SCOPE}"> ${STREAM_SCOPE}</label>`
+    + '</fieldset>'
+    + `<label class="choice"><input type="checkbox" name="stream_confirm" value="${STREAM_CONFIRM}">`
+    + ` I confirm granting ${STREAM_SCOPE} (required only for ${STREAM_SCOPE})</label>`
     + '<div class="row">'
     + '<button class="open" type="submit" name="decision" value="open">Open</button>'
     + '<button type="submit" name="decision" value="refuse">Refuse</button>'
@@ -393,7 +455,7 @@ async function confirm(req: Request, env: Env, gov: DurableObjectStub<GovernorDO
 
   let decided: boolean;
   try {
-    decided = await gov.knockDecide(userCode, decision, doorName, GRANTED_SCOPE);
+    decided = await gov.knockDecide(userCode, decision, doorName, DEVICE_SCOPE);
   } catch {
     return notice('Gate unavailable', GOVERNOR_DOWN, 503);
   }
@@ -404,9 +466,113 @@ async function confirm(req: Request, env: Env, gov: DurableObjectStub<GovernorDO
   return notice(
     decision === 'approved' ? 'Opened' : 'Refused',
     decision === 'approved'
-      ? `${doorName} holds a ${GRANTED_SCOPE} lease. It picks up its token on the next poll; revoke it any time from /leases.`
+      ? `${doorName} holds a ${DEVICE_SCOPE} lease. It picks up its token on the next poll; revoke it any time from /leases.`
       : `${doorName} was turned away. It holds nothing.`,
     200,
+  );
+}
+
+// ── the authcode consent (an MCP visit electing a scope) ─────────────────────
+
+const NO_PENDING = 'no visit is waiting under this session — the consent may have expired, or was already answered. Ask the client to start again.';
+const REGISTRAR_DOWN = 'the gate cannot reach the visit register right now — nothing was decided. Try again shortly.';
+
+/**
+ * Until there is a registry of origins Marcus has vouched for, every MCP visit
+ * is a first meeting: warn, do not fail to warn. The banner is shown for every
+ * authcode consent, and the decoded origin is always stated in full.
+ */
+function isNewOrigin(_origin: string): boolean {
+  return true;
+}
+
+/** Render the election for the pending the cookie names — read server-side, never from the URL. */
+async function authcodeConsent(
+  env: Env, registrar: DurableObjectStub<RegistrarDO> | undefined, seat: Seat, pendingId: string,
+): Promise<Response> {
+  if (!registrar) return notice('Gate unavailable', REGISTRAR_DOWN, 503);
+
+  let view: { client_id: string; origin: string; redirect_uri: string } | null;
+  try {
+    view = await registrar.pendingView(pendingId);
+  } catch {
+    return notice('Gate unavailable', REGISTRAR_DOWN, 503);
+  }
+  // A cookie with no living pending behind it is stale or forged — burn it.
+  if (!view) return notice('No visit waiting', NO_PENDING, 404, [clearCookie(PENDING_COOKIE)]);
+
+  const csrf = await csrfFor(seat.value, pendingId, env.SESSION_SECRET);
+  return page('A visit is asking to enter', consentForm(view, csrf, isNewOrigin(view.origin)));
+}
+
+/**
+ * Bind an approver's scope election to the pending the *browser's own cookie*
+ * names — nothing a query param or form field claims. `full-house` is not
+ * electable here, and `stream-read` takes the second confirmation; either miss
+ * lands back on the election screen having attached nothing.
+ */
+async function authcodeConfirm(
+  req: Request, env: Env, registrar: DurableObjectStub<RegistrarDO> | undefined, pendingId: string,
+): Promise<Response> {
+  const { seat, delisted } = await desk(req, env);
+  if (!seat) return noSeat(delisted);
+  if (!registrar) return notice('Gate unavailable', REGISTRAR_DOWN, 503);
+
+  const form = await readForm(req);
+  if (!form) return notice('Bad request', NOT_A_FORM, 400);
+
+  // CSRF bound to this session and this exact pending: a token from one consent
+  // cannot answer another, and neither can one lifted from the code-entry page.
+  const expected = await csrfFor(seat.value, pendingId, env.SESSION_SECRET);
+  if (!timingSafeEqual(form.get('csrf') ?? '', expected)) return notice('Refused', STALE_FORM, 403);
+
+  const choice = form.get('decision');
+  if (choice !== 'open' && choice !== 'refuse') {
+    return notice('Bad request', 'that was neither Open nor Refuse — nothing was decided', 400);
+  }
+  if (choice === 'refuse') {
+    return notice('Refused', 'the visit was turned away. It holds nothing.', 200, [clearCookie(PENDING_COOKIE)]);
+  }
+
+  const elected = form.get('scope') ?? '';
+  const streamConfirmed = form.get('stream_confirm') === STREAM_CONFIRM;
+  const badElection = !ELECTABLE_SCOPES.includes(elected)
+    || (elected === STREAM_SCOPE && !streamConfirmed);
+
+  if (badElection) {
+    // Back to the election screen with nothing attached. Re-fetch the view to
+    // redraw it; a pending that has since vanished is reported honestly.
+    let view: { client_id: string; origin: string; redirect_uri: string } | null;
+    try {
+      view = await registrar.pendingView(pendingId);
+    } catch {
+      return notice('Gate unavailable', REGISTRAR_DOWN, 503);
+    }
+    if (!view) return notice('No visit waiting', NO_PENDING, 409, [clearCookie(PENDING_COOKIE)]);
+    const message = elected === STREAM_SCOPE
+      ? `${STREAM_SCOPE} needs the extra confirmation before it can be granted.`
+      : 'choose a scope for this visit.';
+    return page(
+      'A visit is asking to enter',
+      consentForm(view, expected, isNewOrigin(view.origin), message),
+      400,
+    );
+  }
+
+  let attached: boolean;
+  try {
+    attached = await registrar.attachApproval(pendingId, seat.sub, elected);
+  } catch {
+    return notice('Gate unavailable', REGISTRAR_DOWN, 503);
+  }
+  if (!attached) {
+    return notice('Nothing to decide', NO_PENDING, 409, [clearCookie(PENDING_COOKIE)]);
+  }
+
+  return notice(
+    'Opened',
+    `this visit may enter with a ${elected} lease. It collects its token on the next token exchange; revoke it any time from /leases.`,
+    200, [clearCookie(PENDING_COOKIE)],
   );
 }
 
@@ -414,8 +580,12 @@ async function confirm(req: Request, env: Env, gov: DurableObjectStub<GovernorDO
 
 export async function handleApprove(
   req: Request, env: Env, gov: DurableObjectStub<GovernorDO>,
+  registrar?: DurableObjectStub<RegistrarDO>,
 ): Promise<Response> {
   const url = new URL(req.url);
+  // The one authority on which pending a browser is answering is its own
+  // cookie. A `?pending=…` on the URL is never consulted.
+  const pendingId = cookieValue(req.headers.get('Cookie'), PENDING_COOKIE);
 
   if (url.pathname === '/auth/callback') {
     if (req.method !== 'GET') return notice('Not allowed', 'the callback is a GET', 405);
@@ -429,7 +599,10 @@ export async function handleApprove(
     // A de-listed browser is told so; sending it back to Pocket ID would only
     // walk it into the same refusal one round-trip later.
     if (delisted) return noSeat(true);
+    // The login is a separate cookie, so the pending consent survives the
+    // round-trip to Pocket ID and is still here when the approver returns.
     if (!seat) return startLogin(env);
+    if (pendingId) return authcodeConsent(env, registrar, seat, pendingId);
     return page('The approval desk', codeEntryForm(
       await csrfFor(seat.value, '', env.SESSION_SECRET),
       'a door is waiting somewhere with a code on its screen. Type it in.',
@@ -438,6 +611,9 @@ export async function handleApprove(
 
   if (url.pathname === '/approve/confirm') {
     if (req.method !== 'POST') return notice('Not allowed', 'a decision is a POST', 405);
+    // The consent cookie tells the two flows apart: an MCP visit elects a scope;
+    // a device knock decides a full-house lease as it always has.
+    if (pendingId) return authcodeConfirm(req, env, registrar, pendingId);
     return confirm(req, env, gov);
   }
 
