@@ -305,6 +305,36 @@ describe('handleAuthcode /token authorization_code', () => {
     expect('access_token' in body).toBe(false);
   });
 
+  test('a resource that differs from MCP_RESOURCE_URL is refused and mints nothing', async () => {
+    const h = harness();
+    const req = tokenReq({
+      grant_type: 'authorization_code', code: 'pending-xyz',
+      client_id: 'client-abc', redirect_uri: REDIRECT, code_verifier: 'v'.repeat(64),
+      resource: 'https://evil.test/mcp',
+    });
+    const res = await handleAuthcode(req, h.env, h.gov, h.registrar);
+    expect(res.status).toBe(400);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.error).toBe('invalid_target');
+    expect('access_token' in body).toBe(false);
+    expect(h.calls.redeem).toEqual([]);
+    expect(h.calls.mint).toEqual([]);
+  });
+
+  test('a matching resource on /token still succeeds', async () => {
+    const h = harness();
+    const req = tokenReq({
+      grant_type: 'authorization_code', code: 'pending-xyz',
+      client_id: 'client-abc', redirect_uri: REDIRECT, code_verifier: 'v'.repeat(64),
+      resource: RESOURCE,
+    });
+    const res = await handleAuthcode(req, h.env, h.gov, h.registrar);
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body).toMatchObject({ access_token: 'jla_access', scope: 'reading-room' });
+    expect(h.calls.mint).toHaveLength(1);
+  });
+
   test('a redeem failure is invalid_grant', async () => {
     const h = harness({ redeem: { error: 'invalid_grant: pkce' } });
     const req = tokenReq({

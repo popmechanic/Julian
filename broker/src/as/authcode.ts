@@ -157,7 +157,8 @@ function field(form: FormData, name: string): string {
 }
 
 async function handleTokenAuthcode(
-  form: FormData, gov: DurableObjectStub<GovernorDO>, registrar: DurableObjectStub<RegistrarDO>,
+  form: FormData, env: Env,
+  gov: DurableObjectStub<GovernorDO>, registrar: DurableObjectStub<RegistrarDO>,
 ): Promise<Response> {
   const code = field(form, 'code');
   const clientId = field(form, 'client_id');
@@ -165,6 +166,16 @@ async function handleTokenAuthcode(
   const codeVerifier = field(form, 'code_verifier');
   if (!code || !clientId || !redirectUri || !codeVerifier) {
     return json({ error: 'invalid_request', error_description: 'code, client_id, redirect_uri, and code_verifier are required' }, 400);
+  }
+
+  // RFC 8707: the measured clients send `resource` on /token as well as
+  // /authorize. Defense-in-depth — the code is already bound to the resource
+  // validated at /authorize — but if a `resource` is presented here it must be
+  // the gate's own /mcp URL exactly. A mismatch mints nothing; a missing value
+  // is acceptable. Checked before redeem so a bad target consumes no code.
+  const resource = field(form, 'resource');
+  if (resource && !timingSafeEqual(resource, env.MCP_RESOURCE_URL)) {
+    return json({ error: 'invalid_target', error_description: 'resource does not match the protected resource' }, 400);
   }
 
   let redeemed: { elected_scope: string; door_name: string } | { error: string };
@@ -198,12 +209,13 @@ async function handleTokenAuthcode(
 }
 
 async function handleToken(
-  req: Request, gov: DurableObjectStub<GovernorDO>, registrar: DurableObjectStub<RegistrarDO>,
+  req: Request, env: Env,
+  gov: DurableObjectStub<GovernorDO>, registrar: DurableObjectStub<RegistrarDO>,
 ): Promise<Response> {
   const form = await parseForm(req);
   if (!form) return json({ error: 'invalid_request' }, 400);
   const grantType = field(form, 'grant_type');
-  if (grantType === AUTHCODE_GRANT_TYPE) return handleTokenAuthcode(form, gov, registrar);
+  if (grantType === AUTHCODE_GRANT_TYPE) return handleTokenAuthcode(form, env, gov, registrar);
   return json({ error: 'unsupported_grant_type' }, 400);
 }
 
@@ -216,7 +228,7 @@ export async function handleAuthcode(
   const path = new URL(req.url).pathname;
   if (path === '/register' && req.method === 'POST') return handleRegister(req, registrar);
   if (path === '/authorize' && req.method === 'GET') return handleAuthorize(req, env, registrar);
-  if (path === '/token' && req.method === 'POST') return handleToken(req, gov, registrar);
+  if (path === '/token' && req.method === 'POST') return handleToken(req, env, gov, registrar);
   return new Response('Not found', { status: 404 });
 }
 
