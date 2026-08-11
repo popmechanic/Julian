@@ -94,7 +94,20 @@ export class RegistrarDO extends DurableObject {
       code_hash TEXT PRIMARY KEY, client_id TEXT NOT NULL, redirect_uri TEXT NOT NULL,
       code_challenge TEXT NOT NULL, resource TEXT NOT NULL, elected_scope TEXT,
       approver_sub TEXT, created INTEGER NOT NULL, expires INTEGER NOT NULL,
-      used INTEGER NOT NULL DEFAULT 0)`);
+      used INTEGER NOT NULL DEFAULT 0, origin TEXT NOT NULL DEFAULT '')`);
+    // Guarded migration (`governor.ts` idiom): an `authcodes` table that
+    // predates the per-pending `origin` column gets it added here. The origin
+    // shown to the approver and baked into the door_name must derive from THIS
+    // authorization's own redirect_uri, not a client-level first-origin — a
+    // client that registers two https origins would otherwise show origin A
+    // while delivering the code to origin B. `ALTER TABLE ADD COLUMN` is unsafe
+    // to repeat, so it is gated on `PRAGMA table_info`.
+    const acCols = new Set(
+      (sql.exec('PRAGMA table_info(authcodes)').toArray() as Array<{ name: string }>).map((r) => r.name),
+    );
+    if (!acCols.has('origin')) {
+      sql.exec("ALTER TABLE authcodes ADD COLUMN origin TEXT NOT NULL DEFAULT ''");
+    }
   }
 
   /** The only clock the DO reads. Tests override it to drive expiry. */
@@ -160,16 +173,28 @@ export class RegistrarDO extends DurableObject {
     if (!registered.some((u) => redirectMatches(u, p.redirect_uri))) {
       return { error: 'invalid_redirect_uri' };
     }
+    // Bind the origin to THIS authorization's redirect_uri, not the client's
+    // stored first-origin. This is the pending's own identity: `pendingView`
+    // shows it, and `redeem` derives the door_name from it. A client registered
+    // with several acceptable origins therefore yields one distinct, separately
+    // approved door per origin it actually authorizes through — the origin shown
+    // to Marcus always equals where the code will be delivered.
+    let origin: string;
+    try {
+      origin = new URL(p.redirect_uri).origin;
+    } catch {
+      return { error: 'invalid_redirect_uri' };
+    }
     const pendingId = randomToken();
     const codeHash = await sha256Hex(pendingId);
     const now = this.now();
     this.sql.exec(
       `INSERT INTO authcodes
         (code_hash, client_id, redirect_uri, code_challenge, resource,
-         elected_scope, approver_sub, created, expires, used)
-       VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, 0)`,
+         elected_scope, approver_sub, created, expires, used, origin)
+       VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, 0, ?)`,
       codeHash, p.client_id, p.redirect_uri, p.code_challenge, p.resource,
-      now, now + p.ttlSeconds * 1000,
+      now, now + p.ttlSeconds * 1000, origin,
     );
     return { pendingId };
   }
@@ -190,16 +215,18 @@ export class RegistrarDO extends DurableObject {
   }
 
   /**
-   * The un-privileged view the approval page renders. Returns the client,
-   * origin, and the redirect_uri the code targets — never the challenge, the
-   * scope, or the approver. Null when the pendingId is unknown.
+   * The un-privileged view the approval page renders. Returns the client, the
+   * origin OF THIS pending's own redirect_uri, and the redirect_uri the code
+   * targets — never the challenge, the scope, or the approver. The origin shown
+   * always equals where the code is delivered. Null when the pendingId is
+   * unknown.
    */
   async pendingView(
     pendingId: string,
   ): Promise<{ client_id: string; origin: string; redirect_uri: string } | null> {
     const codeHash = await sha256Hex(pendingId);
     const row = this.sql.exec(
-      `SELECT a.client_id AS client_id, a.redirect_uri AS redirect_uri, c.origin AS origin
+      `SELECT a.client_id AS client_id, a.redirect_uri AS redirect_uri, a.origin AS origin
          FROM authcodes a JOIN clients c ON c.client_id = a.client_id
         WHERE a.code_hash = ?`,
       codeHash,
@@ -216,7 +243,9 @@ export class RegistrarDO extends DurableObject {
    * Redeem a code for its elected scope. Single-use (marks `used=1`); requires
    * both `elected_scope` and `approver_sub` set; re-checks `client_id` and the
    * exact `redirect_uri`; verifies PKCE S256; refuses expired or already-used.
-   * Derives a stable `door_name` (`visit:<origin-host>`) from the client origin.
+   * Derives a stable `door_name` (`visit:<origin-host>`) from the pending's own
+   * redirect_uri origin — where the code is delivered, never a client-level
+   * first-origin.
    */
   async redeem(p: {
     code: string;
@@ -229,7 +258,7 @@ export class RegistrarDO extends DurableObject {
       `SELECT a.client_id AS client_id, a.redirect_uri AS redirect_uri,
               a.code_challenge AS code_challenge, a.elected_scope AS elected_scope,
               a.approver_sub AS approver_sub, a.expires AS expires, a.used AS used,
-              c.origin AS origin
+              a.origin AS origin
          FROM authcodes a JOIN clients c ON c.client_id = a.client_id
         WHERE a.code_hash = ?`,
       codeHash,

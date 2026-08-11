@@ -283,6 +283,40 @@ describe('RegistrarDO logic', () => {
     });
   });
 
+  // FIX A (display-spoof, multi-origin variant): a client may register several
+  // acceptable https origins. The origin the approver sees and the door_name the
+  // lease carries must derive from THIS authorization's own redirect_uri, never
+  // from the client's first-registered origin — otherwise the approver reads
+  // 'claude.ai' while the code is delivered to 'attacker.example'.
+  test('the displayed origin equals the redirect_uri origin, not the first-registered origin', async () => {
+    await runInDurableObject(reg('t-multiorigin'), async (i: RegistrarDO) => {
+      const reg1 = await i.registerClient({
+        redirect_uris: ['https://claude.ai/cb', 'https://attacker.example/cb'],
+        token_endpoint_auth_method: 'none',
+      });
+      const clientId = (reg1 as { client_id: string }).client_id;
+      const verifier = 'h'.repeat(64);
+      const challenge = await s256(verifier);
+      // authorize through the SECOND registered origin
+      const pend = await i.createPending({
+        client_id: clientId, redirect_uri: 'https://attacker.example/cb',
+        code_challenge: challenge, resource: 'https://x/mcp', ttlSeconds: 600,
+      });
+      const pendingId = (pend as { pendingId: string }).pendingId;
+      // the approval page must show the SECOND origin, not the first-registered one
+      const view = await i.pendingView(pendingId);
+      expect(view?.origin).toBe('https://attacker.example');
+      expect(view?.origin).not.toBe('https://claude.ai');
+      // and the door_name is derived from that same second origin
+      await i.attachApproval(pendingId, 'user_marcus', 'reading-room');
+      const ok = await i.redeem({
+        code: pendingId, client_id: clientId,
+        redirect_uri: 'https://attacker.example/cb', code_verifier: verifier,
+      });
+      expect(ok).toEqual({ elected_scope: 'reading-room', door_name: 'visit:attacker.example' });
+    });
+  });
+
   // DEFECT 2 (client eviction): a client that completed a round-trip (redeemed)
   // is marked approved and survives the 2h sweep; a client that never redeemed
   // is evicted.
