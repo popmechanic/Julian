@@ -7,7 +7,8 @@
 // so closing the window early is a revoke, not a deploy.
 import { keySetFor, verifyWithKeySet } from './auth';
 import type { Env } from './env';
-import type { GovernorDO, LeaseIdentity } from './governor';
+import type { GovernorDO, LeaseIdentity, LeaseReserveResult } from './governor';
+import { policyFor } from './policy';
 
 export const ACCESS_PREFIX = 'jla_';
 export const LEGACY_LEASE_ID = 'legacy-window';
@@ -107,4 +108,58 @@ export async function authenticate(
   if (!allowed) return json({ error: WINDOW_CLOSED }, 401);
 
   return { leaseId: LEGACY_LEASE_ID, doorName: LEGACY_LEASE_ID, scope: LEGACY_SCOPE, principal: 'julian' };
+}
+
+/**
+ * A refusal is an act, and acts are ledgered. `reserveLease` with a zero cap is
+ * the register's denied pen: it writes one row under `lease:<id>` marked
+ * disallowed and spends no quota. If the governor is unreachable the caller is
+ * refused anyway — a lost refusal row never widens what a door may do.
+ */
+export async function ledgerRefusal(
+  gov: DurableObjectStub<GovernorDO>, auth: LeaseIdentity,
+  service: string, verb: string, detail: string,
+): Promise<void> {
+  try {
+    await gov.reserveLease(auth.leaseId, auth.doorName, service, verb, detail, 0, 0);
+  } catch {
+    // The refusal stands either way.
+  }
+}
+
+// Returns null when the act may proceed; otherwise the refusal Response.
+// Fail closed: an unreachable governor refuses — no act without a ledger entry.
+export async function reserve(
+  gov: DurableObjectStub<GovernorDO>, auth: LeaseIdentity,
+  service: string, verb: string, detail: string,
+): Promise<Response | null> {
+  const policy = policyFor(service, verb);
+  if (!policy) return json({ error: 'unknown verb' }, 404);
+
+  if (!scopeAllows(auth.scope, service, verb)) {
+    await ledgerRefusal(gov, auth, service, verb, `refused: scope ${auth.scope} may not ${service}.${verb}`);
+    return json({
+      error: `this lease holds scope ${auth.scope}, which may not ${service}.${verb} — re-knock for full-house if the door needs it`,
+    }, 403);
+  }
+
+  let result: LeaseReserveResult;
+  try {
+    result = await gov.reserveLease(
+      auth.leaseId, auth.doorName, service, verb, detail,
+      policy.capPerDay, leaseCapFor(auth, service, verb),
+    );
+  } catch {
+    return json({ error: GOVERNOR_DOWN }, 503);
+  }
+  if (!result.ok) {
+    return json({
+      error: 'cap',
+      refusedBy: result.refusedBy,
+      policy: `${service}.${verb}: ${result.cap}/day`,
+      count: result.count,
+      cap: result.cap,
+    }, 429);
+  }
+  return null;
 }

@@ -24,3 +24,8 @@ describe('policy table', () => {
     expect(POLICY['mail.send'].capPerDay).toBe(20);
   });
 });
+
+test('package verbs have policy rows (uncapped)', () => {
+  expect(policyFor('package', 'list')).toEqual({ capPerDay: null });
+  expect(policyFor('package', 'read')).toEqual({ capPerDay: null });
+});

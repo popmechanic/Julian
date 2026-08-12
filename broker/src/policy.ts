@@ -7,6 +7,8 @@ export const POLICY: Readonly<Record<string, Readonly<Policy>>> = Object.freeze(
   'mail.list':   Object.freeze({ capPerDay: null }),
   'mail.read':   Object.freeze({ capPerDay: null }),
   'mail.health': Object.freeze({ capPerDay: null }),
+  'package.list': Object.freeze({ capPerDay: null }),
+  'package.read': Object.freeze({ capPerDay: null }),
 });
 
 export function policyFor(service: string, verb: string): Policy | undefined {

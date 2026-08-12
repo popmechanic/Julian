@@ -4,6 +4,10 @@ export interface Env {
   GOVERNOR: DurableObjectNamespace;
   REGISTRAR: DurableObjectNamespace;
 
+  // The package pin: one KV key (package-types PIN_KEY) holding the content
+  // sha every package read is served from. Written only by /pin-bump.
+  PIN: KVNamespace;
+
   // The gate's own `/mcp` URL — RFC 8707 `resource` on the authcode flow is
   // valid only for this exact value.
   MCP_RESOURCE_URL: string;
@@ -21,6 +25,9 @@ export interface Env {
   GATE_REDIRECT_URI: string;  // must match the client's registered callback
   PUBLIC_URL: string;         // the gate's own origin, as a door sees it
   LEGACY_WINDOW_END: string;  // ISO date; after it, Pocket ID bearers are refused
+
+  PACKAGE_RAW_BASE: string;   // raw content root, e.g. https://raw.githubusercontent.com/popmechanic/Julian
+  PIN_COMPARE_BASE: string;   // branch-membership proof root, e.g. https://api.github.com/repos/popmechanic/Julian/compare/main...
 
   // Secrets.
   SESSION_SECRET: string;     // signs the approver session cookie

@@ -18,12 +18,18 @@ new_sqlite_classes = ["GovernorDO"]
 tag = "v2"
 new_sqlite_classes = ["RegistrarDO"]
 
+[[kv_namespaces]]
+binding = "PIN"
+id = "TBD-created-at-deploy"   # real id pasted by the deploy runbook (Task 9); vitest/miniflare ignore ids
+
 [vars]
 OIDC_ISSUER = "https://souls.exe.xyz"
 OIDC_JWKS_URL = "https://souls.exe.xyz/.well-known/jwks.json"
 OIDC_AUDIENCE = "0143f667-3c75-4779-b16c-e2709ffdc049"   # Pocket ID client_id for the Julian app
 AGENTMAIL_INBOX_ID = "julian-marcus@agentmail.to"        # public address, not a secret
 MCP_RESOURCE_URL = "https://julian-broker.julian-memory.workers.dev/mcp"
+PACKAGE_RAW_BASE = "https://raw.githubusercontent.com/popmechanic/Julian"
+PIN_COMPARE_BASE = "https://api.github.com/repos/popmechanic/Julian/compare/main..."
 
 # The gate's own face. These are placeholders so `wrangler dev` and the test
 # runtime have the right shape; the real values are set at deploy.
