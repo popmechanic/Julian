@@ -63,10 +63,33 @@ export async function currentPin(env: Env): Promise<string | null> {
   return env.PIN.get(PIN_KEY);
 }
 
+/**
+ * Unwraps a fetched response body, wrapping any mid-read failure (stream
+ * reset, timeout-after-headers) as a typed integrity error instead of
+ * letting the module reject — fail loud, never partial (spec §6). Takes
+ * only the `arrayBuffer` method so a plain stub can drive it in tests.
+ */
+export async function readResponseBody(
+  res: Pick<Response, 'arrayBuffer'>,
+  path: string,
+  pinSha: string,
+): Promise<ArrayBuffer | PackageFailure> {
+  try {
+    return await res.arrayBuffer();
+  } catch {
+    return integrity(`body read failed for ${path}`, pinSha);
+  }
+}
+
 export async function loadManifest(
   env: Env,
 ): Promise<{ class: 'ok'; manifest: PackageManifest; pinSha: string; pinnedAt: string | null } | PackageFailure> {
-  const pinSha = await currentPin(env);
+  let pinSha: string | null;
+  try {
+    pinSha = await currentPin(env);
+  } catch {
+    return { class: 'integrity', message: 'pin read failed', pinSha: null };
+  }
   if (!pinSha) return UNPINNED;
   let res: Response;
   try {
@@ -99,6 +122,16 @@ export async function readPackageFile(env: Env, callerPath: string): Promise<Pac
   // package (review Identity HIGH-2). Distinct from every integrity error.
   if (!entry) return { class: 'held-at-home', path, pinSha };
 
+  // Enforce the cap before ever issuing the fetch: a manifest entry that
+  // already declares itself oversized is refused with zero bytes crossing
+  // the wire (spec §6).
+  if (entry.bytes > MAX_FILE_BYTES) {
+    return integrity(
+      `${entry.path} exceeds the ${MAX_FILE_BYTES}-byte cap (manifest declares ${entry.bytes} bytes)`,
+      pinSha,
+    );
+  }
+
   let res: Response;
   try {
     res = await fetchPinned(env, pinSha, entry.path); // the entry's path, never the caller's
@@ -107,7 +140,22 @@ export async function readPackageFile(env: Env, callerPath: string): Promise<Pac
   }
   if (!res.ok) return integrity(`fetch returned ${res.status} for ${entry.path}`, pinSha);
 
-  const bytes = await res.arrayBuffer();
+  // Pre-check the advertised size before buffering the whole body, when the
+  // upstream response bothers to advertise one.
+  const contentLength = res.headers.get('content-length');
+  if (contentLength !== null && Number(contentLength) > MAX_FILE_BYTES) {
+    return integrity(
+      `${entry.path} exceeds the ${MAX_FILE_BYTES}-byte cap (content-length ${contentLength})`,
+      pinSha,
+    );
+  }
+
+  const bodyResult = await readResponseBody(res, entry.path, pinSha);
+  if (!(bodyResult instanceof ArrayBuffer)) return bodyResult;
+  const bytes = bodyResult;
+
+  // Fallback safety net: a response that lied about (or omitted) its
+  // content-length is still caught after buffering, never truncated.
   if (bytes.byteLength > MAX_FILE_BYTES) {
     return integrity(`${entry.path} exceeds the ${MAX_FILE_BYTES}-byte cap`, pinSha);
   }
