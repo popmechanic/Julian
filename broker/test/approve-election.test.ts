@@ -20,7 +20,7 @@ const APPROVER = 'user_marcus';
 const PENDING = 'pending-xyz';
 const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
 
-type PendingView = { client_id: string; origin: string; redirect_uri: string };
+type PendingView = { client_id: string; origin: string; redirect_uri: string; state: string };
 type AttachArgs = [string, string, string];
 type DecideArgs = [string, KnockDecision, string, LeaseScope];
 
@@ -32,6 +32,7 @@ const VIEW: PendingView = {
   client_id: 'client-abc',
   origin: 'https://claude.ai',
   redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+  state: 'cli-state-42',
 };
 
 function harness(reg: RegistrarScript = {}, gov: GovScript = {}, overrides: Partial<Env> = {}) {
@@ -180,8 +181,53 @@ describe('the authcode scope election', () => {
       postConfirm(header, { csrf, decision: 'open', scope: 'reading-room' }, '?pending=FORGED'),
       env, governor, registrar,
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(302);
     expect(calls.attachApproval).toEqual([[PENDING, APPROVER, 'reading-room']]);
+  });
+
+  test('an approval delivers the code to the pending\'s own redirect_uri with the echoed state', async () => {
+    const { env, registrar, governor } = harness();
+    const { session, header } = await consentCookies();
+    const csrf = await csrfFor(session, PENDING, SECRET);
+    const res = await handleApprove(
+      postConfirm(header, { csrf, decision: 'open', scope: 'reading-room' }),
+      env, governor, registrar,
+    );
+    expect(res.status).toBe(302);
+    const location = new URL(res.headers.get('Location') ?? '');
+    expect(`${location.origin}${location.pathname}`).toBe(VIEW.redirect_uri);
+    expect(location.searchParams.get('code')).toBe(PENDING);
+    expect(location.searchParams.get('state')).toBe('cli-state-42');
+    const cleared = (res.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie?.()
+      ?? (res.headers.get('Set-Cookie') ? [res.headers.get('Set-Cookie') as string] : []);
+    expect(cleared.some((c) => c.startsWith(`${PENDING_COOKIE}=;`))).toBe(true);
+  });
+
+  test('a pending with no client state delivers the code without a state param', async () => {
+    const { env, registrar, governor } = harness({ view: { ...VIEW, state: '' } });
+    const { session, header } = await consentCookies();
+    const csrf = await csrfFor(session, PENDING, SECRET);
+    const res = await handleApprove(
+      postConfirm(header, { csrf, decision: 'open', scope: 'reading-room' }),
+      env, governor, registrar,
+    );
+    expect(res.status).toBe(302);
+    const location = new URL(res.headers.get('Location') ?? '');
+    expect(location.searchParams.get('code')).toBe(PENDING);
+    expect(location.searchParams.has('state')).toBe(false);
+  });
+
+  test('an approval whose pending has vanished before delivery is a 409, not a redirect', async () => {
+    const { env, registrar, governor, calls } = harness({ view: null });
+    const { session, header } = await consentCookies();
+    const csrf = await csrfFor(session, PENDING, SECRET);
+    const res = await handleApprove(
+      postConfirm(header, { csrf, decision: 'open', scope: 'reading-room' }),
+      env, governor, registrar,
+    );
+    expect(res.status).toBe(409);
+    expect(res.headers.get('Location')).toBe(null);
+    expect(calls.attachApproval).toEqual([]);
   });
 
   test('electing stream-read without the second confirmation is rejected back to the election screen', async () => {
@@ -205,7 +251,7 @@ describe('the authcode scope election', () => {
       postConfirm(header, { csrf, decision: 'open', scope: 'stream-read', stream_confirm: 'yes' }),
       env, governor, registrar,
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(302);
     expect(calls.attachApproval).toEqual([[PENDING, APPROVER, 'stream-read']]);
   });
 
@@ -233,7 +279,7 @@ describe('the authcode scope election', () => {
     expect(calls.attachApproval).toEqual([]);
   });
 
-  test('Refuse turns the visit away, burns the cookie, and never attaches', async () => {
+  test('Refuse sends the client access_denied at its redirect_uri, burns the cookie, and never attaches', async () => {
     const { env, registrar, governor, calls } = harness();
     const { session, header } = await consentCookies();
     const csrf = await csrfFor(session, PENDING, SECRET);
@@ -241,11 +287,29 @@ describe('the authcode scope election', () => {
       postConfirm(header, { csrf, decision: 'refuse', scope: 'reading-room' }),
       env, governor, registrar,
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(302);
+    const location = new URL(res.headers.get('Location') ?? '');
+    expect(`${location.origin}${location.pathname}`).toBe(VIEW.redirect_uri);
+    expect(location.searchParams.get('error')).toBe('access_denied');
+    expect(location.searchParams.get('state')).toBe('cli-state-42');
+    expect(location.searchParams.has('code')).toBe(false);
     expect(calls.attachApproval).toEqual([]);
     const cleared = (res.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie?.()
       ?? (res.headers.get('Set-Cookie') ? [res.headers.get('Set-Cookie') as string] : []);
     expect(cleared.some((c) => c.startsWith(`${PENDING_COOKIE}=;`))).toBe(true);
+  });
+
+  test('Refuse with the pending already gone is still a clean turn-away, no redirect', async () => {
+    const { env, registrar, governor, calls } = harness({ view: null });
+    const { session, header } = await consentCookies();
+    const csrf = await csrfFor(session, PENDING, SECRET);
+    const res = await handleApprove(
+      postConfirm(header, { csrf, decision: 'refuse', scope: 'reading-room' }),
+      env, governor, registrar,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Location')).toBe(null);
+    expect(calls.attachApproval).toEqual([]);
   });
 
   test('a stale CSRF token is refused and never attaches', async () => {

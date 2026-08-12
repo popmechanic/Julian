@@ -511,6 +511,25 @@ async function authcodeConsent(
  * electable here, and `stream-read` takes the second confirmation; either miss
  * lands back on the election screen having attached nothing.
  */
+/**
+ * The delivery leg of the code flow (RFC 6749 §4.1.2): send the approver's
+ * browser to the pending's own registrar-validated redirect_uri — proven at
+ * createPending, never anything a form or URL claims — carrying either the
+ * code or an error, and echoing the client's `state` exactly when it sent one.
+ * The pending cookie is spent either way.
+ */
+function deliverRedirect(
+  view: { redirect_uri: string; state: string }, params: Record<string, string>,
+): Response {
+  const target = new URL(view.redirect_uri);
+  for (const [k, v] of Object.entries(params)) target.searchParams.set(k, v);
+  if (view.state) target.searchParams.set('state', view.state);
+  return new Response(null, {
+    status: 302,
+    headers: { Location: target.toString(), 'Set-Cookie': clearCookie(PENDING_COOKIE) },
+  });
+}
+
 async function authcodeConfirm(
   req: Request, env: Env, registrar: DurableObjectStub<RegistrarDO> | undefined, pendingId: string,
 ): Promise<Response> {
@@ -530,9 +549,23 @@ async function authcodeConfirm(
   if (choice !== 'open' && choice !== 'refuse') {
     return notice('Bad request', 'that was neither Open nor Refuse — nothing was decided', 400);
   }
-  if (choice === 'refuse') {
-    return notice('Refused', 'the visit was turned away. It holds nothing.', 200, [clearCookie(PENDING_COOKIE)]);
+
+  // Both decisions end at the visitor's callback, so both need the pending's
+  // own view; a vanished pending is reported honestly instead of redirected.
+  let view: { client_id: string; origin: string; redirect_uri: string; state: string } | null;
+  try {
+    view = await registrar.pendingView(pendingId);
+  } catch {
+    return notice('Gate unavailable', REGISTRAR_DOWN, 503);
   }
+
+  if (choice === 'refuse') {
+    // Told no at its own callback (RFC 6749 §4.1.2.1) so it stops waiting.
+    if (!view) return notice('Refused', 'the visit was turned away. It holds nothing.', 200, [clearCookie(PENDING_COOKIE)]);
+    return deliverRedirect(view, { error: 'access_denied' });
+  }
+
+  if (!view) return notice('No visit waiting', NO_PENDING, 409, [clearCookie(PENDING_COOKIE)]);
 
   const elected = form.get('scope') ?? '';
   const streamConfirmed = form.get('stream_confirm') === STREAM_CONFIRM;
@@ -540,15 +573,7 @@ async function authcodeConfirm(
     || (elected === STREAM_SCOPE && !streamConfirmed);
 
   if (badElection) {
-    // Back to the election screen with nothing attached. Re-fetch the view to
-    // redraw it; a pending that has since vanished is reported honestly.
-    let view: { client_id: string; origin: string; redirect_uri: string } | null;
-    try {
-      view = await registrar.pendingView(pendingId);
-    } catch {
-      return notice('Gate unavailable', REGISTRAR_DOWN, 503);
-    }
-    if (!view) return notice('No visit waiting', NO_PENDING, 409, [clearCookie(PENDING_COOKIE)]);
+    // Back to the election screen with nothing attached.
     const message = elected === STREAM_SCOPE
       ? `${STREAM_SCOPE} needs the extra confirmation before it can be granted.`
       : 'choose a scope for this visit.';
@@ -569,11 +594,9 @@ async function authcodeConfirm(
     return notice('Nothing to decide', NO_PENDING, 409, [clearCookie(PENDING_COOKIE)]);
   }
 
-  return notice(
-    'Opened',
-    `this visit may enter with a ${elected} lease. It collects its token on the next token exchange; revoke it any time from /leases.`,
-    200, [clearCookie(PENDING_COOKIE)],
-  );
+  // The code is the pendingId itself; the client trades it at /token, where
+  // PKCE, the client_id, and the exact redirect_uri are all re-proven.
+  return deliverRedirect(view, { code: pendingId });
 }
 
 // ── the face ────────────────────────────────────────────────────────────────

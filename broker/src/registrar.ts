@@ -94,7 +94,8 @@ export class RegistrarDO extends DurableObject {
       code_hash TEXT PRIMARY KEY, client_id TEXT NOT NULL, redirect_uri TEXT NOT NULL,
       code_challenge TEXT NOT NULL, resource TEXT NOT NULL, elected_scope TEXT,
       approver_sub TEXT, created INTEGER NOT NULL, expires INTEGER NOT NULL,
-      used INTEGER NOT NULL DEFAULT 0, origin TEXT NOT NULL DEFAULT '')`);
+      used INTEGER NOT NULL DEFAULT 0, origin TEXT NOT NULL DEFAULT '',
+      state TEXT NOT NULL DEFAULT '')`);
     // Guarded migration (`governor.ts` idiom): an `authcodes` table that
     // predates the per-pending `origin` column gets it added here. The origin
     // shown to the approver and baked into the door_name must derive from THIS
@@ -107,6 +108,12 @@ export class RegistrarDO extends DurableObject {
     );
     if (!acCols.has('origin')) {
       sql.exec("ALTER TABLE authcodes ADD COLUMN origin TEXT NOT NULL DEFAULT ''");
+    }
+    // Same guarded idiom for the client's OAuth `state`: stored so the approval
+    // page can echo it on the delivery redirect (RFC 6749 §4.1.2 requires the
+    // exact value back when the client sent one).
+    if (!acCols.has('state')) {
+      sql.exec("ALTER TABLE authcodes ADD COLUMN state TEXT NOT NULL DEFAULT ''");
     }
   }
 
@@ -162,6 +169,7 @@ export class RegistrarDO extends DurableObject {
     redirect_uri: string;
     code_challenge: string;
     resource: string;
+    state?: string;
     ttlSeconds: number;
   }): Promise<{ pendingId: string } | { error: string }> {
     this.sweep();
@@ -191,10 +199,10 @@ export class RegistrarDO extends DurableObject {
     this.sql.exec(
       `INSERT INTO authcodes
         (code_hash, client_id, redirect_uri, code_challenge, resource,
-         elected_scope, approver_sub, created, expires, used, origin)
-       VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, 0, ?)`,
+         elected_scope, approver_sub, created, expires, used, origin, state)
+       VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, 0, ?, ?)`,
       codeHash, p.client_id, p.redirect_uri, p.code_challenge, p.resource,
-      now, now + p.ttlSeconds * 1000, origin,
+      now, now + p.ttlSeconds * 1000, origin, p.state ?? '',
     );
     return { pendingId };
   }
@@ -223,10 +231,11 @@ export class RegistrarDO extends DurableObject {
    */
   async pendingView(
     pendingId: string,
-  ): Promise<{ client_id: string; origin: string; redirect_uri: string } | null> {
+  ): Promise<{ client_id: string; origin: string; redirect_uri: string; state: string } | null> {
     const codeHash = await sha256Hex(pendingId);
     const row = this.sql.exec(
-      `SELECT a.client_id AS client_id, a.redirect_uri AS redirect_uri, a.origin AS origin
+      `SELECT a.client_id AS client_id, a.redirect_uri AS redirect_uri, a.origin AS origin,
+              a.state AS state
          FROM authcodes a JOIN clients c ON c.client_id = a.client_id
         WHERE a.code_hash = ?`,
       codeHash,
@@ -236,6 +245,7 @@ export class RegistrarDO extends DurableObject {
       client_id: String(row.client_id),
       origin: String(row.origin),
       redirect_uri: String(row.redirect_uri),
+      state: String(row.state),
     };
   }
 

@@ -119,6 +119,41 @@ describe('RegistrarDO logic', () => {
     });
   });
 
+  test('createPending records the client state and pendingView returns it for the redirect', async () => {
+    await runInDurableObject(reg('t-state'), async (i: RegistrarDO) => {
+      const reg1 = await i.registerClient({
+        redirect_uris: ['https://claude.ai/api/mcp/auth_callback'],
+        token_endpoint_auth_method: 'none',
+      });
+      const clientId = (reg1 as { client_id: string }).client_id;
+      const challenge = await s256('c'.repeat(64));
+      const pend = await i.createPending({
+        client_id: clientId, redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+        code_challenge: challenge, resource: 'https://x/mcp', state: 'cli-state-42', ttlSeconds: 600,
+      });
+      const pendingId = (pend as { pendingId: string }).pendingId;
+      const view = await i.pendingView(pendingId);
+      expect(view).toMatchObject({ state: 'cli-state-42' });
+    });
+  });
+
+  test('a createPending with no state yields an empty state, never a null', async () => {
+    await runInDurableObject(reg('t-state-empty'), async (i: RegistrarDO) => {
+      const reg1 = await i.registerClient({
+        redirect_uris: ['https://claude.ai/api/mcp/auth_callback'],
+        token_endpoint_auth_method: 'none',
+      });
+      const clientId = (reg1 as { client_id: string }).client_id;
+      const challenge = await s256('d'.repeat(64));
+      const pend = await i.createPending({
+        client_id: clientId, redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+        code_challenge: challenge, resource: 'https://x/mcp', ttlSeconds: 600,
+      });
+      const view = await i.pendingView((pend as { pendingId: string }).pendingId);
+      expect(view?.state).toBe('');
+    });
+  });
+
   test('createPending rejects a redirect_uri the client never registered', async () => {
     await runInDurableObject(reg('t-mismatch'), async (i: RegistrarDO) => {
       const reg1 = await i.registerClient({

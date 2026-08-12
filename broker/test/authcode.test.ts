@@ -28,6 +28,7 @@ type PendingArgs = {
   redirect_uri: string;
   code_challenge: string;
   resource: string;
+  state: string;
   ttlSeconds: number;
 };
 type PendingResult = { pendingId: string } | { error: string };
@@ -135,6 +136,7 @@ const HAPPY_AUTHORIZE = {
   code_challenge: 'a-challenge',
   code_challenge_method: 'S256',
   resource: RESOURCE,
+  state: 'cli-state-42',
 };
 
 function tokenReq(body: Record<string, string>): Request {
@@ -198,7 +200,17 @@ describe('handleAuthcode /authorize', () => {
     expect(h.calls.createPending[0]).toMatchObject({
       client_id: 'client-abc', redirect_uri: REDIRECT,
       code_challenge: 'a-challenge', resource: RESOURCE,
+      state: 'cli-state-42',
     });
+  });
+
+  test('an authorize without state stages a pending with an empty state', async () => {
+    const h = harness();
+    const params = { ...HAPPY_AUTHORIZE } as Record<string, string>;
+    delete params.state;
+    const res = await handleAuthcode(new Request(authorizeUrl(params)), h.env, h.gov, h.registrar);
+    expect(res.status).toBe(302);
+    expect(h.calls.createPending[0]).toMatchObject({ state: '' });
   });
 
   test('the pending cookie is Secure, HttpOnly, and SameSite=Lax', async () => {

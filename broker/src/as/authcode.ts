@@ -106,6 +106,10 @@ async function handleAuthorize(
   const challenge = q.get('code_challenge') ?? '';
   const challengeMethod = q.get('code_challenge_method') ?? '';
   const resource = q.get('resource') ?? '';
+  // RFC 6749 §4.1.1: `state` is the client's own CSRF token, opaque to the
+  // gate. Stored with the pending so the approval's delivery redirect can echo
+  // it back exactly; absent is recorded as ''.
+  const state = q.get('state') ?? '';
 
   // Validate everything BEFORE any redirect. A failure here is a 400 page —
   // never a bounce to an unvalidated redirect_uri.
@@ -123,7 +127,7 @@ async function handleAuthorize(
   try {
     pending = await registrar.createPending({
       client_id: clientId, redirect_uri: redirectUri,
-      code_challenge: challenge, resource, ttlSeconds: PENDING_TTL_SECONDS,
+      code_challenge: challenge, resource, state, ttlSeconds: PENDING_TTL_SECONDS,
     });
   } catch {
     return json({ error: GOVERNOR_DOWN }, 503);
