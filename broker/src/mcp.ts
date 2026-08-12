@@ -84,20 +84,29 @@ function toolError(text: string, structuredContent?: Record<string, unknown>): T
   return { isError: true, content: [{ type: 'text', text }], ...(structuredContent ? { structuredContent } : {}) };
 }
 
+// The Aug-12 live-probe lesson: an MCP client may render structuredContent as
+// THE result and never show the content blocks. So every structuredContent on
+// this face is self-sufficient — the body and the message ride in both halves.
 function readResult(r: PackageRead): ToolResult {
   if (r.class === 'ok') {
     return {
       content: [{ type: 'text', text: r.content }],
-      structuredContent: { class: 'ok', path: r.path, sha256: r.sha256, bytes: r.bytes, pinSha: r.pinSha },
+      structuredContent: {
+        class: 'ok', path: r.path, sha256: r.sha256, bytes: r.bytes,
+        pinSha: r.pinSha, content: r.content,
+      },
     };
   }
   if (r.class === 'held-at-home') {
     return {
       content: [{ type: 'text', text: heldAtHomeText(r.path) }],
-      structuredContent: { class: 'held-at-home', path: r.path, pinSha: r.pinSha },
+      structuredContent: {
+        class: 'held-at-home', path: r.path, pinSha: r.pinSha,
+        message: heldAtHomeText(r.path),
+      },
     };
   }
-  return toolError(r.message, { class: r.class, pinSha: r.pinSha });
+  return toolError(r.message, { class: r.class, pinSha: r.pinSha, message: r.message });
 }
 
 function heldAtHomeText(path: string): string {

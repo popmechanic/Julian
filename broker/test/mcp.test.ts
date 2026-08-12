@@ -240,9 +240,11 @@ describe('tools', () => {
     const r = result(body) as unknown as ToolResult;
     expect(r.isError).toBeFalsy();
     expect(r.content).toEqual([{ type: 'text', text: AGENT_TEXT }]);
+    // The live-probe lesson (Aug 12): clients may render structuredContent as
+    // THE result, so it must be self-sufficient — the body rides in both halves.
     expect(r.structuredContent).toEqual({
       class: 'ok', path: 'AGENT.md', sha256: await sha256Hex(AGENT_TEXT),
-      bytes: AGENT_TEXT.length, pinSha: PIN,
+      bytes: AGENT_TEXT.length, pinSha: PIN, content: AGENT_TEXT,
     });
     expect(calls).toEqual([[
       'l1', 'visit:localhost', 'package', 'read',
@@ -262,6 +264,7 @@ describe('tools', () => {
     expect(r.isError).toBeFalsy();
     expect(r.structuredContent).toEqual({
       class: 'held-at-home', path: 'memory/mail-journal.md', pinSha: PIN,
+      message: expect.stringContaining('policy, not damage'),
     });
     expect(r.content?.[0].text).toContain('held-at-home');
     expect(r.content?.[0].text).toContain('policy, not damage');
@@ -278,9 +281,14 @@ describe('tools', () => {
     expect(r.isError).toBe(true);
     expect(r.content?.[0].text).toContain(PIN);
     expect(r.content?.[0].text).toContain('hash mismatch');
-    expect(r.structuredContent).toEqual({ class: 'integrity', pinSha: PIN });
+    expect(r.structuredContent).toEqual({
+      class: 'integrity', pinSha: PIN,
+      message: expect.stringContaining('hash mismatch'),
+    });
+    expect(String((r.structuredContent as { message: string }).message)).toContain(PIN);
     // never partial: the bytes that failed the hash are not handed over
     expect(r.content?.[0].text).not.toContain('TAMPERED');
+    expect(JSON.stringify(r.structuredContent)).not.toContain('TAMPERED');
   });
 
   test('a hostile path never reaches the network and is a typed invalid-path error', async () => {
@@ -289,7 +297,10 @@ describe('tools', () => {
     );
     const r = result(body) as unknown as ToolResult;
     expect(r.isError).toBe(true);
-    expect(r.structuredContent).toEqual({ class: 'invalid-path', pinSha: null });
+    expect(r.structuredContent).toEqual({
+      class: 'invalid-path', pinSha: null,
+      message: expect.stringContaining('path'),
+    });
   });
 
   test('with no pin set the read fails loud as unpinned, never silently empty', async () => {
@@ -299,7 +310,10 @@ describe('tools', () => {
     );
     const r = result(body) as unknown as ToolResult;
     expect(r.isError).toBe(true);
-    expect(r.structuredContent).toEqual({ class: 'unpinned', pinSha: null });
+    expect(r.structuredContent).toEqual({
+      class: 'unpinned', pinSha: null,
+      message: expect.stringContaining('pin'),
+    });
   });
 
   test('a capped reservation becomes a tool error quoting the policy, not a silent read', async () => {

@@ -216,12 +216,16 @@ describe('a real MCP client against the gate', () => {
     for (const path of ELF_ORDER) {
       const r = await client.callTool({ name: 'package_read', arguments: { path } });
       expect(r.isError ?? false).toBe(false);
-      const sc = r.structuredContent as { class: string; path: string; sha256: string; pinSha: string };
+      const sc = r.structuredContent as { class: string; path: string; sha256: string; pinSha: string; content: string };
       expect(sc.class).toBe('ok');
       expect(sc.path).toBe(path);
       expect(sc.pinSha).toBe(fixture.sha);
       const digest = createHash('sha256').update(Buffer.from(textOf(r))).digest('hex');
       expect(digest).toBe(sc.sha256);
+      // The live-probe lesson (Aug 12): a client may render structuredContent as
+      // THE result — it must carry the body itself, hash-verifiable on its own.
+      const scDigest = createHash('sha256').update(Buffer.from(sc.content)).digest('hex');
+      expect(scDigest).toBe(sc.sha256);
     }
 
     // A catalog artifact the manifest does not carry is a *refusal*, not damage:
