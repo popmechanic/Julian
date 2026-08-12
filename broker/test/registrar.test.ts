@@ -400,4 +400,49 @@ describe('RegistrarDO logic', () => {
       expect('error' in goneB).toBe(true);
     });
   });
+
+  // Post-JOIN-removal regression: the authcode row is authoritative for
+  // client_id, redirect_uri, PKCE, scope, and approver. When the client row
+  // is swept (or explicitly deleted), an already-approved code remains valid
+  // — pendingView returns the pending's view and redeem succeeds with the
+  // elected scope. This pins the accepted post-JOIN-removal behavior (the
+  // pre-removal JOIN would have refused; the divergence was reviewed and
+  // accepted at the 20260812-b2face gate).
+  test('a deleted client row does not orphan an approved authcode', async () => {
+    await runInDurableObject(reg('t-sweep-client'), async (i: RegistrarDO) => {
+      const reg1 = await i.registerClient({
+        redirect_uris: ['https://claude.ai/api/mcp/auth_callback'],
+        token_endpoint_auth_method: 'none',
+      });
+      const clientId = (reg1 as { client_id: string }).client_id;
+      const verifier = 'i'.repeat(64);
+      const challenge = await s256(verifier);
+      const pend = await i.createPending({
+        client_id: clientId, redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+        code_challenge: challenge, resource: 'https://x/mcp', ttlSeconds: 600,
+      });
+      const pendingId = (pend as { pendingId: string }).pendingId;
+      await i.attachApproval(pendingId, 'user_marcus', 'reading-room');
+
+      // Simulate the sweep of an unapproved client: delete the client row
+      // directly via SQL to simulate the scenario where the client row
+      // is evicted but the approved authcode still lives.
+      i.sql.exec('DELETE FROM clients WHERE client_id = ?', clientId);
+
+      // pendingView still returns the pending's view (no JOIN dependency)
+      const view = await i.pendingView(pendingId);
+      expect(view).toMatchObject({
+        client_id: clientId,
+        redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+        origin: 'https://claude.ai',
+      });
+
+      // redeem succeeds with the elected scope (no JOIN dependency)
+      const ok = await i.redeem({
+        code: pendingId, client_id: clientId,
+        redirect_uri: 'https://claude.ai/api/mcp/auth_callback', code_verifier: verifier,
+      });
+      expect(ok).toMatchObject({ elected_scope: 'reading-room', door_name: 'visit:claude.ai' });
+    });
+  });
 });
