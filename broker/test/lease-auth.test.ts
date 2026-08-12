@@ -11,7 +11,7 @@ import { fetchMock } from 'cloudflare:test';
 import { SignJWT, generateKeyPair, exportJWK } from 'jose';
 import type { KeyLike } from 'jose';
 import worker from '../src/index';
-import { scopeAllows } from '../src/lease-auth';
+import { reserve, scopeAllows } from '../src/lease-auth';
 import type { Env } from '../src/env';
 import type { LeaseIdentity, LeaseReserveResult } from '../src/governor';
 
@@ -357,5 +357,38 @@ describe('scope→verb map (phase 2A)', () => {
     expect(scopeAllows('constructor', 'package', 'read')).toBe(false);
     expect(scopeAllows('toString', 'package', 'read')).toBe(false);
     expect(scopeAllows('__proto__', 'package', 'read')).toBe(false);
+  });
+});
+
+describe('reserve (exported)', () => {
+  const auth = { leaseId: 'l1', doorName: 'visit:x', scope: 'reading-room', principal: 'julian' };
+
+  function govStub(calls: unknown[][]) {
+    return {
+      async reserveLease(...args: unknown[]) { calls.push(args); return { ok: true, count: 1, cap: null }; },
+    } as never;
+  }
+
+  test('a scope that may not act is refused 403 and the refusal is ledgered', async () => {
+    const calls: unknown[][] = [];
+    const res = await reserve(govStub(calls), auth, 'mail', 'health', '');
+    expect(res?.status).toBe(403);
+    expect(calls).toHaveLength(1);       // the zero-cap denied pen
+    expect(calls[0][5]).toBe(0);
+    expect(calls[0][6]).toBe(0);
+  });
+
+  test('an allowed verb reserves once and returns null', async () => {
+    const calls: unknown[][] = [];
+    const res = await reserve(govStub(calls), auth, 'package', 'read', 'path=AGENT.md');
+    expect(res).toBe(null);
+    expect(calls).toHaveLength(1);
+  });
+
+  test('an unknown verb is 404 and never touches the governor', async () => {
+    const calls: unknown[][] = [];
+    const res = await reserve(govStub(calls), auth, 'nope', 'nope', '');
+    expect(res?.status).toBe(404);
+    expect(calls).toEqual([]);
   });
 });
