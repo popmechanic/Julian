@@ -1,0 +1,8 @@
+{
+  "include": [
+    "AGENT.md",
+    "catalog.md",
+    "soul/**",
+    "memory/dreams/**"
+  ]
+}
