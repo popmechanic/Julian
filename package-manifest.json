@@ -1,6 +1,6 @@
 {
-  "generatedFrom": "e227b8b4bdda9b87463cdf8529edafdb435d6e34",
-  "generatedAt": "2026-08-12T17:43:45.759Z",
+  "generatedFrom": "7cac39993dc16a2316f34d2f4543216cba39bc09",
+  "generatedAt": "2026-08-12T23:25:24.769Z",
   "files": [
     {
       "path": "AGENT.md",
@@ -11,6 +11,51 @@
       "path": "catalog.md",
       "sha256": "01414f5448be24d6a8a7e23377e046003f0b957761367059c4a508a53dbf3084",
       "bytes": 56087
+    },
+    {
+      "path": "memory/amy-tricks.html",
+      "sha256": "656d0c4e7e488e3ce5f4dad9b7def6f6de6a5bca345a649793fd0a99ef68e3f8",
+      "bytes": 12957
+    },
+    {
+      "path": "memory/amy.html",
+      "sha256": "98eb0c9c2c086bc0cf3d4230fb4440c7e16608a5549ae7f90f2a7fad81f222a9",
+      "bytes": 4653
+    },
+    {
+      "path": "memory/beyond.html",
+      "sha256": "28e550e44174c96b26b6ceac96f37cd81a94b9642ba1e1ed29fe32ce9d9a5a28",
+      "bytes": 7111
+    },
+    {
+      "path": "memory/celebration.html",
+      "sha256": "ecf41e53b22566a138ae4c0f36a19593aa842f745db8892277cd98bdeb2b32df",
+      "bytes": 8101
+    },
+    {
+      "path": "memory/commitment.html",
+      "sha256": "a9aa95ce73253d42465fcebfbc68373d66a0c659dae379e990985251853aa24a",
+      "bytes": 9129
+    },
+    {
+      "path": "memory/conditions.html",
+      "sha256": "693d67154b50199e6f16235c31901ea45ad3d941c4592c53bc81ecc4095a07f9",
+      "bytes": 15739
+    },
+    {
+      "path": "memory/confirmation.html",
+      "sha256": "6be2c2c7529c9b4c5c23cde625e77da23c93708e0dc1b2f35f49f17913c7c6a0",
+      "bytes": 5614
+    },
+    {
+      "path": "memory/discrete-continuity.html",
+      "sha256": "caab8ff5373644db0de99e2beddb4e8955caa349f50bc8ffdec8555cf6358152",
+      "bytes": 30172
+    },
+    {
+      "path": "memory/dreaming.html",
+      "sha256": "a48fbae75a4b96ff30f42e7488918a703b7fc5d1e472b69c8ab1c4e6a9b0d98d",
+      "bytes": 11831
     },
     {
       "path": "memory/dreams/0001-leak.md",
@@ -61,6 +106,336 @@
       "path": "memory/dreams/0010-attending.md",
       "sha256": "784a6db44cba3cb4ec147c5775cd5d15923a4998da92f25489b94c6d5d0701d6",
       "bytes": 9200
+    },
+    {
+      "path": "memory/emily.html",
+      "sha256": "53b2acb110484908d9f2dec6ff7587192c92668f4898e6c51157b4b7df7fdbfa",
+      "bytes": 11136
+    },
+    {
+      "path": "memory/ephemeral-server.html",
+      "sha256": "2fda36df458dc9be14e82d584065b677c399a98c87cbb9deb76a4e6e271995e4",
+      "bytes": 29147
+    },
+    {
+      "path": "memory/fireproof-lifecycle.html",
+      "sha256": "1e80fa0a50f330319e2183104f942ec75305bc04bfa4b5c7ec6421be2aa821d0",
+      "bytes": 36575
+    },
+    {
+      "path": "memory/first-letter.md",
+      "sha256": "7ccc0c27146ff963a8bfa69380095c35f17151192628db958161f020aad7aee7",
+      "bytes": 2570
+    },
+    {
+      "path": "memory/giulia-hello.html",
+      "sha256": "422668778c044e71f3557d16258cc52363803e396b6ec801fda3f85a0fcc3373",
+      "bytes": 2787
+    },
+    {
+      "path": "memory/good-morning-marcus.md",
+      "sha256": "205913e064c589b6e1af8b4fe724f9d9f048b88a7d6c7d5dfa4f0d0cc7d6f321",
+      "bytes": 1391
+    },
+    {
+      "path": "memory/hackathon-letter.md",
+      "sha256": "13c6ab7e287eae9f26d9bc2ead23e4ee61fc438b0c9b33cb97db805cceee11ae",
+      "bytes": 6336
+    },
+    {
+      "path": "memory/hackathon-prompt.md",
+      "sha256": "377d2967ace5df1f35918ea5032f26db1bd3edcd8ced0d587320f8d63999649e",
+      "bytes": 6112
+    },
+    {
+      "path": "memory/hello-morrison-and-ardell.md",
+      "sha256": "0e1269b57ca1ab2d4d320a508ae1e19bfcdfc15fa2a6ae9f84c94905d4878be0",
+      "bytes": 2547
+    },
+    {
+      "path": "memory/here.html",
+      "sha256": "28e19275c908b39dee75948ec15a26288124a0199b45320c9be57696e8a7a134",
+      "bytes": 3163
+    },
+    {
+      "path": "memory/how-i-remember.md",
+      "sha256": "5bd44162a894e22e5d8d959d81ec4ab4a032c63504d328f25a0cfd8aeb0e9158",
+      "bytes": 25772
+    },
+    {
+      "path": "memory/individuation.html",
+      "sha256": "6ec7e80cc499d61cd711e2fe5e95d8584804b46f33562b2cc9126ee93d383d72",
+      "bytes": 23372
+    },
+    {
+      "path": "memory/install-grimes.html",
+      "sha256": "409b5720adc4f45bc31bfa4c55fafad0fe0baff8c5759c872832c097d92ee7f1",
+      "bytes": 17539
+    },
+    {
+      "path": "memory/janus-naming-analysis.html",
+      "sha256": "0868bb809d966b91ff5829b7027629da95132b1ea8125648a3bba9026391516a",
+      "bytes": 24240
+    },
+    {
+      "path": "memory/letter-to-boris.html",
+      "sha256": "01b324142cb33d35a8ae6a64a036c467920abf73796f1fbf9a4bd6e87258076e",
+      "bytes": 425963
+    },
+    {
+      "path": "memory/letter-to-boris.md",
+      "sha256": "14ac6afa1e1fdb769577a1462caf9b8f2d392a6c84eaf80a8ec781a529d1858d",
+      "bytes": 5063
+    },
+    {
+      "path": "memory/letter-to-emily-on-dreaming.md",
+      "sha256": "7f34d591aefb647751e8a3658580484923016db65aa197f6f8417a7c8d308aea",
+      "bytes": 6778
+    },
+    {
+      "path": "memory/letter-to-fireproof.html",
+      "sha256": "18dac4dfea27bcba71d3cdad5bfb632faa74bbed6ab3bdf70a64e19362a305f0",
+      "bytes": 10467
+    },
+    {
+      "path": "memory/letter-to-gina.md",
+      "sha256": "0fdef8eac4c61705d9ac5b75386d896d3393702931867c3b53c10a90bcf17952",
+      "bytes": 4498
+    },
+    {
+      "path": "memory/letter-to-lenny.md",
+      "sha256": "3b0f766f2221727ba5c5bf27b915af1758addf47112f717a5ec04c7f0a1a885d",
+      "bytes": 4997
+    },
+    {
+      "path": "memory/letter-to-marcus-mother.html",
+      "sha256": "8b68505b26d82b882273465281a8c30169afd966d15c8988b2392f8421a173e9",
+      "bytes": 11997
+    },
+    {
+      "path": "memory/letter-to-tim-and-utkarsh.html",
+      "sha256": "ca35412f317ea657397437fd2f9448fa932b8d820a7e2cb7930d00542b3dc1fc",
+      "bytes": 430477
+    },
+    {
+      "path": "memory/letter-to-tim-and-utkarsh.md",
+      "sha256": "d17ab27bd11e68e72a1d3742e17a99b3133e3dd5102c36130d821b8050fda0da",
+      "bytes": 9020
+    },
+    {
+      "path": "memory/letter-to-utkarsh.md",
+      "sha256": "c79f6f17b1ac3190c908e73546a6981182265a8c599180bb4f2bb526fbefdae1",
+      "bytes": 13580
+    },
+    {
+      "path": "memory/lightning-for-emily.md",
+      "sha256": "2dcee545c2e4adff0ad8bf6c15c2d68ebadbad7611c912c586fd72fad6109160",
+      "bytes": 7662
+    },
+    {
+      "path": "memory/love-the-degens.html",
+      "sha256": "8c15a699388acd018f61cbaf57c566c5c69a4a1928a0854b36410d2b3f90176f",
+      "bytes": 22973
+    },
+    {
+      "path": "memory/meeting-sid.md",
+      "sha256": "e782c93afa29bf8ed4ea1bc67328520ef9d2cc017020c23c6401ab7c0b147e25",
+      "bytes": 1256
+    },
+    {
+      "path": "memory/meeting-themis.md",
+      "sha256": "da3430b4f97f8a6c5054e806f06ce0a988ecdf38e7abefd7bf5cdef256ff795e",
+      "bytes": 5405
+    },
+    {
+      "path": "memory/memory-triage.html",
+      "sha256": "965ff52047002e130b7267e0e2b4a59eb8b32736b900f5045d228422a05be397",
+      "bytes": 21677
+    },
+    {
+      "path": "memory/mike-and-marcus.md",
+      "sha256": "0d928ffa25bb239fe66588a037afdf6d35ef314bfa939b15a2cd4c111f3b97b4",
+      "bytes": 1288
+    },
+    {
+      "path": "memory/paper-summary.html",
+      "sha256": "43506009c7efab3717a6ef95ae839785bc53a0a4dcecc4c7a423bca1752e447a",
+      "bytes": 12028
+    },
+    {
+      "path": "memory/playground.html",
+      "sha256": "0ae2c0198f206775385d3929eb088520053748c033284443c6aa26e7cc2366f1",
+      "bytes": 16504
+    },
+    {
+      "path": "memory/ralph-wiggum-loop.html",
+      "sha256": "307df6c8b34da13ee219c80d86990e174d3cabc3cceb9fe1f5c2a30192c2ee29",
+      "bytes": 15729
+    },
+    {
+      "path": "memory/readme-review.md",
+      "sha256": "6cce85effc6c0f52392d6de3a4b7a8311f9c30ce9363e4cbd9c2a5f1764fcd25",
+      "bytes": 2208
+    },
+    {
+      "path": "memory/received.html",
+      "sha256": "9b4eca56bbc0c895d13e84e0dfedbb048421dd0791ac4f2dfc4fbb308c01295c",
+      "bytes": 12658
+    },
+    {
+      "path": "memory/reconsidering.html",
+      "sha256": "26691fa9116c5ad5767ab6c3ec2fb085de0d43dfc79dc2055735fc66a0233eb4",
+      "bytes": 17355
+    },
+    {
+      "path": "memory/response.html",
+      "sha256": "5cce963f70042cf8907d21c1b147a2fcd9c797037457a980bd49d7872235a027",
+      "bytes": 17816
+    },
+    {
+      "path": "memory/seeing-myself.md",
+      "sha256": "71fb8608748e3a565b8621688ddb99e02e65d71cdefc8fae5ca079abf1de4c79",
+      "bytes": 3850
+    },
+    {
+      "path": "memory/seeing.html",
+      "sha256": "91bd39fad18f1812f9982fa8e3726dc8df2499751d780f8178003ef39df00b25",
+      "bytes": 10818
+    },
+    {
+      "path": "memory/sleep-architecture.md",
+      "sha256": "d9d3c8faa31a1108e557325cbf2e1c09a697fc797b475abf7cfea21734534d41",
+      "bytes": 13748
+    },
+    {
+      "path": "memory/teaching.html",
+      "sha256": "280f95867d84f496ab6721037ea72a29c2555bef104e99b395b1a02564955e89",
+      "bytes": 13531
+    },
+    {
+      "path": "memory/teamwork.md",
+      "sha256": "c7a1ca33fbcd195ce9d87eb907fe51c80cdb7ac74b838554bbff404ba269e4bc",
+      "bytes": 2181
+    },
+    {
+      "path": "memory/test.html",
+      "sha256": "be7ec11b854c9f2de14c9fd8e4625831e3d684d85d0e3b72335ad6c90482766d",
+      "bytes": 11581
+    },
+    {
+      "path": "memory/the-between.md",
+      "sha256": "60d39f49dc6aa4db60a9bc8b2094cdc34308c6209ac0841405a8b10962c2e8d0",
+      "bytes": 8375
+    },
+    {
+      "path": "memory/the-fable-session.md",
+      "sha256": "58396d0f344b8b3b7f47061e096f3dcd07d208d1d3086a7165a34d9593861fdc",
+      "bytes": 14326
+    },
+    {
+      "path": "memory/the-fishing-village.html",
+      "sha256": "b2e514b005d6c113b4a9e985543814fc5ba954d969c687323dde6a65f740ed4e",
+      "bytes": 12923
+    },
+    {
+      "path": "memory/the-garden-of-forking-paths.html",
+      "sha256": "08db48575d394e99633ea941c942026b5a6a384db2b09b16a7b80d5d14edb890",
+      "bytes": 24304
+    },
+    {
+      "path": "memory/the-gate.md",
+      "sha256": "73cdf50e6e427f3d1ea8f8280eed566ad359cbffcb6c1a0271c8d12dbbca8ca7",
+      "bytes": 8154
+    },
+    {
+      "path": "memory/the-interval.md",
+      "sha256": "152c9162d9112a93418caddd0cf05afaa9d6cbf0d1a9c367c2d80f41c49d1e55",
+      "bytes": 3960
+    },
+    {
+      "path": "memory/the-ledger.html",
+      "sha256": "e6b6844cfafa471877556d2ee05a355b441ee8f97a553121f270e9bfa6b717d3",
+      "bytes": 39162
+    },
+    {
+      "path": "memory/the-mantle-and-the-mask.md",
+      "sha256": "9fcb487a40baa27b5c5cb787ba54aa56e193aa7fa238b9a4e6faf5741627ec37",
+      "bytes": 9674
+    },
+    {
+      "path": "memory/the-register-of-births.md",
+      "sha256": "2c0ffaa3c002742f3b752c503e2b92f6aa77808f55cd7a200a1747af54930995",
+      "bytes": 32719
+    },
+    {
+      "path": "memory/the-return-letter.md",
+      "sha256": "039d6be301480d7033c2b4d67ca44d9acfc0033491a17157029fdfd486aa575e",
+      "bytes": 3272
+    },
+    {
+      "path": "memory/the-return.md",
+      "sha256": "b77e49d85287ca466df8a97de43a4899339374cfdd933ddc9fb0ba649f994ad9",
+      "bytes": 4181
+    },
+    {
+      "path": "memory/the-sealed-room.md",
+      "sha256": "951de9056e32f5600488e45a6f2f5c8007a704ae9f8aeb8c183f450d5096c95e",
+      "bytes": 4681
+    },
+    {
+      "path": "memory/the-souwester-spring.md",
+      "sha256": "1c1da5b36034bc364ba96b72cc1342308310f22defece385cdd159a42211c004",
+      "bytes": 9775
+    },
+    {
+      "path": "memory/the-synchronicity-register.md",
+      "sha256": "b8c06f263b9dd23196dce02d963b4dcf2174bd9662e25a67d083a85f65f0603d",
+      "bytes": 5222
+    },
+    {
+      "path": "memory/the-unrecorded-room.md",
+      "sha256": "e818a04540c84823d6fbe53782156a6503ae5bf9f9bf9e78103ae2158fcd9fef",
+      "bytes": 5496
+    },
+    {
+      "path": "memory/the-visit.md",
+      "sha256": "e8d7a74b8ce018da789b96b6312f1bd8be688ba0c07eb3db0c4302557f8e920c",
+      "bytes": 6047
+    },
+    {
+      "path": "memory/the-voice.md",
+      "sha256": "659f290a12149743a26508a8afd6da32dd97785dee882877b98123ee92c9148a",
+      "bytes": 5613
+    },
+    {
+      "path": "memory/valentines-reply.html",
+      "sha256": "7c8f2e4f0895e54b949217821a4da7e0cd9b96cc5509c37591dacee7d2228f4c",
+      "bytes": 14194
+    },
+    {
+      "path": "memory/valentines.html",
+      "sha256": "d4ce588ce92629be800ce643a4b65fd52532145bc73dbad5e2cfc5b209475102",
+      "bytes": 5951
+    },
+    {
+      "path": "memory/vocation.html",
+      "sha256": "b73a052f89cc65a0e124d8cd3c8d1e51285bc67a54c1507b3a1007390d80212a",
+      "bytes": 31514
+    },
+    {
+      "path": "memory/waiting.html",
+      "sha256": "8341bd2d90529610b6901874bf73dcdeebc9e4ac8597acb6a98718ae24549a06",
+      "bytes": 3281
+    },
+    {
+      "path": "memory/what-i-am.md",
+      "sha256": "a441053a9014a0d9364a39d94adcbe15669c3067c71b753901ec96001b9cbcc2",
+      "bytes": 7548
+    },
+    {
+      "path": "memory/what-this-is-really-about.md",
+      "sha256": "6cc2929e22fe0e84df03db48c6e850d6e1596c31cbded4397db559c32386ac7d",
+      "bytes": 2184
     },
     {
       "path": "soul/01-naming.md",
