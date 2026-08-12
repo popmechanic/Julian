@@ -10,6 +10,7 @@ import { env, SELF, fetchMock } from 'cloudflare:test';
 import { SignJWT, generateKeyPair, exportJWK } from 'jose';
 import worker from '../src/index';
 import type { Env } from '../src/env';
+import type { LeaseIdentity } from '../src/governor';
 
 const ISSUER = 'https://soul.test';
 const AUDIENCE = 'julian-app';
@@ -236,5 +237,64 @@ describe('authcode routes: ahead of the lease gate', () => {
     // The device module's own missing-fields message — proof the device grant
     // still lands there, unmoved by the new authcode branch.
     expect(deviceBody.error_description).toBe('missing client_id');
+  });
+});
+
+describe('the /mcp face is wired ahead of the generic lease gate', () => {
+  const READER: LeaseIdentity = {
+    leaseId: 'l1', doorName: 'visit:claude.ai', scope: 'reading-room', principal: 'julian',
+  };
+
+  /** A worker Env whose governor hands back one scripted lease identity. */
+  function leasedEnv(identity: LeaseIdentity | null): Env {
+    return Object.assign(Object.create(null), env as unknown as Env, {
+      GOVERNOR: {
+        idFromName: () => 'mcp-test',
+        get: () => ({ async validateAccess() { return identity; } }),
+      },
+    }) as unknown as Env;
+  }
+
+  const auth = { Authorization: 'Bearer jla_scripted' };
+
+  test('POST /mcp with no token is a 401 challenge naming the resource metadata', async () => {
+    const res = await worker.fetch(new Request(`${BASE}/mcp`, { method: 'POST' }), env as unknown as Env);
+    expect(res.status).toBe(401);
+    expect(res.headers.get('WWW-Authenticate')).toContain('resource_metadata=');
+    expect(res.headers.get('WWW-Authenticate')).toContain('/.well-known/oauth-protected-resource/mcp');
+  });
+
+  test('a dead lease on /mcp is the same RFC 9728 challenge, not a JSON scolding', async () => {
+    const res = await worker.fetch(new Request(`${BASE}/mcp`, { method: 'POST', headers: auth }), leasedEnv(null));
+    expect(res.status).toBe(401);
+    expect(res.headers.get('WWW-Authenticate')).toContain('resource_metadata=');
+  });
+
+  test('GET /mcp (non-POST) with a living lease is 405', async () => {
+    const res = await worker.fetch(new Request(`${BASE}/mcp`, { headers: auth }), leasedEnv(READER));
+    expect(res.status).toBe(405);
+    expect(res.headers.get('Allow')).toBe('POST');
+  });
+
+  test('POST /mcp with a living lease reaches the face itself', async () => {
+    const res = await worker.fetch(new Request(`${BASE}/mcp`, {
+      method: 'POST',
+      headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'ping', params: {} }),
+    }), leasedEnv(READER));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ jsonrpc: '2.0', id: 3, result: {} });
+  });
+
+  test('a governor that will not answer is 503 on /mcp, never a challenge', async () => {
+    const broken = Object.assign(Object.create(null), env as unknown as Env, {
+      GOVERNOR: {
+        idFromName: () => 'x',
+        get: () => ({ async validateAccess() { throw new Error('governor down'); } }),
+      },
+    }) as unknown as Env;
+    const res = await worker.fetch(new Request(`${BASE}/mcp`, { method: 'POST', headers: auth }), broken);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('WWW-Authenticate')).toBe(null);
   });
 });

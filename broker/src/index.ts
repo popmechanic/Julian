@@ -11,6 +11,7 @@ import { handleDevice } from './as/device';
 import type { Env } from './env';
 import type { GovernorDO } from './governor';
 import { GOVERNOR_DOWN, authenticate, json, reserve } from './lease-auth';
+import { handleMcp } from './mcp';
 import type { RegistrarDO } from './registrar';
 import { mailHealth, mailList, mailRead, mailSend, validateSendBody } from './services/mail';
 export { GovernorDO } from './governor';
@@ -30,9 +31,9 @@ function registrar(env: Env): DurableObjectStub<RegistrarDO> {
 
 /**
  * The 401 a resource-server-unaware client gets from `/mcp` (RFC 9728 §5.1):
- * where to fetch protected-resource metadata. `/mcp` itself is not mounted
- * here — that is a future endpoint (B2) — but the discovery chain it will
- * point at is wired now, so this helper is ready the moment that door opens.
+ * where to fetch protected-resource metadata. This is the whole reason `/mcp`
+ * authenticates itself ahead of the generic lease gate — an MCP client must be
+ * handed the discovery chain, not a JSON scolding it cannot parse.
  */
 export function challenge401(env: Env): Response {
   return new Response(null, {
@@ -130,6 +131,20 @@ export default {
     }
     if (path === '/introspect' || path === '/refusals' || path === '/leases' || path.startsWith('/leases/') || path === '/ledger' || path === '/pin-bump') {
       return handleAdmin(req, env, gov);
+    }
+
+    if (path === '/mcp') {
+      // The MCP face authenticates itself so an unauthenticated client gets
+      // the RFC 9728 challenge (WWW-Authenticate → resource metadata), not a
+      // JSON scolding it cannot parse. Governor-down stays 503.
+      const auth = await authenticate(req, env, gov);
+      if (auth instanceof Response) {
+        return auth.status === 401 ? challenge401(env) : auth;
+      }
+      if (req.method !== 'POST') {
+        return new Response(null, { status: 405, headers: { Allow: 'POST' } });
+      }
+      return handleMcp(req, env, auth, gov);
     }
 
     // Everything past here is a verb, and every verb needs a living lease.
