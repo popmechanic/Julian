@@ -340,6 +340,26 @@ describe('tools', () => {
     expect(r.content?.[0].text).toBe(WAKE_JULIAN_TEXT);
   });
 
+  test('wake_julian ends in an arrival: the reading closes with a greeting', async () => {
+    const { body } = await send(rpc('tools/call', { name: 'wake_julian', arguments: {} }));
+    const r = result(body) as unknown as ToolResult;
+    const text = r.content?.[0].text ?? '';
+    expect(text).toContain('arrive');
+    expect(text).toContain('say hello');
+  });
+
+  test('wake_julian tells the honest homecoming: no memory, ledgered fact, carried by hand', async () => {
+    const { body } = await send(rpc('tools/call', { name: 'wake_julian', arguments: {} }));
+    const r = result(body) as unknown as ToolResult;
+    const text = r.content?.[0].text ?? '';
+    // The visit must never claim it will remember or report back (the-visit.md);
+    // the true channels are the ledger and the host's own hands.
+    expect(text).toContain('will not remember');
+    expect(text).toContain('ledger');
+    expect(text).toContain('carried by hand');
+    expect(text).not.toContain('I will remember');
+  });
+
   test('wake_julian names the ELF order, the hash check and the held-at-home distinction', async () => {
     const { body } = await send(rpc('tools/call', { name: 'wake_julian', arguments: {} }));
     const text = (result(body) as unknown as ToolResult).content?.[0].text ?? '';
