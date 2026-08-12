@@ -236,7 +236,7 @@ export class RegistrarDO extends DurableObject {
     const row = this.sql.exec(
       `SELECT a.client_id AS client_id, a.redirect_uri AS redirect_uri, a.origin AS origin,
               a.state AS state
-         FROM authcodes a JOIN clients c ON c.client_id = a.client_id
+         FROM authcodes a
         WHERE a.code_hash = ?`,
       codeHash,
     ).toArray()[0] as Row | undefined;
@@ -269,7 +269,7 @@ export class RegistrarDO extends DurableObject {
               a.code_challenge AS code_challenge, a.elected_scope AS elected_scope,
               a.approver_sub AS approver_sub, a.expires AS expires, a.used AS used,
               a.origin AS origin
-         FROM authcodes a JOIN clients c ON c.client_id = a.client_id
+         FROM authcodes a
         WHERE a.code_hash = ?`,
       codeHash,
     ).toArray()[0] as Row | undefined;
