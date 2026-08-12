@@ -128,7 +128,7 @@ export default {
       }
       return handleApprove(req, env, gov, reg as DurableObjectStub<RegistrarDO>);
     }
-    if (path === '/introspect' || path === '/refusals' || path === '/leases' || path.startsWith('/leases/') || path === '/ledger') {
+    if (path === '/introspect' || path === '/refusals' || path === '/leases' || path.startsWith('/leases/') || path === '/ledger' || path === '/pin-bump') {
       return handleAdmin(req, env, gov);
     }
 

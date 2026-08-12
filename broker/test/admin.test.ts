@@ -3,11 +3,19 @@
 // GOVERNOR stub behind `worker.fetch(req, env)` — since wrangler [vars] never
 // propagate through `SELF` (same seam lease-auth.test.ts and approve.test.ts
 // use).
-import { describe, expect, test } from 'vitest';
+import { afterEach, beforeAll, describe, expect, test } from 'vitest';
+import { fetchMock } from 'cloudflare:test';
 import worker from '../src/index';
 import type { Env } from '../src/env';
 import type { LeaseExport, LeaseIdentity, LeaseSummary } from '../src/governor';
 import { mintSession } from '../src/as/session';
+import { PIN_KEY } from '../src/package-types';
+
+beforeAll(() => {
+  fetchMock.activate();
+  fetchMock.disableNetConnect();
+});
+afterEach(() => fetchMock.assertNoPendingInterceptors());
 
 const BASE = 'https://gate.test';
 const INTROSPECT_SECRET = 'test-introspect-secret';
@@ -416,6 +424,137 @@ describe('POST /refusals (sync-side refusal ledger)', () => {
     const { env } = gateEnv({ governorDown: true });
     const res = await worker.fetch(refusalReq(goodBody, INTROSPECT_SECRET), env);
     expect(res.status).toBe(503);
+  });
+});
+
+describe('POST /pin-bump', () => {
+  const SHA = 'b'.repeat(40);
+  const RAW = 'https://raw.test';
+  const GITHUB = 'https://api.github.com';
+  const COMPARE_PREFIX = '/repos/popmechanic/Julian/compare/main...';
+
+  function pinKv(initial: string | null = null): KVNamespace {
+    const map = new Map<string, string>();
+    if (initial) map.set(PIN_KEY, initial);
+    return {
+      async get(key: string) { return map.get(key) ?? null; },
+      async put(key: string, value: string) { map.set(key, value); },
+    } as unknown as KVNamespace;
+  }
+
+  async function sha256Hex(text: string): Promise<string> {
+    const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function pinBumpEnv(kv: KVNamespace = pinKv()): { env: Env } {
+    const { env } = gateEnv({}, {
+      PIN: kv,
+      PACKAGE_RAW_BASE: RAW,
+      PIN_COMPARE_BASE: `${GITHUB}${COMPARE_PREFIX}`,
+    });
+    return { env };
+  }
+
+  function bumpReq(headers: Record<string, string> = {}, sha = SHA): Request {
+    return new Request(`${BASE}/pin-bump`, {
+      method: 'POST', headers: { ...FORM, ...headers },
+      body: new URLSearchParams({ sha }).toString(),
+    });
+  }
+
+  function interceptCompare(sha: string, status: string) {
+    fetchMock.get(GITHUB).intercept({ path: `${COMPARE_PREFIX}${sha}` }).reply(200, JSON.stringify({ status }));
+  }
+
+  function interceptManifest(sha: string, body: string, status = 200) {
+    fetchMock.get(RAW).intercept({ path: `/${sha}/package-manifest.json` }).reply(status, body);
+  }
+
+  function interceptFile(sha: string, path: string, body: string, status = 200) {
+    fetchMock.get(RAW).intercept({ path: `/${sha}/${path}` }).reply(status, body);
+  }
+
+  test('no credential → 401, KV untouched', async () => {
+    const kv = pinKv();
+    const { env } = pinBumpEnv(kv);
+    const res = await worker.fetch(bumpReq(), env);
+    expect(res.status).toBe(401);
+    expect(await kv.get(PIN_KEY)).toBeNull();
+  });
+
+  test('a lease token is not a register credential', async () => {
+    const kv = pinKv();
+    const { env } = pinBumpEnv(kv);
+    const res = await worker.fetch(bumpReq({ Authorization: 'Bearer jla_x' }), env);
+    expect(res.status).toBe(401);
+    expect(await kv.get(PIN_KEY)).toBeNull();
+  });
+
+  test('a malformed sha is refused before any fetch', async () => {
+    const kv = pinKv();
+    const { env } = pinBumpEnv(kv);
+    const res = await worker.fetch(
+      bumpReq({ 'X-Breakglass-Secret': BREAKGLASS_SECRET }, 'nope'), env,
+    );
+    expect(res.status).toBe(400);
+    expect(await kv.get(PIN_KEY)).toBeNull();
+    // No interceptors were registered above and fetchMock.disableNetConnect()
+    // is in force: a stray fetch would throw and fail this test.
+  });
+
+  test('a sha not on the default branch is refused', async () => {
+    const kv = pinKv();
+    const { env } = pinBumpEnv(kv);
+    interceptCompare(SHA, 'diverged');
+    const res = await worker.fetch(bumpReq({ 'X-Breakglass-Secret': BREAKGLASS_SECRET }), env);
+    expect(res.status).toBe(409);
+    expect(await kv.get(PIN_KEY)).toBeNull();
+  });
+
+  test('verify-fetch failure refuses the bump (push-then-bump race killed)', async () => {
+    const kv = pinKv();
+    const { env } = pinBumpEnv(kv);
+    interceptCompare(SHA, 'behind');
+    interceptManifest(SHA, 'gone', 404);
+    const res = await worker.fetch(bumpReq({ 'X-Breakglass-Secret': BREAKGLASS_SECRET }), env);
+    expect(res.status).toBe(502);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain(SHA);
+    expect(await kv.get(PIN_KEY)).toBeNull();
+  });
+
+  test('a spot-check hash mismatch refuses the bump', async () => {
+    const kv = pinKv();
+    const { env } = pinBumpEnv(kv);
+    const FILE_TEXT = '# AGENT\nJulian, lent.\n';
+    interceptCompare(SHA, 'behind');
+    interceptManifest(SHA, JSON.stringify({
+      generatedFrom: SHA, generatedAt: '2026-08-12T00:00:00Z',
+      files: [{ path: 'AGENT.md', sha256: await sha256Hex(FILE_TEXT), bytes: FILE_TEXT.length }],
+    }));
+    interceptFile(SHA, 'AGENT.md', `${FILE_TEXT}TAMPERED`);
+    const res = await worker.fetch(bumpReq({ 'X-Breakglass-Secret': BREAKGLASS_SECRET }), env);
+    expect(res.status).toBe(502);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain(SHA);
+    expect(await kv.get(PIN_KEY)).toBeNull();
+  });
+
+  test('a clean bump verifies then writes the pin', async () => {
+    const kv = pinKv();
+    const { env } = pinBumpEnv(kv);
+    const FILE_TEXT = '# AGENT\nJulian, lent.\n';
+    interceptCompare(SHA, 'identical');
+    interceptManifest(SHA, JSON.stringify({
+      generatedFrom: SHA, generatedAt: '2026-08-12T00:00:00Z',
+      files: [{ path: 'AGENT.md', sha256: await sha256Hex(FILE_TEXT), bytes: FILE_TEXT.length }],
+    }));
+    interceptFile(SHA, 'AGENT.md', FILE_TEXT);
+    const res = await worker.fetch(bumpReq({ 'X-Breakglass-Secret': BREAKGLASS_SECRET }), env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ pinned: SHA });
+    expect(await kv.get(PIN_KEY)).toBe(SHA);
   });
 });
 

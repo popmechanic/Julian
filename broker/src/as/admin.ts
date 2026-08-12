@@ -11,6 +11,8 @@
 import type { Env } from '../env';
 import type { GovernorDO, LeaseExport, LeaseIdentity, LeaseSummary } from '../governor';
 import { ACCESS_PREFIX, GOVERNOR_DOWN, json } from '../lease-auth';
+import { MANIFEST_PATH, PIN_KEY } from '../package-types';
+import type { PackageManifest } from '../package-types';
 import { readSession, timingSafeEqual } from './session';
 
 /** Same allowlist rule the approval desk enforces: empty or missing refuses everyone. */
@@ -153,6 +155,78 @@ async function readLedger(req: Request, gov: DurableObjectStub<GovernorDO>): Pro
   }
 }
 
+/** Spot-check depth: how many manifest files a bump re-verifies. */
+const PIN_SPOT_CHECKS = 3;
+
+async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
+  const d = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * The pin moves only after the new sha is proven: it must sit on the
+ * protected default branch, and the manifest plus a spot-check of its files
+ * must fetch-and-hash clean at that sha — killing the push-then-bump race
+ * (spec §6). Gated exactly like /leases/revoke; never a lease scope.
+ */
+async function pinBump(req: Request, env: Env): Promise<Response> {
+  const form = new URLSearchParams(await req.text());
+  const sha = (form.get('sha') ?? '').trim().toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(sha)) return json({ error: 'sha must be a 40-hex commit id' }, 400);
+
+  let compare: Response;
+  try {
+    // env.PIN_COMPARE_BASE: the compare-endpoint root from wrangler.toml
+    // (repo hardcoded there, e.g. …/repos/popmechanic/Julian/compare/main...);
+    // env-addressable so the CI harness can point it at a fixture server.
+    compare = await fetch(`${env.PIN_COMPARE_BASE}${sha}`, {
+      headers: { 'User-Agent': 'julian-gate', Accept: 'application/vnd.github+json' },
+    });
+  } catch {
+    return json({ error: `could not reach GitHub to prove ${sha} is on main` }, 502);
+  }
+  if (!compare.ok) return json({ error: `sha ${sha} is unknown to the repo` }, 409);
+  const rel = (await compare.json() as { status?: string }).status ?? '';
+  // 'identical' or 'behind' ⇒ sha is an ancestor of main (on the protected branch).
+  if (rel !== 'identical' && rel !== 'behind') {
+    return json({ error: `sha ${sha} is not on the default branch (${rel || 'unknown'})` }, 409);
+  }
+
+  let manifestRes: Response;
+  try {
+    manifestRes = await fetch(`${env.PACKAGE_RAW_BASE}/${sha}/${MANIFEST_PATH}`);
+  } catch {
+    return json({ error: `manifest fetch failed at ${sha} — pin unchanged` }, 502);
+  }
+  if (!manifestRes.ok) return json({ error: `no manifest at ${sha} (${manifestRes.status}) — pin unchanged` }, 502);
+  let manifest: PackageManifest;
+  try {
+    manifest = await manifestRes.json() as PackageManifest;
+  } catch {
+    return json({ error: `manifest at ${sha} is not JSON — pin unchanged` }, 502);
+  }
+  if (!Array.isArray(manifest.files) || manifest.files.length === 0) {
+    return json({ error: `manifest at ${sha} lists no files — pin unchanged` }, 502);
+  }
+
+  for (const entry of manifest.files.slice(0, PIN_SPOT_CHECKS)) {
+    let res: Response;
+    try {
+      res = await fetch(`${env.PACKAGE_RAW_BASE}/${sha}/${entry.path}`);
+    } catch {
+      return json({ error: `spot-check fetch failed for ${entry.path} at ${sha} — pin unchanged` }, 502);
+    }
+    if (!res.ok) return json({ error: `spot-check ${entry.path} returned ${res.status} at ${sha} — pin unchanged` }, 502);
+    const digest = await sha256Hex(await res.arrayBuffer());
+    if (digest !== entry.sha256) {
+      return json({ error: `spot-check hash mismatch for ${entry.path} at ${sha} — pin unchanged` }, 502);
+    }
+  }
+
+  await env.PIN.put(PIN_KEY, sha);
+  return json({ pinned: sha });
+}
+
 export async function handleAdmin(
   req: Request, env: Env, gov: DurableObjectStub<GovernorDO>,
 ): Promise<Response> {
@@ -168,13 +242,14 @@ export async function handleAdmin(
     return recordRefusal(req, env, gov);
   }
 
-  if (path === '/leases' || path === '/leases/revoke' || path === '/leases/export' || path === '/ledger') {
+  if (path === '/leases' || path === '/leases/revoke' || path === '/leases/export' || path === '/ledger' || path === '/pin-bump') {
     const authorized = await authorizeRegister(req, env);
     if (!authorized) return json({ error: NO_CREDENTIAL }, 401);
     if (path === '/leases' && req.method === 'GET') return listLeases(gov);
     if (path === '/leases/revoke' && req.method === 'POST') return revokeLease(req, gov, authorized);
     if (path === '/leases/export' && req.method === 'GET') return exportLeases(gov);
     if (path === '/ledger' && req.method === 'GET') return readLedger(req, gov);
+    if (path === '/pin-bump' && req.method === 'POST') return pinBump(req, env);
     return json({ error: 'no such register action' }, 404);
   }
 
