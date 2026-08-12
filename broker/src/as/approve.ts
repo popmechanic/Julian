@@ -121,11 +121,18 @@ label.choice { display: flex; align-items: baseline; gap: 0.5rem; margin: 0.5rem
 label.choice input { width: auto; }
 `.replace(/\s+/g, ' ');
 
-function page(title: string, body: string, status = 200, cookies: string[] = []): Response {
+function page(
+  title: string, body: string, status = 200, cookies: string[] = [], formActionExtra = '',
+): Response {
+  // Chrome enforces `form-action` against the whole redirect chain of a form
+  // submission, so a consent page whose confirm 302s the code to the visitor's
+  // callback must name that one origin here — it is the registrar-validated
+  // origin of the pending's own redirect_uri, never anything broader.
+  const formAction = formActionExtra ? `'self' ${formActionExtra}` : "'self'";
   const headers = new Headers({
     'Content-Type': 'text/html; charset=utf-8',
     'Content-Security-Policy':
-      "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+      `default-src 'none'; style-src 'unsafe-inline'; form-action ${formAction}; base-uri 'none'; frame-ancestors 'none'`,
     'X-Frame-Options': 'DENY',
     'Referrer-Policy': 'no-referrer',
     'Cache-Control': 'no-store',
@@ -502,7 +509,10 @@ async function authcodeConsent(
   if (!view) return notice('No visit waiting', NO_PENDING, 404, [clearCookie(PENDING_COOKIE)]);
 
   const csrf = await csrfFor(seat.value, pendingId, env.SESSION_SECRET);
-  return page('A visit is asking to enter', consentForm(view, csrf, isNewOrigin(view.origin)));
+  return page(
+    'A visit is asking to enter', consentForm(view, csrf, isNewOrigin(view.origin)),
+    200, [], deliveryOrigin(view.redirect_uri),
+  );
 }
 
 /**
@@ -511,6 +521,20 @@ async function authcodeConsent(
  * electable here, and `stream-read` takes the second confirmation; either miss
  * lands back on the election screen having attached nothing.
  */
+/**
+ * The one origin a consent page may name in `form-action` beside 'self': where
+ * the delivery redirect will land. Derived from the registrar-validated
+ * redirect_uri; an unparseable value contributes nothing (and delivery would
+ * refuse it later anyway).
+ */
+function deliveryOrigin(redirectUri: string): string {
+  try {
+    return new URL(redirectUri).origin;
+  } catch {
+    return '';
+  }
+}
+
 /**
  * The delivery leg of the code flow (RFC 6749 §4.1.2): send the approver's
  * browser to the pending's own registrar-validated redirect_uri — proven at
@@ -580,7 +604,7 @@ async function authcodeConfirm(
     return page(
       'A visit is asking to enter',
       consentForm(view, expected, isNewOrigin(view.origin), message),
-      400,
+      400, [], deliveryOrigin(view.redirect_uri),
     );
   }
 

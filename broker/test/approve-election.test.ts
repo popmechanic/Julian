@@ -123,6 +123,25 @@ describe('the authcode consent page', () => {
     expect(html).toContain(`value="${await csrfFor(session, PENDING, SECRET)}"`);
   });
 
+  test('the consent page form-action allows the pending redirect origin (Chrome checks the delivery redirect against it)', async () => {
+    const { env, registrar, governor } = harness();
+    const { header } = await consentCookies();
+    const res = await handleApprove(getConsent(env, header), env, governor, registrar);
+    expect(res.headers.get('Content-Security-Policy')).toContain("form-action 'self' https://claude.ai");
+  });
+
+  test('the bad-election redraw keeps the redirect origin in form-action too', async () => {
+    const { env, registrar, governor } = harness();
+    const { session, header } = await consentCookies();
+    const csrf = await csrfFor(session, PENDING, SECRET);
+    const res = await handleApprove(
+      postConfirm(header, { csrf, decision: 'open', scope: 'stream-read' }),
+      env, governor, registrar,
+    );
+    expect(res.status).toBe(400);
+    expect(res.headers.get('Content-Security-Policy')).toContain("form-action 'self' https://claude.ai");
+  });
+
   test('a hostile client_id claim is escaped, never rendered as live markup', async () => {
     const hostile: PendingView = { ...VIEW, client_id: '<script>alert(1)</script>' };
     const { env, registrar, governor } = harness({ view: hostile });
