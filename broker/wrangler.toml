@@ -20,7 +20,7 @@ new_sqlite_classes = ["RegistrarDO"]
 
 [[kv_namespaces]]
 binding = "PIN"
-id = "TBD-created-at-deploy"   # real id pasted by the deploy runbook (Task 9); vitest/miniflare ignore ids
+id = "7b51a9089a104dbba176dac1b1e0b593"   # created 2026-08-12 (B2 runbook step 1); vitest/miniflare ignore ids
 
 [vars]
 OIDC_ISSUER = "https://souls.exe.xyz"
