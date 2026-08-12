@@ -8,10 +8,15 @@
     "deploy": "wrangler deploy",
     "dev": "wrangler dev"
   },
-  "dependencies": { "jose": "^5.9.0" },
+  "dependencies": {
+    "jose": "^5.9.0"
+  },
   "devDependencies": {
-    "wrangler": "^4.0.0", "vitest": "^3.0.0", "typescript": "^5.6.0",
-    "@cloudflare/vitest-pool-workers": "^0.8.0", "@cloudflare/workers-types": "^4.0.0",
+    "wrangler": "^4.122.0",
+    "vitest": "^3.0.0",
+    "typescript": "^5.6.0",
+    "@cloudflare/vitest-pool-workers": "^0.8.71",
+    "@cloudflare/workers-types": "^4.20260702.1",
     "@modelcontextprotocol/sdk": "^1.0.0"
   }
 }
