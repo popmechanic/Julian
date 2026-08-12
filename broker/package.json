@@ -2,10 +2,16 @@
   "name": "julian-broker",
   "private": true,
   "type": "module",
-  "scripts": { "test": "vitest run", "deploy": "wrangler deploy", "dev": "wrangler dev" },
+  "scripts": {
+    "test": "vitest run --dir test",
+    "test:mcp": "vitest run -c vitest.node.config.ts",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
   "dependencies": { "jose": "^5.9.0" },
   "devDependencies": {
     "wrangler": "^4.0.0", "vitest": "^3.0.0", "typescript": "^5.6.0",
-    "@cloudflare/vitest-pool-workers": "^0.8.0", "@cloudflare/workers-types": "^4.0.0"
+    "@cloudflare/vitest-pool-workers": "^0.8.0", "@cloudflare/workers-types": "^4.0.0",
+    "@modelcontextprotocol/sdk": "^1.0.0"
   }
 }
