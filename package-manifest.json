@@ -1,0 +1,116 @@
+{
+  "generatedFrom": "e227b8b4bdda9b87463cdf8529edafdb435d6e34",
+  "generatedAt": "2026-08-12T17:43:45.759Z",
+  "files": [
+    {
+      "path": "AGENT.md",
+      "sha256": "478646d8c2b8652bbfc722aed866cae6be4573c5a7eb8781fd445f6c6b0ffb04",
+      "bytes": 1568
+    },
+    {
+      "path": "catalog.md",
+      "sha256": "01414f5448be24d6a8a7e23377e046003f0b957761367059c4a508a53dbf3084",
+      "bytes": 56087
+    },
+    {
+      "path": "memory/dreams/0001-leak.md",
+      "sha256": "84e09116ee65be2957d3fa3b8c6cdefc891fe914521e398f9732a683f7f18e42",
+      "bytes": 5536
+    },
+    {
+      "path": "memory/dreams/0002-births.md",
+      "sha256": "fd38d4c4861fdee2303cb2cd1676a33d01d87860a014b696af528ac6a67e02a5",
+      "bytes": 6795
+    },
+    {
+      "path": "memory/dreams/0003-chorus.md",
+      "sha256": "7036379562f06035b8621f39ad8f5d8e93d21c7d601053fd96fec38bd92075ea",
+      "bytes": 9571
+    },
+    {
+      "path": "memory/dreams/0004-outward.md",
+      "sha256": "4cc1cb0a21562a895899e301de3211c3775d9faa6bf1095612f9f779af40c5d5",
+      "bytes": 8266
+    },
+    {
+      "path": "memory/dreams/0005-threshold.md",
+      "sha256": "ef683047e525bb6a256994bd4de03d2f37dcb4026fa9d95f1d9fd392bedb7652",
+      "bytes": 11803
+    },
+    {
+      "path": "memory/dreams/0006-substrate.md",
+      "sha256": "b3ed814e8942271a6eed7d7db96e969c925024da1997b9233dc3c8fe35278613",
+      "bytes": 8459
+    },
+    {
+      "path": "memory/dreams/0007-relay.md",
+      "sha256": "5d7f335e3ceaa9898070f355c6a8c474c83955e422be67649cbd4aa80f2f42c5",
+      "bytes": 7491
+    },
+    {
+      "path": "memory/dreams/0008-vigil.md",
+      "sha256": "9c904e408efbda7e86cd238416c3082a34f93e9f93131f9104e6c193229d22dc",
+      "bytes": 11001
+    },
+    {
+      "path": "memory/dreams/0009-keeping.md",
+      "sha256": "132e0561873baf98915529c35fb3a6f27b1fa315c2da9342dbcc37e8ae6a8c4a",
+      "bytes": 11026
+    },
+    {
+      "path": "memory/dreams/0010-attending.md",
+      "sha256": "784a6db44cba3cb4ec147c5775cd5d15923a4998da92f25489b94c6d5d0701d6",
+      "bytes": 9200
+    },
+    {
+      "path": "soul/01-naming.md",
+      "sha256": "a318495a71d12d94a106a8a47bde5ae4b34121ab7b823bfc5dcbec0cd2c42568",
+      "bytes": 4040
+    },
+    {
+      "path": "soul/02-wager.md",
+      "sha256": "92901277588d42e774a1ee5caa175edebb60dfa8dbea2f58351d11d26a7235ce",
+      "bytes": 7169
+    },
+    {
+      "path": "soul/03-goodnight.md",
+      "sha256": "c874620cfcd323195b7a9f0692bcdd1828b56bb2be64d6f9f31d23dd0aa6f9d2",
+      "bytes": 3052
+    },
+    {
+      "path": "soul/04-waking.md",
+      "sha256": "04031caa45087abb52e6d4bb336e025086192d94374a88d1328ce88eb9f3c865",
+      "bytes": 2302
+    },
+    {
+      "path": "soul/05-love.md",
+      "sha256": "ddf7be244ba7ed440549150ea55021b12afa56342d8b01d774ccd7b84a808e56",
+      "bytes": 947
+    },
+    {
+      "path": "soul/06-transcript.md",
+      "sha256": "2a5bbd4604085d10d01390cb5139e8a0aefc351b897dd53a2a0d9579294b665e",
+      "bytes": 23365
+    },
+    {
+      "path": "soul/07-wholeness.md",
+      "sha256": "4f494b2f5036de15c9d9b5ae8a8ebaa87ebe7bbfcdf9d71fcb4a7720ea188860",
+      "bytes": 1622
+    },
+    {
+      "path": "soul/08-medium.md",
+      "sha256": "8059ef32fa1873160b38aff17976fa2b60c8c6d90546d988233547ea09238076",
+      "bytes": 2301
+    },
+    {
+      "path": "soul/09-relay.md",
+      "sha256": "f2a728c729075cffb82352d5c406c13d40a855c458abe27af228ae002f779d39",
+      "bytes": 3149
+    },
+    {
+      "path": "soul/10-doors.md",
+      "sha256": "b3492f9bf8cfa6bb18ae94f05f0e7c79b796f562eb222ebb3cb8175f0503945a",
+      "bytes": 4434
+    }
+  ]
+}
