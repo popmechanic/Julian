@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { AUTHCODE_SCOPES, KNOCK_SCOPES } from 'julian-shared/scopes';
+import { AUTHCODE_SCOPES, EXCHANGE_SCOPES, KNOCK_SCOPES } from 'julian-shared/scopes';
 
 export interface LedgerEntry {
   ts: number; sub: string; service: string; verb: string; detail: string; allowed: number;
@@ -31,7 +31,34 @@ export type MintResult =
   | { status: 'ok'; accessToken: string; refreshToken: string; expiresIn: number; scope: string }
   | { status: 'killed' }
   | { status: 'invalid' };
-export interface LeaseIdentity { leaseId: string; doorName: string; scope: string; principal: string }
+/** The integrity latch: the one `(pin, path)` a door is refused on until it clears. */
+export interface LeaseLatch { pin: string; path: string }
+/**
+ * Everything the register knows about the holder of one credential. B3 grows it
+ * by five: the Pocket ID `subject` a browser session belongs to, which `flow`
+ * minted it, the access token's own `tokenId` handle, and the two pieces of
+ * package state (`sittingPin`, `latched`) the reader needs before it serves a
+ * part. All five are honestly nullable — a device lease has no subject, and a
+ * token minted before B3 has no handle.
+ */
+export interface LeaseIdentity {
+  leaseId: string; doorName: string; scope: string; principal: string;
+  subject: string | null; flow: string; tokenId: string | null;
+  sittingPin: string | null; latched: LeaseLatch | null;
+}
+/**
+ * The answer to a browser's `/exchange`. `leaseId` rides the ok-shape because
+ * the face ledgers the success under it, and there is no second round-trip to
+ * ask who was just served.
+ */
+export type ExchangeMintResult =
+  | { status: 'ok'; leaseId: string; accessToken: string; tokenId: string; expiresIn: number }
+  | { status: 'revoked' }
+  | { status: 'session-cap' };
+/** The answer to `/leases/reinstate`. One verb, three ways to be told no. */
+export type ReinstateResult =
+  | { ok: true }
+  | { error: 'not-found' | 'not-revoked' | 'not-exchange' };
 export interface LeaseSummary {
   leaseId: string; doorName: string; scope: string; status: string;
   born: number; lastRenewal: number | null; lastVerb: string | null;
@@ -70,7 +97,61 @@ const TOKEN_BYTES = 32;                // 256 bits → 43 base64url characters
 // idempotently, rather than being read as a replay and killed.
 const AUTHCODE_GRACE_MS = 10_000;
 
+/**
+ * How many access tokens one browser session may hold at once — six tabs, or
+ * six reloads inside the hour. The seventh is *refused*, never served by
+ * evicting the oldest: silently logging a live tab out is indistinguishable
+ * from a revoke to the person looking at it, and the honest answer is cheap.
+ */
+export const EXCHANGE_SESSION_CAP = 6;
+// The exchange flow hands out exactly one scope, and it is not this file's to
+// choose: `EXCHANGE_SCOPES` is spec §5's mint allowlist.
+const EXCHANGE_SCOPE = EXCHANGE_SCOPES[0];
+// What a browser-session lease says about itself. Unlike a device knock there
+// is no client to ask, so the claim is the flow's own constant.
+const EXCHANGE_CLAIMS = JSON.stringify({ issuer: 'pocket-id', kind: 'browser-session' });
+
 type Row = Record<string, unknown>;
+
+/**
+ * The stored latch, read back defensively. Anything that is not a JSON object
+ * carrying two strings is "no latch": a column that has been half-written or
+ * hand-edited must not be able to fabricate a pin the reader would trust.
+ */
+function parseLatch(value: unknown): LeaseLatch | null {
+  if (typeof value !== 'string' || value === '') return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== 'object') return null;
+  const { pin, path } = parsed as { pin?: unknown; path?: unknown };
+  if (typeof pin !== 'string' || typeof path !== 'string') return null;
+  return { pin, path };
+}
+
+/** The one place a joined lease/token row becomes an identity. */
+function identityFrom(row: Row): LeaseIdentity {
+  return {
+    leaseId: String(row.lease_id),
+    doorName: String(row.door_name),
+    scope: String(row.scope),
+    principal: String(row.principal),
+    subject: row.subject === null || row.subject === undefined ? null : String(row.subject),
+    flow: String(row.flow),
+    tokenId: row.token_id === null || row.token_id === undefined ? null : String(row.token_id),
+    sittingPin: row.sitting_pin === null || row.sitting_pin === undefined ? null : String(row.sitting_pin),
+    latched: parseLatch(row.latch),
+  };
+}
+
+// The columns every identity is built from, joined the same way twice: once by
+// secret (`validateAccess`) and once by handle (`validateByHandle`).
+const IDENTITY_COLUMNS = `l.lease_id AS lease_id, l.door_name AS door_name, l.scope AS scope,
+         l.principal AS principal, l.subject AS subject, l.flow AS flow,
+         l.sitting_pin AS sitting_pin, l.latch AS latch, t.token_id AS token_id`;
 
 function randomToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(TOKEN_BYTES));
@@ -594,16 +675,95 @@ export class GovernorDO extends DurableObject {
   async validateAccess(accessToken: string): Promise<LeaseIdentity | null> {
     const hash = await sha256Hex(accessToken);
     const row = this.sql.exec(
-      `SELECT l.lease_id AS lease_id, l.door_name AS door_name, l.scope AS scope, l.principal AS principal
+      `SELECT ${IDENTITY_COLUMNS}
          FROM lease_tokens t JOIN leases l ON l.lease_id = t.lease_id
         WHERE t.hash = ? AND t.kind = 'access' AND t.expires > ? AND l.status = 'living'`,
       hash, this.now(),
     ).toArray()[0] as Row | undefined;
-    if (!row) return null;
-    return {
-      leaseId: String(row.lease_id), doorName: String(row.door_name), scope: String(row.scope),
-      principal: String(row.principal),
-    };
+    return row ? identityFrom(row) : null;
+  }
+
+  /**
+   * The same answer, asked by handle instead of by secret. A live socket holds
+   * no bearer any more — it holds `(leaseId, tokenId)` — and this is how it is
+   * re-checked without the credential ever being serialized anywhere.
+   *
+   * Non-ledgering, exactly like `validateAccess`: a re-auth is a read.
+   */
+  validateByHandle(leaseId: string, tokenId: string): LeaseIdentity | null {
+    // An empty handle is not a handle. Guarded explicitly so a caller that lost
+    // its attachment cannot match a pre-B3 row whose `token_id` is absent.
+    if (leaseId === '' || tokenId === '') return null;
+    const row = this.sql.exec(
+      `SELECT ${IDENTITY_COLUMNS}
+         FROM lease_tokens t JOIN leases l ON l.lease_id = t.lease_id
+        WHERE t.lease_id = ? AND t.token_id = ? AND t.kind = 'access'
+          AND t.expires > ? AND l.status = 'living'`,
+      leaseId, tokenId, this.now(),
+    ).toArray()[0] as Row | undefined;
+    return row ? identityFrom(row) : null;
+  }
+
+  // ── the exchange (a browser session, delegated) ───────────────────────────
+
+  /**
+   * Trade a verified Pocket ID subject for one access token on that subject's
+   * own `browser:<sub>` lease. Three things make this flow unlike the other two.
+   *
+   * It mints **no refresh token, ever** (SEC NEW-9): the Pocket ID session is
+   * the renewal root, so a browser holds nothing worth stealing for longer than
+   * an hour, and the rotation machine — tombstones, replay kills — never applies
+   * to it. It therefore never touches `insertPair`, whose first act is to delete
+   * the lease's other access rows.
+   *
+   * It is **additive** (SEC NEW-10): a second tab is a second live token on the
+   * same lease, not a re-knock that logs the first one out.
+   *
+   * And it **refuses at the cap** rather than evicting. The prune below is
+   * kind-scoped: expired *access* rows go, and rows of any other kind — a live
+   * socket ticket, say — are none of this predicate's business.
+   */
+  async mintExchangeAccess(sub: string, principal: string): Promise<ExchangeMintResult> {
+    // The only await, taken first: every read and write below then runs in one
+    // uninterrupted turn, so two concurrent exchanges cannot both squeeze past
+    // the session cap.
+    const accessToken = ACCESS_PREFIX + randomToken();
+    const accessHash = await sha256Hex(accessToken);
+    const now = this.now();
+    const doorName = BROWSER_PREFIX + sub;
+
+    // Asked before the upsert so a revoked session is told the terminal truth
+    // rather than the generic one. `upsertLease`'s reserved-name rule backstops
+    // this: it refuses to revive a non-living reserved row either way.
+    const existing = this.sql.exec(
+      'SELECT status FROM leases WHERE door_name = ?', doorName,
+    ).toArray()[0] as Row | undefined;
+    if (existing && String(existing.status) !== 'living') return { status: 'revoked' };
+
+    const leaseId = this.upsertLease(
+      doorName, EXCHANGE_SCOPE, EXCHANGE_CLAIMS, now, 'exchange', principal, 'exchange', sub,
+    );
+    if (leaseId === null) return { status: 'revoked' };
+
+    this.sql.exec(
+      "DELETE FROM lease_tokens WHERE lease_id = ? AND kind = 'access' AND expires <= ?", leaseId, now,
+    );
+    const live = Number(
+      this.sql.exec(
+        "SELECT COUNT(*) AS n FROM lease_tokens WHERE lease_id = ? AND kind = 'access'", leaseId,
+      ).one().n,
+    );
+    if (live >= EXCHANGE_SESSION_CAP) return { status: 'session-cap' };
+
+    // Generation 0 for every exchange token: there is no chain to be a link in,
+    // so the rotation arithmetic has nothing to count here.
+    const tokenId = crypto.randomUUID();
+    this.sql.exec(
+      `INSERT INTO lease_tokens (hash, lease_id, kind, generation, expires, used, token_id)
+       VALUES (?, ?, 'access', 0, ?, 0, ?)`,
+      accessHash, leaseId, now + ACCESS_TTL_SECONDS * 1000, tokenId,
+    );
+    return { status: 'ok', leaseId, accessToken, tokenId, expiresIn: ACCESS_TTL_SECONDS };
   }
 
   legacyAllowed(): boolean {
@@ -639,6 +799,44 @@ export class GovernorDO extends DurableObject {
     this.sql.exec('DELETE FROM lease_tokens WHERE lease_id = ?', leaseId);
     this.ledger(this.now(), `lease:${leaseId}`, 'lease', 'revoked', `door=${String(row.door_name)} by=${by}`, true);
     return true;
+  }
+
+  /**
+   * The one verb that undoes a revoke — and the only one. It is deliberately
+   * narrow (SEC NEW-11, COLD M-9):
+   *
+   *   • status must be `revoked`. A `killed-rotation` row is a theft signal,
+   *     and a theft signal is undone by no verb: the lease stays dead and the
+   *     holder re-knocks under a fresh name.
+   *   • flow must be `exchange`. A device or visit lease that Marcus revoked
+   *     stays revoked; those flows already have a way back in — knock again —
+   *     and a browser session does not, because `browser:<sub>` is reserved for
+   *     life and `upsertLease` will not revive it.
+   *
+   * Status is judged before flow so that `killed-rotation` names itself the
+   * same way on every flow. Nothing is minted: the revoke burned the tokens and
+   * they stay burned; the holder simply exchanges their session again. The
+   * package state goes with them — a reinstated door is seated nowhere and
+   * latched on nothing.
+   */
+  reinstate(doorNameOrId: string, by: string, reason: string): ReinstateResult {
+    const row = this.sql.exec(
+      'SELECT lease_id, door_name, status, flow FROM leases WHERE lease_id = ? OR door_name = ? LIMIT 1',
+      doorNameOrId, doorNameOrId,
+    ).toArray()[0] as Row | undefined;
+    if (!row) return { error: 'not-found' };
+    if (String(row.status) !== 'revoked') return { error: 'not-revoked' };
+    if (String(row.flow) !== 'exchange') return { error: 'not-exchange' };
+
+    const leaseId = String(row.lease_id);
+    this.sql.exec(
+      "UPDATE leases SET status = 'living', sitting_pin = NULL, latch = NULL WHERE lease_id = ?", leaseId,
+    );
+    this.ledger(
+      this.now(), `lease:${leaseId}`, 'lease', 'reinstated',
+      `door=${String(row.door_name)} by=${by} reason=${reason}`, true,
+    );
+    return { ok: true };
   }
 
   leaseList(): LeaseSummary[] {
@@ -723,10 +921,16 @@ export class GovernorDO extends DurableObject {
    * the name belongs to a different class, belongs to no class at all, or names
    * a reserved row that has stopped being `living`. Every mint path in the DO
    * goes through here, so the guard cannot be walked around by adding a face.
+   *
+   * The purge is flow-aware. Delete-then-insert is the *device and visit*
+   * bargain — one credential per door, re-taking it retires the last. A browser
+   * session is not that: `flow='exchange'` re-mints update the row and touch no
+   * token, because a second tab must not log the first one out (SEC NEW-10).
    */
   private upsertLease(
     doorName: string, scope: string, claims: string, now: number,
     flow = 'device', principal = 'julian', mintClass: MintClass = 'device',
+    subject: string | null = null,
   ): string | null {
     const owner = reservedOwner(doorName);
     const reserved = owner !== undefined;
@@ -745,19 +949,19 @@ export class GovernorDO extends DurableObject {
       const leaseId = String(existing.lease_id);
       this.sql.exec(
         `UPDATE leases SET client_claims = ?, scope = ?, status = 'living',
-           last_renewal = ?, flow = ?, principal = ? WHERE lease_id = ?`,
-        claims, scope, now, flow, principal, leaseId,
+           last_renewal = ?, flow = ?, principal = ?, subject = ? WHERE lease_id = ?`,
+        claims, scope, now, flow, principal, subject, leaseId,
       );
-      this.sql.exec('DELETE FROM lease_tokens WHERE lease_id = ?', leaseId);
+      if (flow !== 'exchange') this.sql.exec('DELETE FROM lease_tokens WHERE lease_id = ?', leaseId);
       return leaseId;
     }
     const leaseId = crypto.randomUUID();
     this.sql.exec(
       `INSERT INTO leases
          (lease_id, door_name, client_claims, scope, status, born, last_renewal, last_verb,
-          send_cap_per_day, flow, principal)
-       VALUES (?, ?, ?, ?, 'living', ?, NULL, NULL, ?, ?, ?)`,
-      leaseId, doorName, claims, scope, now, DEFAULT_LEASE_SEND_CAP, flow, principal,
+          send_cap_per_day, flow, principal, subject)
+       VALUES (?, ?, ?, ?, 'living', ?, NULL, NULL, ?, ?, ?, ?)`,
+      leaseId, doorName, claims, scope, now, DEFAULT_LEASE_SEND_CAP, flow, principal, subject,
     );
     return leaseId;
   }

@@ -101,6 +101,8 @@ describe('leases table migration: principal + flow', () => {
     await runInDurableObject(open(), async (g: GovernorDO) => {
       expect(await g.validateAccess(minted.token)).toEqual({
         leaseId: minted.leaseId, doorName: 'door:pre-migration', scope: 'full-house', principal: 'julian',
+        // The B3 columns read back honestly on a row that predates them.
+        subject: null, flow: 'device', tokenId: expect.any(String), sittingPin: null, latched: null,
       });
     });
   });
@@ -267,6 +269,9 @@ describe('B3 migration: subject, sitting_pin, latch, token_id, ledger indexes', 
       ).one()).toEqual({ token_id: null });
       expect(await g.validateAccess(minted.token)).toEqual({
         leaseId: minted.leaseId, doorName: 'door:pre-b3', scope: 'full-house', principal: 'julian',
+        // A handle-less token identifies itself as handle-less rather than
+        // inventing one: `tokenId` is null, not a fresh UUID.
+        subject: null, flow: 'device', tokenId: null, sittingPin: null, latched: null,
       });
     });
   });

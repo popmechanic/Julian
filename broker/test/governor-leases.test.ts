@@ -76,6 +76,9 @@ describe('knock → approve → poll lifecycle', () => {
 
       expect(await g.validateAccess(ready.accessToken)).toEqual({
         leaseId: expect.any(String), doorName: DOOR, scope: 'full-house', principal: 'julian',
+        // A device lease has no Pocket ID subject and sits on no package pin;
+        // its access row does carry the handle a socket is re-checked by.
+        subject: null, flow: 'device', tokenId: expect.any(String), sittingPin: null, latched: null,
       });
     });
   });
