@@ -21,9 +21,11 @@ async function sign(privateKey: CryptoKey, opts: { iss?: string; expOffset?: num
 }
 
 describe('verifyWithKeySet', () => {
-  test('valid token → sub', async () => {
+  test('valid token → sub and exp', async () => {
     const { privateKey, keySet } = await makeKeys();
-    expect(await verifyWithKeySet(await sign(privateKey), keySet, ISSUER)).toEqual({ sub: 'user_marcus' });
+    const claims = await verifyWithKeySet(await sign(privateKey), keySet, ISSUER);
+    expect(claims?.sub).toBe('user_marcus');
+    expect(typeof claims?.exp).toBe('number');
   });
   test('expired token → null', async () => {
     const { privateKey, keySet } = await makeKeys();
@@ -37,10 +39,11 @@ describe('verifyWithKeySet', () => {
     const { keySet } = await makeKeys();
     expect(await verifyWithKeySet('not-a-jwt', keySet, ISSUER)).toBeNull();
   });
-  test('audience enforced when provided: match → sub', async () => {
+  test('audience enforced when provided: match → sub and exp', async () => {
     const { privateKey, keySet } = await makeKeys();
-    expect(await verifyWithKeySet(await sign(privateKey, { aud: 'julian' }), keySet, ISSUER, 'julian'))
-      .toEqual({ sub: 'user_marcus' });
+    const claims = await verifyWithKeySet(await sign(privateKey, { aud: 'julian' }), keySet, ISSUER, 'julian');
+    expect(claims?.sub).toBe('user_marcus');
+    expect(typeof claims?.exp).toBe('number');
   });
   test('audience mismatch → null', async () => {
     const { privateKey, keySet } = await makeKeys();

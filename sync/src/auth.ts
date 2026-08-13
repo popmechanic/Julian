@@ -1,18 +1,10 @@
-import { jwtVerify, createRemoteJWKSet, createLocalJWKSet } from 'jose';
+import { createRemoteJWKSet, createLocalJWKSet } from 'jose';
 import type { JWTVerifyGetKey } from 'jose';
 
-export async function verifyWithKeySet(
-  token: string, keySet: JWTVerifyGetKey, issuer: string, audience?: string,
-): Promise<{ sub: string } | null> {
-  try {
-    const { payload } = await jwtVerify(token, keySet, {
-      issuer, clockTolerance: 60, ...(audience ? { audience } : {}),
-    });
-    return typeof payload.sub === 'string' && payload.sub ? { sub: payload.sub } : null;
-  } catch {
-    return null;
-  }
-}
+// The verifier itself now lives in julian-shared/auth (Task 2's hoist) —
+// re-exported here so `sync/src/index.ts` keeps working unchanged until the
+// call site there is updated directly.
+export { verifyWithKeySet } from 'julian-shared/auth';
 
 export interface Env {
   JULIAN_SYNC: DurableObjectNamespace;
