@@ -1,6 +1,7 @@
 // The gate's front door. Five faces hang off one worker: the knock (`/device`,
 // `/token`), the approval (`/approve`, `/auth/callback`), the register
-// (`/introspect`, `/leases*`), the browser pair (`/exchange`,
+// (`/introspect`, `/consume-ticket`, the two pens `/refusals` and `/allowed`,
+// and `/leases*`), the browser pair (`/exchange`,
 // `/socket-ticket`), and the verbs themselves. The first four carry their own
 // auth; everything else must present a living lease. A token buys a verb, never
 // the key — the upstream credential is read inside the service modules and is
@@ -139,7 +140,7 @@ export default {
       }
       return handleApprove(req, env, gov, reg as DurableObjectStub<RegistrarDO>);
     }
-    if (path === '/introspect' || path === '/refusals' || path === '/leases' || path.startsWith('/leases/') || path === '/ledger' || path === '/pin-bump') {
+    if (path === '/introspect' || path === '/consume-ticket' || path === '/refusals' || path === '/allowed' || path === '/leases' || path.startsWith('/leases/') || path === '/ledger' || path === '/pin-bump') {
       return handleAdmin(req, env, gov);
     }
 
