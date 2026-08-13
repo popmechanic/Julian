@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "app-dev",
+      "runtimeExecutable": "bunx",
+      "runtimeArgs": ["vite", "--port", "5199", "--strictPort"],
+      "cwd": "app",
+      "port": 5199
+    }
+  ]
+}
