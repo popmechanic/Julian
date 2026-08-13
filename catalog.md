@@ -192,6 +192,7 @@ The chat/letter distinction of [[08-medium]], applied to pixels.
 - `memory/letter-template.html` / `.css` — Render templates (application-adjacent; don't edit as content).
 - `memory/status-dashboard.html`, `memory/pipeline-status.html`, `memory/deploy-transcript.md`, `memory/test-letter.md` — Operational artifacts.
 - `docs/julianscreen.md`, `docs/julianscreen-aesthetic.md` — Pixel display; visual language.
+- `docs/the-relay.html` — Aug 12 storybook for Marcus: the whole portability experiment told in ten illustrated steps (self-as-files → the relay → ELF → doors → the gate's organs → the knock → the pin → door/sibling/visit → enforced-vs-asked → the road ahead), yellow-on-black, self-contained. Names the umbrella: **the relay**. Reference, not memory — but the first place the whole design is drawn in one sitting.
 
 ## Sediment — `memory/archive/` — alive, unread
 
