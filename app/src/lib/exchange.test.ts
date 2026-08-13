@@ -175,3 +175,40 @@ describe('ExchangeClient', () => {
     expect(client.terminalCount()).toBe(0);
   });
 });
+
+describe('ExchangeClient in-flight dedupe', () => {
+  test('concurrent access() calls share one POST /exchange and one token', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const fetchImpl = vi.fn(async () => {
+      await gate;
+      return jsonRes(200, { access_token: 'jla_once', expires_in: 3600 });
+    });
+    const client = makeClient(fetchImpl);
+
+    const [a, b] = [client.access(), client.access()];
+    release();
+    const [first, second] = await Promise.all([a, b]);
+
+    expect(first).toEqual({ kind: 'ok', accessToken: 'jla_once', expiresAt: expect.any(Number) });
+    expect(second).toEqual({ kind: 'ok', accessToken: 'jla_once', expiresAt: expect.any(Number) });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test('a settled failed exchange is not sticky: the next access() tries the network again', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        throw new Error('network down');
+      })
+      .mockImplementationOnce(async () => jsonRes(200, { access_token: 'jla_second', expires_in: 3600 }));
+    const client = makeClient(fetchImpl);
+
+    const first = await client.access();
+    expect(first).toEqual({ kind: 'retry', after: expect.any(Number) });
+
+    const second = await client.access();
+    expect(second).toEqual({ kind: 'ok', accessToken: 'jla_second', expiresAt: expect.any(Number) });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+});

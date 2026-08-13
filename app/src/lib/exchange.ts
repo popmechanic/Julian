@@ -31,6 +31,7 @@ export class ExchangeClient {
   private readonly fetchImpl: typeof fetch;
 
   private cached: { token: string; expiresAt: number } | null = null;
+  private inflight: Promise<ExchangeState> | null = null;
   private isRevoked = false;
   private backoff = BACKOFF_START_MS;
   private terminal = 0;
@@ -61,6 +62,17 @@ export class ExchangeClient {
       return this.okState(this.cached.token, this.cached.expiresAt);
     }
 
+    // Concurrent callers share one mint: two access() calls must never cost
+    // two leases (the session cap counts them).
+    if (!this.inflight) {
+      this.inflight = this.mintAccess().finally(() => {
+        this.inflight = null;
+      });
+    }
+    return this.inflight;
+  }
+
+  private async mintAccess(): Promise<ExchangeState> {
     const jwt = await this.getJwt();
     if (!jwt) return this.signedOutState();
 
