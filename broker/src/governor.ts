@@ -45,7 +45,30 @@ export interface LeaseIdentity {
   leaseId: string; doorName: string; scope: string; principal: string;
   subject: string | null; flow: string; tokenId: string | null;
   sittingPin: string | null; latched: LeaseLatch | null;
+  /**
+   * When the credential itself dies — the access row's own expiry, in the
+   * seconds the wire speaks rather than the milliseconds the register stores.
+   * It rides the introspection answer so a socket can measure "my token aged
+   * out" (WS 4004, re-exchange) against "my lease died" (WS 4001, terminal).
+   *
+   * Optional because an identity read from something other than an access row
+   * has no expiry to give, and saying nothing is better than inventing a
+   * number. Everything `identityFrom` builds carries one.
+   */
+  exp?: number;
 }
+/**
+ * The by-handle answer, which is three answers and not two. A hibernating
+ * socket holds `(leaseId, tokenId)` and nothing else, so a bare null would tell
+ * it only that it is not welcome — and the two ways of being unwelcome want
+ * opposite responses: a dead lease is terminal, an aged token wants one more
+ * exchange. `validateAccess` needs no such split; a bearer that fails is simply
+ * not a credential.
+ */
+export type HandleVerdict =
+  | { status: 'active'; identity: LeaseIdentity }
+  | { status: 'token-expired' }
+  | { status: 'dead' };
 /**
  * The answer to a browser's `/exchange`. `leaseId` rides the ok-shape because
  * the face ledgers the success under it, and there is no second round-trip to
@@ -71,6 +94,15 @@ export type ConsumeTicketResult =
   | {
     ok: true; leaseId: string; tokenId: string; subject: string | null;
     scope: string; flow: string; principal: string;
+    /**
+     * The expiry of the ACCESS TOKEN that minted this ticket, in seconds —
+     * never the ticket's own, which is sixty seconds old and spent. The socket
+     * carries this in its attachment and measures 4004 against it. Absent when
+     * the minting row is gone (rotated away mid-flight), because a socket told
+     * nothing falls back on the gate's answers, while a socket told the wrong
+     * number closes early.
+     */
+    exp?: number;
   }
   | { ok: false; error: 'unknown' | 'expired' | 'reused' };
 /** The answer to `/leases/reinstate`. One verb, three ways to be told no. */
@@ -177,14 +209,21 @@ function identityFrom(row: Row): LeaseIdentity {
     tokenId: row.token_id === null || row.token_id === undefined ? null : String(row.token_id),
     sittingPin: row.sitting_pin === null || row.sitting_pin === undefined ? null : String(row.sitting_pin),
     latched: parseLatch(row.latch),
+    exp: expiresToSeconds(row.token_expires),
   };
+}
+
+/** The register keeps expiries in milliseconds; every wire that carries one speaks seconds. */
+function expiresToSeconds(expires: unknown): number {
+  return Math.floor(Number(expires) / 1000);
 }
 
 // The columns every identity is built from, joined the same way twice: once by
 // secret (`validateAccess`) and once by handle (`validateByHandle`).
 const IDENTITY_COLUMNS = `l.lease_id AS lease_id, l.door_name AS door_name, l.scope AS scope,
          l.principal AS principal, l.subject AS subject, l.flow AS flow,
-         l.sitting_pin AS sitting_pin, l.latch AS latch, t.token_id AS token_id`;
+         l.sitting_pin AS sitting_pin, l.latch AS latch, t.token_id AS token_id,
+         t.expires AS token_expires`;
 
 function randomToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(TOKEN_BYTES));
@@ -441,17 +480,21 @@ export class GovernorDO extends DurableObject {
    * decision was made somewhere else and no cap is at stake. One row, always
    * `allowed:1`, never a refusal: there is no counter here to run out of.
    *
-   * `doorName` is a label of last resort, not an identity. When the register
-   * knows the lease, the register's word is what lands in the ledger, so a
-   * caller holding the introspection secret still cannot write another door's
-   * name into the record.
+   * `_doorName` is accepted and ignored, exactly as in `reserveLease`. Door
+   * names come from the register or from nowhere: when the lease is known the
+   * register's word lands in the ledger, and when it is *not* known the row is
+   * written nameless (`door=`) rather than borrowing the caller's string. A
+   * caller holding the introspection secret can therefore never write another
+   * door's name into the record — not even by naming a lease that does not
+   * exist. The nameless row is the honest one: it says an act happened under a
+   * lease id the register cannot vouch for, which is itself worth reading.
    */
-  recordAllowed(leaseId: string, doorName: string, service: string, verb: string, detail: string): void {
+  recordAllowed(leaseId: string, _doorName: string, service: string, verb: string, detail: string): void {
     const now = this.now();
     const row = this.sql.exec(
       'SELECT door_name FROM leases WHERE lease_id = ?', leaseId,
     ).toArray()[0] as Row | undefined;
-    const name = row ? String(row.door_name) : doorName;
+    const name = row ? String(row.door_name) : '';
     this.ledger(now, `lease:${leaseId}`, service, verb, detail ? `door=${name} ${detail}` : `door=${name}`, true);
     this.sql.exec('UPDATE leases SET last_verb = ? WHERE lease_id = ?', `${service}.${verb}`, leaseId);
   }
@@ -722,19 +765,31 @@ export class GovernorDO extends DurableObject {
    * re-checked without the credential ever being serialized anywhere.
    *
    * Non-ledgering, exactly like `validateAccess`: a re-auth is a read.
+   *
+   * It answers a `HandleVerdict` rather than a nullable identity because the
+   * two ways of failing are not the same event. The predicates are therefore
+   * asked one at a time instead of collapsed into the WHERE clause: the row is
+   * found first, then the lease's standing, then the token's clock — and in
+   * that order, because revocation is terminal and outranks mere age. A lease
+   * killed while its token was still in date must not soften into
+   * "re-exchange" once the hour passes.
    */
-  validateByHandle(leaseId: string, tokenId: string): LeaseIdentity | null {
+  validateByHandle(leaseId: string, tokenId: string): HandleVerdict {
     // An empty handle is not a handle. Guarded explicitly so a caller that lost
     // its attachment cannot match a pre-B3 row whose `token_id` is absent.
-    if (leaseId === '' || tokenId === '') return null;
+    if (leaseId === '' || tokenId === '') return { status: 'dead' };
     const row = this.sql.exec(
-      `SELECT ${IDENTITY_COLUMNS}
+      `SELECT ${IDENTITY_COLUMNS}, l.status AS lease_status
          FROM lease_tokens t JOIN leases l ON l.lease_id = t.lease_id
-        WHERE t.lease_id = ? AND t.token_id = ? AND t.kind = 'access'
-          AND t.expires > ? AND l.status = 'living'`,
-      leaseId, tokenId, this.now(),
+        WHERE t.lease_id = ? AND t.token_id = ? AND t.kind = 'access'`,
+      leaseId, tokenId,
     ).toArray()[0] as Row | undefined;
-    return row ? identityFrom(row) : null;
+    // No row at all is dead, not expired: a revoke burns the lease's token rows,
+    // and so does a rotation, so "gone" is how a killed credential looks here.
+    if (!row) return { status: 'dead' };
+    if (String(row.lease_status) !== 'living') return { status: 'dead' };
+    if (Number(row.token_expires) <= this.now()) return { status: 'token-expired' };
+    return { status: 'active', identity: identityFrom(row) };
   }
 
   // ── the exchange (a browser session, delegated) ───────────────────────────
@@ -914,6 +969,14 @@ export class GovernorDO extends DurableObject {
       return { ok: false, error: 'unknown' };
     }
 
+    // The socket's whole clock, read here because there is nobody left to ask:
+    // the expiry of the ACCESS token this ticket was minted against, not the
+    // ticket's, which is a minute long and already spent.
+    const minting = this.sql.exec(
+      "SELECT expires FROM lease_tokens WHERE lease_id = ? AND token_id = ? AND kind = 'access'",
+      leaseId, tokenId,
+    ).toArray()[0] as Row | undefined;
+
     this.ledger(now, sub, 'stream', 'ticket.consume', `door=${doorName} token_id=${tokenId}`, true);
     return {
       ok: true,
@@ -923,6 +986,7 @@ export class GovernorDO extends DurableObject {
       scope: String(row.scope),
       flow: String(row.flow),
       principal: String(row.principal),
+      ...(minting ? { exp: expiresToSeconds(minting.expires) } : {}),
     };
   }
 

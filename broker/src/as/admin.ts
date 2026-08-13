@@ -30,7 +30,8 @@ import type { Env } from '../env';
 import { parseStreamSubs } from '../exchange';
 import { TICKET_PREFIX } from '../governor';
 import type {
-  ConsumeTicketResult, GovernorDO, LeaseExport, LeaseIdentity, LeaseSummary, ReinstateResult,
+  ConsumeTicketResult, GovernorDO, HandleVerdict, LeaseExport, LeaseIdentity, LeaseSummary,
+  ReinstateResult,
 } from '../governor';
 import { ACCESS_PREFIX, GOVERNOR_DOWN, json } from '../lease-auth';
 import { MANIFEST_PATH, PIN_KEY } from '../package-types';
@@ -84,6 +85,13 @@ const LEGACY_FLOW = 'legacy';
 
 /** The one definitive no. Everything indefinite is a non-200 instead. */
 const INACTIVE: IntrospectionWire = { active: false };
+/**
+ * The same definitive no, with the one sub-reason the wire carries — and the
+ * by-handle form is the only place it may appear. It says the lease still
+ * stands and only the minting access token aged out, which a socket reads as
+ * "close 4004, re-exchange and come back" rather than "you were revoked".
+ */
+const TOKEN_EXPIRED: IntrospectionWire = { active: false, reason: 'token-expired' };
 
 const NO_AUDIENCE =
   'the gate has no OIDC_AUDIENCE configured, so it cannot tell which app a token was minted for — refusing every introspection of a session token until it is set; tell Marcus';
@@ -99,7 +107,10 @@ function field(form: FormData, name: string): string {
  * shape (COLD M-8). `subject` and `token_id` are *omitted* when the register
  * holds none rather than sent as null: sync stores whatever arrives and later
  * re-presents it as a form field, where a null would ride the wire as the
- * literal string "null" and match no row.
+ * literal string "null" and match no row. `exp` — the access token's own
+ * expiry — rides along for the same reason the legacy answer carries one: the
+ * socket keeps it in its attachment and measures an aged token (WS 4004,
+ * re-exchange) against a dead lease (WS 4001, terminal) with it.
  */
 function activeLease(identity: LeaseIdentity): Response {
   const body: IntrospectionWire = {
@@ -111,6 +122,7 @@ function activeLease(identity: LeaseIdentity): Response {
     flow: identity.flow,
     ...(identity.subject === null ? {} : { subject: identity.subject }),
     ...(identity.tokenId === null ? {} : { token_id: identity.tokenId }),
+    ...(identity.exp === undefined ? {} : { exp: identity.exp }),
   };
   return json(body);
 }
@@ -222,18 +234,24 @@ async function introspectJwt(
  * An `exchange` lease is re-judged against `STREAM_SUBS` on every such check.
  * That is the account-level kill switch (§6.2): striking a sub from the map
  * closes the sockets it already holds, without anyone having to find and
- * revoke each session by name.
+ * revoke each session by name. A sub struck from the map is struck, not stale,
+ * so that refusal carries no `reason`: there is nothing to re-exchange into.
+ *
+ * This is the one form that may answer with a reason at all, and it does so on
+ * exactly one verdict — a living lease whose access token simply aged out.
  */
 async function introspectHandle(
   leaseId: string, tokenId: string, env: Env, gov: DurableObjectStub<GovernorDO>,
 ): Promise<Response> {
-  let identity: LeaseIdentity | null;
+  let verdict: HandleVerdict;
   try {
-    identity = await gov.validateByHandle(leaseId, tokenId);
+    verdict = await gov.validateByHandle(leaseId, tokenId);
   } catch {
     return json({ error: GOVERNOR_DOWN }, 503);
   }
-  if (!identity) return json(INACTIVE);
+  if (verdict.status === 'token-expired') return json(TOKEN_EXPIRED);
+  if (verdict.status === 'dead') return json(INACTIVE);
+  const { identity } = verdict;
   if (identity.flow === 'exchange') {
     const { map } = parseStreamSubs(env.STREAM_SUBS);
     if (identity.subject === null || !map.has(identity.subject)) return json(INACTIVE);
@@ -332,10 +350,14 @@ async function consumeTicket(
     return json({ error: GOVERNOR_DOWN }, 503);
   }
   if (!result.ok) return json({ ok: false, error: result.error } satisfies ConsumeTicketWire);
+  // `exp` is the minting access token's, and the socket's only clock: the
+  // ticket is spent by the time this is read, so nothing downstream can ask
+  // again. Omitted rather than guessed when the register has none to give.
   const body: ConsumeTicketWire = {
     ok: true, lease_id: result.leaseId, token_id: result.tokenId,
     scope: result.scope, flow: result.flow, principal: result.principal,
     ...(result.subject === null ? {} : { subject: result.subject }),
+    ...(result.exp === undefined ? {} : { exp: result.exp }),
   };
   return json(body);
 }
@@ -400,6 +422,11 @@ async function recordRefusal(req: Request, env: Env, gov: DurableObjectStub<Gove
  * lease's identity, and door names belong to the register, which fills the
  * column itself. Refusing the row over a name the caller was never given would
  * lose the one record that says the socket opened at all.
+ *
+ * Whatever the caller does send is carried only as far as the register, which
+ * ignores it: a known lease is named from the register's own row, and an
+ * unknown one is written nameless. The field survives on the wire because the
+ * two pens share a shape, not because anything downstream believes it.
  */
 async function recordAllowedAct(req: Request, env: Env, gov: DurableObjectStub<GovernorDO>): Promise<Response> {
   const pen = await readPen(req, env, ['lease_id', 'service', 'verb']);

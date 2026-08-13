@@ -79,6 +79,9 @@ describe('knock → approve → poll lifecycle', () => {
         // A device lease has no Pocket ID subject and sits on no package pin;
         // its access row does carry the handle a socket is re-checked by.
         subject: null, flow: 'device', tokenId: expect.any(String), sittingPin: null, latched: null,
+        // The access row's own expiry rides the identity; its arithmetic is
+        // pinned in governor-exchange.test.ts, on a clock this case does not own.
+        exp: expect.any(Number),
       });
     });
   });

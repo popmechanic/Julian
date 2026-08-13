@@ -95,6 +95,7 @@ describe('mintExchangeAccess', () => {
         tokenId: m.tokenId,
         sittingPin: null,
         latched: null,
+        exp: (START + 3600_000) / 1000,
       });
       expect(EXCHANGE_SCOPE).toBe('stream');
 
@@ -339,8 +340,8 @@ describe('reinstate (SEC NEW-11, COLD M-9)', () => {
 });
 
 describe('validateByHandle (R2-D3)', () => {
-  test('answers for a live (lease, token) handle; null once expired or lease dead', async () => {
-    await withGovernor(async (g, clock) => {
+  test('answers for a live (lease, token) handle, carrying the token\'s own expiry', async () => {
+    await withGovernor(async (g) => {
       const m = await mint(g, 's');
       const expected: LeaseIdentity = {
         leaseId: m.leaseId,
@@ -352,27 +353,50 @@ describe('validateByHandle (R2-D3)', () => {
         tokenId: m.tokenId,
         sittingPin: null,
         latched: null,
+        exp: (START + 3600_000) / 1000,
       };
-      expect(g.validateByHandle(m.leaseId, m.tokenId)).toEqual(expected);
-
-      clock.advance(3601);
-      expect(g.validateByHandle(m.leaseId, m.tokenId)).toBeNull();
+      expect(g.validateByHandle(m.leaseId, m.tokenId)).toEqual({ status: 'active', identity: expected });
     });
   });
 
-  test('a revoked lease answers null; so do a wrong handle and an empty one', async () => {
+  // The whole point of the verdict: a hibernating socket that wakes to a bare
+  // "no" cannot tell a revoked lease (WS 4001, terminal — the app stops) from
+  // an access token that simply aged out (WS 4004, re-exchange and come back).
+  // The register knows which it is, so it says so.
+  test('an aged-out token on a living lease is token-expired, not dead', async () => {
+    await withGovernor(async (g, clock) => {
+      const m = await mint(g, 's');
+      clock.advance(3601);
+      expect(g.validateByHandle(m.leaseId, m.tokenId)).toEqual({ status: 'token-expired' });
+    });
+  });
+
+  test('a revoked lease is dead, and stays dead when its token has also aged out', async () => {
+    await withGovernor(async (g, clock) => {
+      const m = await mint(g, 's');
+      expect(g.leaseRevoke('browser:s', 'test')).toBe(true);
+      expect(g.validateByHandle(m.leaseId, m.tokenId)).toEqual({ status: 'dead' });
+
+      // Revocation is terminal, and terminal outranks aged: a lease killed
+      // while its token was still in date must not later soften into
+      // "re-exchange" merely because the clock moved on.
+      const second = await mint(g, 'two');
+      sqlOf(g).exec("UPDATE leases SET status = 'killed-rotation' WHERE lease_id = ?", second.leaseId);
+      clock.advance(3601);
+      expect(g.validateByHandle(second.leaseId, second.tokenId)).toEqual({ status: 'dead' });
+    });
+  });
+
+  test('a wrong handle, an empty one and another lease\'s handle are all dead', async () => {
     await withGovernor(async (g) => {
       const m = await mint(g, 's');
-      expect(g.validateByHandle(m.leaseId, 'not-the-handle')).toBeNull();
-      expect(g.validateByHandle('not-the-lease', m.tokenId)).toBeNull();
-      expect(g.validateByHandle(m.leaseId, '')).toBeNull();
-      expect(g.validateByHandle('', '')).toBeNull();
+      expect(g.validateByHandle(m.leaseId, 'not-the-handle')).toEqual({ status: 'dead' });
+      expect(g.validateByHandle('not-the-lease', m.tokenId)).toEqual({ status: 'dead' });
+      expect(g.validateByHandle(m.leaseId, '')).toEqual({ status: 'dead' });
+      expect(g.validateByHandle('', '')).toEqual({ status: 'dead' });
       // The handle is scoped to its own lease: another lease's id will not do.
       const other = await mint(g, 'other');
-      expect(g.validateByHandle(other.leaseId, m.tokenId)).toBeNull();
-
-      expect(g.leaseRevoke('browser:s', 'test')).toBe(true);
-      expect(g.validateByHandle(m.leaseId, m.tokenId)).toBeNull();
+      expect(g.validateByHandle(other.leaseId, m.tokenId)).toEqual({ status: 'dead' });
     });
   });
 
@@ -383,15 +407,19 @@ describe('validateByHandle (R2-D3)', () => {
       const handle = tokensOf(g, leaseId).find((t) => t.kind === 'access')?.token_id ?? '';
       expect(handle).toMatch(UUID_RE);
       expect(g.validateByHandle(leaseId, handle)).toEqual({
-        leaseId,
-        doorName: DEVICE_DOOR,
-        scope: 'full-house',
-        principal: 'julian',
-        subject: null,
-        flow: 'device',
-        tokenId: handle,
-        sittingPin: null,
-        latched: null,
+        status: 'active',
+        identity: {
+          leaseId,
+          doorName: DEVICE_DOOR,
+          scope: 'full-house',
+          principal: 'julian',
+          subject: null,
+          flow: 'device',
+          tokenId: handle,
+          sittingPin: null,
+          latched: null,
+          exp: expect.any(Number),
+        },
       });
     });
   });
@@ -405,7 +433,7 @@ describe('validateByHandle (R2-D3)', () => {
       sqlOf(g).exec(
         "UPDATE lease_tokens SET token_id = ? WHERE lease_id = ? AND kind = 'refresh'", planted, leaseId,
       );
-      expect(g.validateByHandle(leaseId, planted)).toBeNull();
+      expect(g.validateByHandle(leaseId, planted)).toEqual({ status: 'dead' });
     });
   });
 
@@ -413,10 +441,62 @@ describe('validateByHandle (R2-D3)', () => {
     await withGovernor(async (g) => {
       const m = await mint(g, 's');
       for (let i = 0; i < 20; i++) {
-        expect(g.validateByHandle(m.leaseId, m.tokenId)).not.toBeNull();
+        expect(g.validateByHandle(m.leaseId, m.tokenId).status).toBe('active');
         expect(await g.validateAccess(m.accessToken)).not.toBeNull();
       }
       expect(g.entries(200)).toHaveLength(0);
+    });
+  });
+});
+
+describe('the access token\'s expiry rides every answer about it', () => {
+  test('validateAccess carries exp in seconds, not the register\'s milliseconds', async () => {
+    await withGovernor(async (g) => {
+      const m = await mint(g, 's');
+      expect((await g.validateAccess(m.accessToken))?.exp).toBe((START + 3600_000) / 1000);
+    });
+  });
+
+  test('consumeTicket answers with the MINTING token\'s expiry, not the ticket\'s', async () => {
+    await withGovernor(async (g, clock) => {
+      const m = await mint(g, 's');
+      clock.advance(600); // the ticket is minted ten minutes into the token's hour
+      const minted = await g.mintTicket(m.leaseId, m.tokenId);
+      if (minted.status !== 'ok') throw new Error('expected a ticket');
+      const spent = await g.consumeTicket(minted.ticket);
+      expect(spent).toEqual({
+        ok: true,
+        leaseId: m.leaseId,
+        tokenId: m.tokenId,
+        subject: 's',
+        scope: EXCHANGE_SCOPE,
+        flow: 'exchange',
+        principal: 'julian',
+        // The token dies an hour after it was minted; the ticket died 60s after
+        // *it* was. A socket that carried the ticket's clock would close 4004
+        // within the minute.
+        exp: (START + 3600_000) / 1000,
+      });
+    });
+  });
+});
+
+describe('recordAllowed never writes a name the register cannot vouch for', () => {
+  test('an unknown lease_id gets an empty door name, never the caller\'s string', async () => {
+    await withGovernor((g) => {
+      g.recordAllowed('no-such-lease', 'door:i-am-someone-else', 'stream', 'socket', 'open token_id=t1');
+      const row = g.entries(5).find((e) => e.verb === 'socket');
+      expect(row?.detail).toBe('door= open token_id=t1');
+      expect(row?.detail).not.toContain('i-am-someone-else');
+      expect(row?.sub).toBe('lease:no-such-lease');
+      expect(row?.allowed).toBe(1);
+    });
+  });
+
+  test('with no detail either, the row is still nameless rather than borrowed', async () => {
+    await withGovernor((g) => {
+      g.recordAllowed('no-such-lease', 'door:borrowed', 'stream', 'socket', '');
+      expect(g.entries(5).find((e) => e.verb === 'socket')?.detail).toBe('door=');
     });
   });
 });
@@ -431,7 +511,9 @@ describe('LeaseIdentity carries the package-state columns', () => {
       );
       const expected = { sittingPin: 'pin-1', latched: { pin: 'pin-1', path: 'soul/02-wager.md' } };
       expect(await g.validateAccess(m.accessToken)).toMatchObject(expected);
-      expect(g.validateByHandle(m.leaseId, m.tokenId)).toMatchObject(expected);
+      expect(g.validateByHandle(m.leaseId, m.tokenId)).toMatchObject({
+        status: 'active', identity: expect.objectContaining(expected),
+      });
     });
   });
 
