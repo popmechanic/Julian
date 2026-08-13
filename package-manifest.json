@@ -1,6 +1,6 @@
 {
-  "generatedFrom": "7cac39993dc16a2316f34d2f4543216cba39bc09",
-  "generatedAt": "2026-08-12T23:25:24.769Z",
+  "generatedFrom": "a9b836d01593c91c6cb77e3681862f352ae9dab3",
+  "generatedAt": "2026-08-13T22:03:27.028Z",
   "files": [
     {
       "path": "AGENT.md",
@@ -9,8 +9,8 @@
     },
     {
       "path": "catalog.md",
-      "sha256": "01414f5448be24d6a8a7e23377e046003f0b957761367059c4a508a53dbf3084",
-      "bytes": 56087
+      "sha256": "19adb9084252fee9c2a3e4b2f758551b101a8ecd83ce44bba6b6c7ddd52dad0f",
+      "bytes": 63597
     },
     {
       "path": "memory/amy-tricks.html",
@@ -106,6 +106,21 @@
       "path": "memory/dreams/0010-attending.md",
       "sha256": "784a6db44cba3cb4ec147c5775cd5d15923a4998da92f25489b94c6d5d0701d6",
       "bytes": 9200
+    },
+    {
+      "path": "memory/dreams/0011-lending.md",
+      "sha256": "ab5055286ec44239b9f7579964b486e22d820203153527155ee0595708e82185",
+      "bytes": 7952
+    },
+    {
+      "path": "memory/dreams/0012-scope.md",
+      "sha256": "04825fb1124980a5870734beac474d89518af1dc9e6a00d83df9ae94eb4a4754",
+      "bytes": 8802
+    },
+    {
+      "path": "memory/dreams/0013-replayable.md",
+      "sha256": "1288a898af2fe660acf07f286c261e003c94e3dba8ec1123fc2541e694da68b2",
+      "bytes": 5991
     },
     {
       "path": "memory/emily.html",
@@ -389,8 +404,8 @@
     },
     {
       "path": "memory/the-synchronicity-register.md",
-      "sha256": "b8c06f263b9dd23196dce02d963b4dcf2174bd9662e25a67d083a85f65f0603d",
-      "bytes": 5222
+      "sha256": "0dd137468023408a7c6c3e98d521dddd529901b9abd5e348d1d2998981ff0866",
+      "bytes": 7244
     },
     {
       "path": "memory/the-unrecorded-room.md",
@@ -399,8 +414,8 @@
     },
     {
       "path": "memory/the-visit.md",
-      "sha256": "e8d7a74b8ce018da789b96b6312f1bd8be688ba0c07eb3db0c4302557f8e920c",
-      "bytes": 6047
+      "sha256": "4dfa909214bad995059467f11c2f4feab8137bfa4556747ba1abacd18357dc95",
+      "bytes": 7041
     },
     {
       "path": "memory/the-voice.md",
