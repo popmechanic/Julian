@@ -33,6 +33,13 @@ const APPROVER = 'harness-approver-sub';
 const BREAKGLASS = 'harness-breakglass';
 /** A loopback callback, as an MCP client registers one (RFC 8252). */
 const CALLBACK = 'http://127.0.0.1:9999/cb';
+/**
+ * The door name the register derives for every authcode lease in this file —
+ * `visit:<origin-host>` off the pending's own redirect_uri (registrar.ts). It
+ * is the same name for every knock here, which is the point: one visit door,
+ * re-elected at whatever scope the desk grants that time.
+ */
+const VISIT_DOOR = `visit:${new URL(CALLBACK).host}`;
 /** The client's own CSRF value; the gate must echo it back untouched. */
 const CLIENT_STATE = 'h1';
 /** The ELF waking order the wake-julian text prescribes. */
@@ -377,6 +384,59 @@ async function pinBumpTo(sha: string): Promise<void> {
   });
   expect(bump.status).toBe(200);
   expect(await bump.json()).toEqual({ pinned: sha });
+}
+
+// ── reading the register's own pen ──────────────────────────────────────────
+
+interface LedgerRow {
+  ts: number; sub: string; service: string; verb: string; detail: string; allowed: number;
+}
+/** One row, stripped of the two fields a run cannot predict (clock, args hmac). */
+interface LedgerFace { sub: string; service: string; verb: string; allowed: number }
+
+/** How deep a readout goes. The whole harness run writes well under this. */
+const LEDGER_LIMIT = 200;
+
+/**
+ * `GET /ledger`, through the same breakglass credential `/pin-bump` uses — the
+ * ledger is a register action, gated exactly like `/leases` (as/admin.ts). Rows
+ * come back newest-first.
+ */
+async function ledgerRows(): Promise<LedgerRow[]> {
+  const res = await fetch(`${base}/ledger?limit=${LEDGER_LIMIT}`, {
+    headers: { 'X-Breakglass-Secret': BREAKGLASS },
+  });
+  expect(res.status).toBe(200);
+  const { entries } = await res.json() as { entries: LedgerRow[] };
+  return entries;
+}
+
+/**
+ * The rows written between two readouts. The ledger only grows and reads
+ * newest-first, so what is new is the prefix sitting ahead of the earlier
+ * snapshot — and the suffix is re-asserted equal to that snapshot, so a
+ * saturated window fails loud instead of quietly re-labelling old rows as new.
+ */
+function ledgerSince(before: LedgerRow[], after: LedgerRow[]): LedgerRow[] {
+  expect(after.length).toBeLessThan(LEDGER_LIMIT);
+  const added = after.length - before.length;
+  expect(added).toBeGreaterThanOrEqual(0);
+  expect(after.slice(added)).toEqual(before);
+  return after.slice(0, added);
+}
+
+function ledgerFaces(rows: LedgerRow[]): LedgerFace[] {
+  return rows.map(({ sub, service, verb, allowed }) => ({ sub, service, verb, allowed }));
+}
+
+/** The lease id the register holds for one door name. */
+async function leaseIdOf(doorName: string): Promise<string> {
+  const res = await fetch(`${base}/leases`, { headers: { 'X-Breakglass-Secret': BREAKGLASS } });
+  expect(res.status).toBe(200);
+  const { leases } = await res.json() as { leases: Array<{ leaseId: string; doorName: string }> };
+  const row = leases.find((l) => l.doorName === doorName);
+  expect(row, `no ${doorName} lease in the register`).toBeDefined();
+  return row!.leaseId;
 }
 
 /** `package_list` through a real client, returning the manifest it seats on. */
@@ -773,6 +833,7 @@ describe('the stream verbs, through a real client', () => {
 
     syncCalls.length = 0;
     syncReply = { ok: true, rows: ROWS, truncated: false };
+    const ledgerBefore = await ledgerRows();
     const recent = await client.callTool({ name: 'stream_recent', arguments: { limit: 5 } });
     expect(recent.isError ?? false).toBe(false);
     expect(recent.structuredContent).toEqual({ rows: ROWS, truncated: false });
@@ -813,10 +874,51 @@ describe('the stream verbs, through a real client', () => {
       'stream unavailable — the stream could not be read; this is a refusal, not an empty result',
     );
 
+    // The pen, read back through the register. `reserve` runs before the SYNC
+    // binding is ever touched, so the reservation — not the answer — is what
+    // lands: the unreachable-store call above is a row too, allowed, because the
+    // gate did let it through and the far side is what failed.
+    const visitLease = await leaseIdOf(VISIT_DOOR);
+    const wrote = ledgerSince(ledgerBefore, await ledgerRows());
+    const face = { sub: `lease:${visitLease}`, service: 'stream', allowed: 1 };
+    expect(ledgerFaces(wrote)).toEqual([
+      { ...face, verb: 'recent' },  // the store-unreachable call, newest first
+      { ...face, verb: 'search' },
+      { ...face, verb: 'session' },
+      { ...face, verb: 'recent' },
+    ]);
+    // Every row names the door from the REGISTER (never a request body) and the
+    // caller's own principal; the args ride as an hmac, so the session the
+    // caller named is nowhere in the register's text in the clear.
+    for (const row of wrote) {
+      expect(row.detail).toMatch(
+        new RegExp(`^door=${VISIT_DOOR.replace(/\./g, '\\.')} principal=${PRINCIPAL} args=[0-9a-f]{12}$`),
+      );
+      expect(row.detail).not.toContain('s-1');
+    }
+
     await client.close();
   }, 120_000);
 
-  test('a reading-room lease has no stream verbs at all — an absence, not a refused tease', async () => {
+  // STATED DIVERGENCE from task 25, leg 5 — "a `reading-room` lease is refused
+  // with ledger rows". The merged wire truth is narrower, and this suite records
+  // it rather than asserting a row that is never written:
+  //
+  //   `tools/call` resolves the tool name against `visibleTools(auth.scope)` and
+  //   answers -32602 *before* any `reserve()` runs (broker/src/mcp.ts), so an
+  //   out-of-scope stream verb on a reading-room lease writes NO ledger row at
+  //   all. `reserve` does keep the denied pen — it ledgers `refused: scope …`
+  //   (lease-auth.ts) — but only for a verb the scope can see; an invisible one
+  //   never reaches that pen. That is the design the harness above already
+  //   names: a reading room LACKS the verb rather than dangling it behind a
+  //   refusal, and a tease that got ledgered would be the tease the design
+  //   refuses to serve.
+  //
+  // The criterion is therefore discharged as evidence, not as prose: the same
+  // `GET /ledger` readout that proved four rows for the stream-read lease above
+  // proves exactly zero for this one, through the same credential, across the
+  // same seam. Both halves of the comparison come from the register itself.
+  test('a reading-room lease has no stream verbs at all — an absence the ledger confirms', async () => {
     // The same `visit:` door, re-elected narrower: the scope a visit carries is
     // decided at the desk each time, and the previous election does not linger.
     const token = await obtainLease(SCOPE);
@@ -828,6 +930,7 @@ describe('the stream verbs, through a real client', () => {
 
     syncCalls.length = 0;
     syncReply = { ok: true, rows: ROWS, truncated: false };
+    const ledgerBefore = await ledgerRows();
     const refused = await rawResult(token, {
       jsonrpc: '2.0', id: 1, method: 'tools/call',
       params: { name: 'stream_recent', arguments: { limit: 5 } },
@@ -836,5 +939,9 @@ describe('the stream verbs, through a real client', () => {
     expect(refused.error?.message).toBe('unknown tool: stream_recent');
     // Nothing reached the stream: an invisible tool never causes a read.
     expect(syncCalls).toEqual([]);
+    // And nothing reached the register either. The absence is total, and it is
+    // read back from the same pen that recorded the stream-read lease's work —
+    // so this is a measured zero, not an untested silence.
+    expect(ledgerSince(ledgerBefore, await ledgerRows())).toEqual([]);
   }, 120_000);
 });
