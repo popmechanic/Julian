@@ -126,8 +126,23 @@ async function fetchPinned(
   } as RequestInit);
 }
 
+/**
+ * @internal `loadManifest` is the public face for reading the pin; this is
+ * exported only because mcp.ts's read policy (spec §9's sitting/latch, which
+ * runs ahead of any fetch) needs the pin without paying for a manifest fetch.
+ * No other caller should reach for it.
+ */
 export async function currentPin(env: Env): Promise<string | null> {
   return env.PIN.get(PIN_KEY);
+}
+
+/** One manifest entry, shaped enough to trust before it names a fetch. */
+function entryIsWellFormed(entry: unknown): entry is ManifestEntry {
+  if (typeof entry !== 'object' || entry === null) return false;
+  const e = entry as Record<string, unknown>;
+  return typeof e.path === 'string'
+    && typeof e.sha256 === 'string' && /^[0-9a-f]{64}$/.test(e.sha256)
+    && typeof e.bytes === 'number' && Number.isInteger(e.bytes) && e.bytes >= 0;
 }
 
 /**
@@ -172,6 +187,13 @@ export async function loadManifest(
     return integrity('manifest is not JSON', pinSha);
   }
   if (!Array.isArray(manifest.files)) return integrity('manifest has no files list', pinSha);
+  // Every entry must name a plain path, a 64-hex sha256, and a non-negative
+  // integer byte count before any of it is trusted to name a fetch — a
+  // malformed entry is a typed refusal, never a crash reading `.path` off
+  // something that turns out not to have one.
+  if (!manifest.files.every(entryIsWellFormed)) {
+    return integrity('manifest entry malformed', pinSha);
+  }
   return { class: 'ok', manifest, pinSha, pinnedAt: manifest.generatedAt ?? null };
 }
 

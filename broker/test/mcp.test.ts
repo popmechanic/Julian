@@ -255,6 +255,18 @@ describe('tools', () => {
     expect(calls).toEqual([['l1', 'visit:localhost', 'package', 'list', '', null, null]]);
   });
 
+  test('a manifest entry missing sha256 is a typed integrity refusal, not a crash (§10.3)', async () => {
+    intercept('package-manifest.json', JSON.stringify({
+      generatedFrom: PIN, generatedAt: '2026-08-12T00:00:00Z',
+      files: [{ path: 'AGENT.md', bytes: AGENT_TEXT.length }],
+    }));
+    const { body } = await send(rpc('tools/call', { name: 'package_list' }), READER, env(), gov());
+    const r = result(body) as unknown as ToolResult;
+    expect(r.isError).toBe(true);
+    expect(r.content?.[0].text).toContain('manifest entry malformed');
+    expect(r.structuredContent).toEqual({ class: 'integrity', pinSha: PIN });
+  });
+
   test('tools/call package_read returns hash-verified content and ledgers door+path+pin', async () => {
     intercept('package-manifest.json', await manifestBody());
     intercept('AGENT.md', AGENT_TEXT);
@@ -597,18 +609,60 @@ describe('visit_agent', () => {
     expect(r.structuredContent).toEqual({
       class: 'ok', access: 'read-only', name: 'julian', content: file,
     });
-    // ledgered like a package verb
+    // the second content block states the two negatives explicitly (§10.1)
+    expect(r.content).toHaveLength(2);
+    expect(r.content?.[1].text).toContain('no Bash');
+    expect(r.content?.[1].text).toContain('no Write');
+    // ledgered like a package verb, with the chosen variant in the detail (#31)
     expect(calls).toHaveLength(1);
     expect(calls[0].slice(2, 4)).toEqual(['package', 'list']);
+    expect(calls[0][4]).toBe('access=read-only');
   });
 
-  test('read-write adds exactly Edit, Write, Bash', async () => {
+  test('read-write adds exactly Edit, Write — no Bash (§10.1 R-6)', async () => {
+    const calls: ReserveCall[] = [];
+    const { body } = await send(
+      rpc('tools/call', { name: 'visit_agent', arguments: { access: 'read-write' } }),
+      READER, env(), gov(calls),
+    );
+    const r = result(body) as unknown as ToolResult;
+    const file = r.content?.[0].text ?? '';
+    expect(file).toContain('tools: Read, Grep, Glob, ToolSearch, Edit, Write, mcp__julian-gate');
+    expect(file).not.toContain('Bash');
+    expect(calls[0][4]).toBe('access=read-write');
+  });
+
+  test('read-write emits the host-applyable settings snippet, self-sufficient in both halves', async () => {
     const { body } = await send(
       rpc('tools/call', { name: 'visit_agent', arguments: { access: 'read-write' } }),
       READER, env(), gov(),
     );
-    const file = (result(body) as unknown as ToolResult).content?.[0].text ?? '';
-    expect(file).toContain('tools: Read, Grep, Glob, ToolSearch, Edit, Write, Bash, mcp__julian-gate');
+    const r = result(body) as unknown as ToolResult;
+    expect(r.content).toHaveLength(2);
+    const snippetText = r.content?.[1].text ?? '';
+    expect(snippetText).toContain('enforcement where you apply this');
+    expect(snippetText).toContain('manners stated at waking where you do not');
+    expect(snippetText).toContain('"allow"');
+    expect(snippetText).toContain('"deny"');
+    expect(snippetText).toContain('Edit(');
+    expect(snippetText).toContain('Write(');
+    const snippet = r.structuredContent?.settingsSnippet as
+      { permissions: { allow: string[]; deny: string[] } } | undefined;
+    expect(snippet).toBeDefined();
+    expect(snippet?.permissions.allow.some((p) => p.startsWith('Edit('))).toBe(true);
+    expect(snippet?.permissions.allow.some((p) => p.startsWith('Write('))).toBe(true);
+    expect(snippet?.permissions.deny).toEqual(['Edit(//**)', 'Write(//**)']);
+    // the snippet in the structured half is exactly the JSON rendered in text
+    expect(snippetText).toContain(JSON.stringify(snippet, null, 2));
+  });
+
+  test('read-only carries no settingsSnippet — nothing to scope with no Edit/Write at all', async () => {
+    const { body } = await send(
+      rpc('tools/call', { name: 'visit_agent', arguments: { access: 'read-only' } }),
+      READER, env(), gov(),
+    );
+    const r = result(body) as unknown as ToolResult;
+    expect(r.structuredContent).not.toHaveProperty('settingsSnippet');
   });
 
   test('a missing or invalid access is -32602, never a default', async () => {

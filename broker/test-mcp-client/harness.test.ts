@@ -260,7 +260,10 @@ describe('a real MCP client against the gate', () => {
       expect(sc.name).toBe('julian');
       expect(sc.access).toBe(access);
       expect(sc.content).toContain('model: fable');
-      expect(sc.content).toContain(access === 'read-write' ? 'Bash' : 'mcp__julian-gate');
+      // The read-write visit has no shell (§10.1 R-6): Bash left the grant,
+      // so the differentiator is Edit, present only on the read-write hand.
+      expect(sc.content).toContain(access === 'read-write' ? 'Edit' : 'mcp__julian-gate');
+      expect(sc.content).not.toContain('Bash');
     }
 
     await client.close();
