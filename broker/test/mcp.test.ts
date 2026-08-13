@@ -497,18 +497,23 @@ describe('scope invariants on the face', () => {
       .map((t) => t.name).sort();
     expect(advertised).toEqual(['package_list', 'package_read', 'visit_agent', 'wake_julian']);
 
-    // the mapping the face claims, stated exactly
+    // the mapping the face claims, stated exactly — TOOLS now also carries the
+    // three stream verbs (Task 15), which reading-room does not buy and so
+    // never appear in `advertised` above.
     expect(Object.fromEntries(TOOLS.map((t) => [t.name, `${t.service}.${t.verb}`]))).toEqual({
       package_list: 'package.list',
       package_read: 'package.read',
       wake_julian: 'package.list',
       visit_agent: 'package.list',
+      stream_recent: 'stream.recent',
+      stream_session: 'stream.session',
+      stream_search: 'stream.search',
     });
 
-    // every advertised tool is one a reading-room lease may actually spend
-    for (const t of TOOLS) {
-      expect(advertised).toContain(t.name);
-      expect(scopeAllows('reading-room', t.service, t.verb), t.name).toBe(true);
+    // every tool a reading-room lease is actually shown is one it may spend
+    for (const name of advertised) {
+      const t = TOOLS.find((tool) => tool.name === name)!;
+      expect(scopeAllows('reading-room', t.service, t.verb), name).toBe(true);
     }
 
     // and the reading room reaches nothing beyond the two package verbs

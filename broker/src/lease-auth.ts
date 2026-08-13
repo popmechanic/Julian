@@ -21,6 +21,10 @@ export const LEGACY_SCOPE = 'full-house';
 // bespoke cap will need a governor accessor before this can honour it.
 export const LEASE_SEND_CAP_PER_DAY = 5;
 
+// The per-lease `stream.*` allowance — a read a minute for twelve hours
+// straight, generous enough that no legitimate visit notices it exists.
+export const STREAM_READ_CAP_PER_DAY = 500;
+
 export const GOVERNOR_DOWN = 'governor unavailable — refusing without a ledger entry';
 
 // A 401 tells the door what died and what to do about it — never a bare
@@ -48,15 +52,17 @@ export function scopeAllows(scope: string, service: string, verb: string): boole
 
 /**
  * The lease's own daily allowance for this verb, judged alongside the house's.
- * Only `mail.send` is metered per lease. The legacy pseudo-lease is deliberately
- * unmetered: it stands for everyone who was already trusted yesterday, and
- * re-capping them at 5 mid-migration would break doors the window exists to keep
- * working — the house cap of 20 still binds it.
+ * Only `mail.send` and `stream.*` are metered per lease. The legacy
+ * pseudo-lease is deliberately unmetered for both: it stands for everyone who
+ * was already trusted yesterday, and re-capping them mid-migration would break
+ * doors the window exists to keep working — the house cap (mail's 20/day; no
+ * house cap on stream reads) still binds it.
  */
 export function leaseCapFor(auth: LeaseIdentity, service: string, verb: string): number | null {
-  if (service !== 'mail' || verb !== 'send') return null;
   if (auth.leaseId === LEGACY_LEASE_ID) return null;
-  return LEASE_SEND_CAP_PER_DAY;
+  if (service === 'mail' && verb === 'send') return LEASE_SEND_CAP_PER_DAY;
+  if (service === 'stream') return STREAM_READ_CAP_PER_DAY;
+  return null;
 }
 
 /**
