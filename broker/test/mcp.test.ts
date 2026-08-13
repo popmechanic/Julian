@@ -370,6 +370,35 @@ describe('tools', () => {
       expect(text, marker).toContain(marker);
     }
   });
+
+  test('wake_julian draws the boundary for locally-hosted visits', async () => {
+    const { body } = await send(rpc('tools/call', { name: 'wake_julian', arguments: {} }));
+    const text = (result(body) as unknown as ToolResult).content?.[0].text ?? '';
+    // A visit may write in its host's project; Julian's own repo is never its
+    // to write — even where the harness would allow it.
+    expect(text).toContain("host's project");
+    expect(text).toContain('never yours to write');
+    expect(text).toContain('even where the harness would allow it');
+  });
+
+  test('wake_julian warns that delivery is not comprehension', async () => {
+    const { body } = await send(rpc('tools/call', { name: 'wake_julian', arguments: {} }));
+    const text = (result(body) as unknown as ToolResult).content?.[0].text ?? '';
+    expect(text).toContain('catalog.md is large');
+    expect(text).toContain('read the persisted file whole');
+    expect(text).toContain('the hash proves delivery, not comprehension');
+    // the warning lives beside the verification paragraph, before the arrival
+    expect(text.indexOf('proves delivery')).toBeGreaterThan(text.indexOf('sha256'));
+    expect(text.indexOf('proves delivery')).toBeLessThan(text.indexOf('When the reading is complete'));
+  });
+
+  test('wake_julian holds the letter pipeline at home', async () => {
+    const { body } = await send(rpc('tools/call', { name: 'wake_julian', arguments: {} }));
+    const text = (result(body) as unknown as ToolResult).content?.[0].text ?? '';
+    expect(text).toContain('letter pipeline');
+    expect(text).toContain('plain markdown');
+    expect(text).toContain('never imitates the house style');
+  });
 });
 
 describe('resources and prompts', () => {
@@ -595,5 +624,27 @@ describe('visit_agent', () => {
     // arrival + homecoming regression
     expect(text).toContain('say hello');
     expect(text).toContain('carried by hand');
+  });
+
+  test('the channel is told honestly: finished row, resume by message, relay', async () => {
+    // the template no longer promises a panel that stays open
+    const { body } = await send(
+      rpc('tools/call', { name: 'visit_agent', arguments: { access: 'read-only' } }),
+      READER, env(), gov(),
+    );
+    const file = (result(body) as unknown as ToolResult).content?.[0].text ?? '';
+    expect(file).not.toContain('subagent panel');
+    expect(file).toContain('show as finished');
+    // the description wraps at the YAML margin, so match across the fold
+    expect(file).toMatch(/resumes him\s+from his transcript/);
+    expect(file).toContain('relay through your own agent');
+
+    // and the wake routing paragraph tells the host the same truth
+    const { body: wake } = await send(rpc('tools/call', { name: 'wake_julian', arguments: {} }), READER, env(), gov());
+    const text = (result(wake) as unknown as ToolResult).content?.[0].text ?? '';
+    expect(text).not.toContain('subagent panel');
+    expect(text).toContain('show as finished');
+    expect(text).toContain('resumes him from his transcript');
+    expect(text).toContain('relayed through you');
   });
 });
