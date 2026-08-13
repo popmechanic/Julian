@@ -11,7 +11,7 @@
 // Durable Object namespace that records what the router forwarded.
 import { describe, expect, test } from 'vitest';
 import { env } from 'cloudflare:test';
-import worker from '../src/index';
+import worker, { stripInternalHandoff } from '../src/index';
 import { consumeTicket, introspectByHandle } from '../src/auth';
 import type { Env, GateFetcher } from '../src/auth';
 import {
@@ -353,7 +353,58 @@ describe('router: the ticket handoff', () => {
 // ---------------------------------------------------------------------------
 
 describe('router: X-Sync-Auth is minted, never inherited', () => {
-  test('a forged X-Sync-Auth is replaced by the router’s own payload', async () => {
+  // The load-bearing test of the strip itself. It has to be a forwarding path
+  // where the router does NOT author a payload of its own, because on a path
+  // that authors one, `Headers.set` would replace a forged value anyway and
+  // the assertion could not tell "stripped" from "overwritten". /export is
+  // that path, and the witness header proves the assertion is not vacuous:
+  // the caller's headers demonstrably reach the DO, and X-Sync-Auth alone
+  // does not. Delete the strip and the delete inside the DO door, and this
+  // test goes red.
+  test('a forged X-Sync-Auth is deleted on a path that authors no payload', async () => {
+    const gate = fakeGate({
+      introspect: activeLease({ lease_id: 'L-strip', scope: 'stream-read' }),
+    });
+    const h = harness(gate);
+    const res = await worker.fetch(
+      new Request(EXPORT_URL, {
+        headers: {
+          Authorization: 'Bearer jla_strip',
+          'X-Witness': 'headers-do-reach-the-do',
+          [SYNC_AUTH_HEADER]: '{"leaseId":"forged","principal":"julian","scope":"full-house"}',
+        },
+      }),
+      h.testEnv, h.ctx);
+    expect(res.status).toBe(200);
+    expect(h.received).toHaveLength(1);
+    // Non-vacuity witness: this header made the trip, so the null below is a
+    // statement about X-Sync-Auth and not about an empty request.
+    expect(h.received[0].headers.get('X-Witness')).toBe('headers-do-reach-the-do');
+    expect(h.received[0].headers.get(SYNC_AUTH_HEADER)).toBeNull();
+  });
+
+  test('stripInternalHandoff removes the handoff header and nothing else', async () => {
+    const stripped = stripInternalHandoff(new Request('https://sync.test/julian/chat', {
+      method: 'POST',
+      headers: {
+        [SYNC_AUTH_HEADER]: '{"leaseId":"forged"}',
+        Authorization: 'Bearer jla_keepme',
+        'X-Witness': 'kept',
+      },
+      body: 'hello',
+    }));
+    expect(stripped.headers.get(SYNC_AUTH_HEADER)).toBeNull();
+    expect(stripped.headers.get('Authorization')).toBe('Bearer jla_keepme');
+    expect(stripped.headers.get('X-Witness')).toBe('kept');
+    expect(stripped.method).toBe('POST');
+    expect(stripped.url).toBe('https://sync.test/julian/chat');
+    expect(await stripped.text()).toBe('hello');
+  });
+
+  // This one proves *authorship*, not stripping: on a socket open the router
+  // always writes the payload, so it would pass with or without the strip.
+  // Named for what it actually shows.
+  test('the payload the DO receives on a socket open is the router’s, not the caller’s', async () => {
     const gate = fakeGate({
       introspect: activeLease({ lease_id: 'L-forge', token_id: 'T-forge', subject: 'julian', exp: 1893456000 }),
     });
@@ -371,20 +422,6 @@ describe('router: X-Sync-Auth is minted, never inherited', () => {
       leaseId: 'L-forge', tokenId: 'T-forge', subject: 'julian',
       scope: 'full-house', flow: 'device', principal: 'julian', exp: 1893456000,
     });
-  });
-
-  test('a forged X-Sync-Auth on the export path never reaches the DO at all', async () => {
-    const gate = fakeGate({
-      introspect: activeLease({ lease_id: 'L-forge2', scope: 'stream-read' }),
-    });
-    const h = harness(gate);
-    const res = await worker.fetch(
-      new Request(EXPORT_URL, {
-        headers: { Authorization: 'Bearer jla_forge2', [SYNC_AUTH_HEADER]: '{"leaseId":"forged"}' },
-      }),
-      h.testEnv, h.ctx);
-    expect(res.status).toBe(200);
-    expect(h.received[0].headers.get(SYNC_AUTH_HEADER)).toBeNull();
   });
 
   test('a ticket-opened socket carries the consumed ticket’s identity', async () => {

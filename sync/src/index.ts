@@ -83,11 +83,36 @@ const isUpgrade = (req: Request): boolean =>
  * writes for its own Durable Object; anything carrying it inbound is either a
  * confused proxy or a forgery, and either way the DO must never see it.
  * Stripped unconditionally, before any routing decision reads the request.
+ *
+ * Exported so the strip is provable on its own terms: a test that names this
+ * function fails to compile if the strip is ever deleted.
  */
-function stripInternalHandoff(req: Request): Request {
+export function stripInternalHandoff(req: Request): Request {
   const headers = new Headers(req.headers);
   headers.delete(SYNC_AUTH_HEADER);
   return new Request(req, { headers });
+}
+
+/**
+ * The only door to the Durable Object. Every request the router forwards goes
+ * through here, and the handoff header is authored here and nowhere else:
+ * deleted first — so no inbound value can survive by any route, including a
+ * route added later that forwards a request the entry strip never touched —
+ * then set only from the router's own payload, and only when there is one.
+ *
+ * Belt and braces on purpose. `stripInternalHandoff` protects the request the
+ * router reasons about; this protects the request the DO actually receives,
+ * which is the property that matters. Neither depends on the other.
+ */
+function forwardToDo(
+  stub: { fetch(req: Request): Promise<Response> },
+  req: Request,
+  payload?: SyncAuthPayload,
+): Promise<Response> {
+  const headers = new Headers(req.headers);
+  headers.delete(SYNC_AUTH_HEADER);
+  if (payload !== undefined) headers.set(SYNC_AUTH_HEADER, JSON.stringify(payload));
+  return stub.fetch(new Request(req, { headers }));
 }
 
 function ticketRefusal(error: string | undefined): string {
@@ -207,14 +232,19 @@ export default {
     const stub = env.JULIAN_SYNC.get(env.JULIAN_SYNC.idFromName(`${parsed.store}/${parsed.context}`));
     if (parsed.isExport) {
       if (req.method !== 'GET') return new Response('Method not allowed', { status: 405 });
-      return stub.fetch(new Request(new URL('/export', req.url), { method: 'GET' }));
+      // The DO routes on `/export`, so the path is rewritten; the caller's
+      // headers ride along (as they do on the socket path) and pass through
+      // the one door, which is what makes the handoff strip load-bearing here
+      // rather than an accident of a freshly-built request.
+      return forwardToDo(
+        stub, new Request(new URL('/export', req.url), { method: 'GET', headers: req.headers }));
     }
     if (!isUpgrade(req)) {
       return new Response('Expected WebSocket', { status: 426 });
     }
 
-    // The handoff: identity by handle, never a raw bearer. The DO trusts this
-    // header because the router stripped any inbound copy as its first act.
+    // The handoff: identity by handle, never a raw bearer. The DO may trust
+    // this header because no inbound copy of it survives the one door.
     const payload: SyncAuthPayload = {
       leaseId: admitted.leaseId,
       subject: admitted.subject,
@@ -224,14 +254,12 @@ export default {
       ...(admitted.tokenId !== undefined ? { tokenId: admitted.tokenId } : {}),
       ...(admitted.exp !== undefined ? { exp: admitted.exp } : {}),
     };
-    const headers = new Headers(req.headers);
-    headers.set(SYNC_AUTH_HEADER, JSON.stringify(payload));
 
     // A healthy open is a ledger row too: the pen records what happened, not
     // only what was refused, so the record reads as a life rather than a
     // list of accidents.
     reportPen(env, ctx, ALLOWED_PATH, admitted, 'socket',
       `open token_id=${admitted.tokenId ?? 'jwt'}`);
-    return stub.fetch(new Request(req, { headers }));
+    return forwardToDo(stub, req, payload);
   },
 };
