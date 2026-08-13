@@ -1,7 +1,9 @@
-import { afterEach, beforeAll, describe, expect, test } from 'vitest';
+import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 import { fetchMock } from 'cloudflare:test';
-import { loadManifest, readPackageFile, readResponseBody } from '../src/services/package';
-import { MAX_FILE_BYTES } from '../src/package-types';
+import {
+  loadManifest, readPackageFile, readPackageFileVerified, readResponseBody, splitIntoParts,
+} from '../src/services/package';
+import { MAX_FILE_BYTES, PART_TARGET_BYTES, PART_THRESHOLD_BYTES } from '../src/package-types';
 import type { Env } from '../src/env';
 
 const RAW = 'https://raw.test';
@@ -52,6 +54,41 @@ async function manifestBody() {
 
 function intercept(path: string, body: string, status = 200) {
   fetchMock.get(RAW).intercept({ path: `/${PIN}/${path}` }).reply(status, body);
+}
+
+interface Entry { path: string; sha256: string; bytes: number }
+
+/** A manifest carrying exactly the entries a test cares about. */
+function manifestOf(...files: Entry[]): string {
+  return JSON.stringify({ generatedFrom: PIN, generatedAt: '2026-08-12T00:00:00Z', files });
+}
+
+async function entryFor(path: string, text: string): Promise<Entry> {
+  const bytes = new TextEncoder().encode(text);
+  return { path, sha256: await sha256Hex(text), bytes: bytes.byteLength };
+}
+
+function utf8(text: string): Uint8Array {
+  return new TextEncoder().encode(text);
+}
+
+/**
+ * Records the `cf` options of every upstream fetch while leaving the
+ * fetchMock interceptors to answer them — `fetchMock` sees the request, but
+ * only the global seam sees the cache directives the double-look depends on.
+ */
+function fetchSpy(): { inits: RequestInit[]; restore: () => void } {
+  const inits: RequestInit[] = [];
+  const original = globalThis.fetch;
+  vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+    inits.push(init ?? {});
+    return original(input as RequestInfo, init);
+  });
+  return { inits, restore: () => vi.unstubAllGlobals() };
+}
+
+function cfOf(init: RequestInit): Record<string, unknown> {
+  return (init as { cf?: Record<string, unknown> }).cf ?? {};
 }
 
 describe('loadManifest', () => {
@@ -217,5 +254,211 @@ describe('readResponseBody', () => {
     const ok = { arrayBuffer: () => Promise.resolve(new TextEncoder().encode('hi').buffer) };
     const r = await readResponseBody(ok, 'AGENT.md', PIN);
     expect(r).toBeInstanceOf(ArrayBuffer);
+  });
+});
+
+// ── numbered parts (spec §9 / issue #30) ────────────────────────────────────
+
+const LINE = 'the package travels whole, or not at all.\n'; // 42 bytes
+const BIG_TEXT = LINE.repeat(2200);                          // 92 400 bytes
+/** A 4-byte code point sitting exactly across the target boundary. */
+const CLEF = '\u{1D11E}';
+const STRADDLE_TEXT = 'a'.repeat(PART_TARGET_BYTES - 2) + CLEF + 'b'.repeat(10_000);
+
+describe('splitIntoParts', () => {
+  test('accumulates whole code points and never exceeds the target', () => {
+    const parts = splitIntoParts(BIG_TEXT);
+    expect(parts.length).toBe(4);
+    for (const p of parts) expect(utf8(p).byteLength).toBeLessThanOrEqual(PART_TARGET_BYTES);
+    expect(parts.join('')).toBe(BIG_TEXT);
+  });
+
+  test('a multi-byte code point straddling the boundary lands whole in exactly one part', () => {
+    const parts = splitIntoParts(STRADDLE_TEXT);
+    expect(parts.length).toBe(2);
+    // a naive byte slice at PART_TARGET_BYTES would cut the clef in half
+    expect(utf8(parts[0]).byteLength).toBe(PART_TARGET_BYTES - 2);
+    expect(parts.filter((p) => p.includes(CLEF)).length).toBe(1);
+    expect(parts[1].startsWith(CLEF)).toBe(true);
+    // and no part carries a replacement character, the tell of a split code point
+    for (const p of parts) expect(new TextDecoder().decode(utf8(p))).not.toContain('�');
+  });
+});
+
+describe('readPackageFileVerified — parts', () => {
+  test('a parted file yields M parts that reassemble byte-for-byte, each with a verifying partSha256', async () => {
+    const entry = await entryFor('catalog.md', BIG_TEXT);
+    expect(entry.bytes).toBeGreaterThan(PART_THRESHOLD_BYTES);
+    const collected: string[] = [];
+    let announced = 0;
+    for (let n = 1; n <= 4; n += 1) {
+      intercept('package-manifest.json', manifestOf(entry));
+      intercept('catalog.md', BIG_TEXT);
+      const r = await readPackageFileVerified(env(), 'catalog.md', n);
+      expect(r.class, `part ${n}`).toBe('ok');
+      if (r.class !== 'ok') return;
+      announced = r.parts ?? 0;
+      expect(r.parts).toBe(4);
+      expect(r.part).toBe(n);
+      // the whole-file proof rides every part, identical across all of them
+      expect(r.fileSha256).toBe(entry.sha256);
+      expect(r.sha256).toBe(entry.sha256);
+      expect(r.bytes).toBe(entry.bytes);
+      expect(r.partBytes).toBe(utf8(r.content).byteLength);
+      expect(r.partSha256).toBe(await sha256Hex(r.content));
+      collected.push(r.content);
+    }
+    expect(announced).toBe(4);
+    expect(utf8(collected.join(''))).toEqual(utf8(BIG_TEXT));
+  });
+
+  test('a parted file read with no part is a typed `parts` refusal naming M', async () => {
+    const entry = await entryFor('catalog.md', BIG_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('catalog.md', BIG_TEXT);
+    const r = await readPackageFileVerified(env(), 'catalog.md');
+    expect(r.class).toBe('parts');
+    if (r.class !== 'parts') return;
+    expect(r.message).toBe(
+      'this file serves in 4 parts; request part 1…4 and verify every part carries the same fileSha256',
+    );
+    expect(r.parts).toBe(4);
+    expect(r.pinSha).toBe(PIN);
+  });
+
+  test('part M+1 is part-out-of-range, naming the range it may ask for', async () => {
+    const entry = await entryFor('catalog.md', BIG_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('catalog.md', BIG_TEXT);
+    const r = await readPackageFileVerified(env(), 'catalog.md', 5);
+    expect(r.class).toBe('part-out-of-range');
+    if (r.class !== 'part-out-of-range') return;
+    expect(r.message).toContain('1…4');
+    expect(r.parts).toBe(4);
+  });
+
+  test.each([0, -1, 1.5])('a non-part-shaped part argument %s is part-out-of-range', async (n) => {
+    const entry = await entryFor('catalog.md', BIG_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('catalog.md', BIG_TEXT);
+    const r = await readPackageFileVerified(env(), 'catalog.md', n);
+    expect(r.class).toBe('part-out-of-range');
+  });
+
+  test('a part argument on an unparted file is refused before a byte crosses the wire', async () => {
+    // Only the manifest is intercepted: disableNetConnect() means a fetch of
+    // AGENT.md here would throw rather than pass silently.
+    intercept('package-manifest.json', await manifestBody());
+    const r = await readPackageFileVerified(env(), 'AGENT.md', 1);
+    expect(r.class).toBe('part-out-of-range');
+    if (r.class !== 'part-out-of-range') return;
+    expect(r.message).toContain('this file serves whole; omit part');
+    expect(r.pinSha).toBe(PIN);
+  });
+
+  test('a file at exactly the threshold still serves whole — the boundary is strict', async () => {
+    const text = 'z'.repeat(PART_THRESHOLD_BYTES);
+    const entry = await entryFor('edge.md', text);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('edge.md', text);
+    const r = await readPackageFileVerified(env(), 'edge.md');
+    expect(r.class).toBe('ok');
+    if (r.class !== 'ok') return;
+    expect(r.content).toBe(text);
+    expect(r.part).toBeUndefined();
+    expect(r.parts).toBeUndefined();
+  });
+});
+
+// ── the bounded, atomic second look (spec §9 / SEC HIGH-4) ──────────────────
+
+const TRUE_TEXT = 'x'.repeat(64);
+const FAKE_TEXT = 'y'.repeat(64); // same length, different bytes
+
+describe('readPackageFileVerified — the in-call second look', () => {
+  test('a length-verified mismatch refetches once past the edge cache and reports it', async () => {
+    const spy = fetchSpy();
+    try {
+      const entry = await entryFor('AGENT.md', TRUE_TEXT);
+      intercept('package-manifest.json', manifestOf(entry));
+      intercept('AGENT.md', FAKE_TEXT);
+      intercept('AGENT.md', FAKE_TEXT);
+      const r = await readPackageFileVerified(env(), 'AGENT.md');
+      expect(r.class).toBe('integrity');
+      if (r.class !== 'integrity') return;
+      expect(r.mismatchLengthVerified).toBe(true);
+      expect(r.message).toContain('hash mismatch');
+      expect(r.message).not.toContain(FAKE_TEXT);
+
+      // manifest, then the file twice — and the second look is cache-immune
+      expect(spy.inits.length).toBe(3);
+      expect(cfOf(spy.inits[1])).toEqual({ cacheTtl: 300, cacheEverything: true });
+      expect(cfOf(spy.inits[2])).toEqual({ cacheTtl: 0, cacheEverything: false });
+    } finally {
+      spy.restore();
+    }
+  });
+
+  test('a second look that comes back clean serves the file and reports no mismatch', async () => {
+    const spy = fetchSpy();
+    try {
+      const entry = await entryFor('AGENT.md', TRUE_TEXT);
+      intercept('package-manifest.json', manifestOf(entry));
+      intercept('AGENT.md', FAKE_TEXT);
+      intercept('AGENT.md', TRUE_TEXT);
+      const r = await readPackageFileVerified(env(), 'AGENT.md');
+      expect(r.class).toBe('ok');
+      if (r.class !== 'ok') return;
+      expect(r.content).toBe(TRUE_TEXT);
+      expect(spy.inits.length).toBe(3);
+    } finally {
+      spy.restore();
+    }
+  });
+
+  test('a short body is a truncation: one fetch, plain integrity, nothing to latch on', async () => {
+    const spy = fetchSpy();
+    try {
+      const entry = await entryFor('AGENT.md', TRUE_TEXT);
+      intercept('package-manifest.json', manifestOf(entry));
+      intercept('AGENT.md', 'x'.repeat(10));
+      const r = await readPackageFileVerified(env(), 'AGENT.md');
+      expect(r.class).toBe('integrity');
+      if (r.class !== 'integrity') return;
+      expect(r.mismatchLengthVerified).toBeUndefined();
+      expect(spy.inits.length).toBe(2);
+    } finally {
+      spy.restore();
+    }
+  });
+
+  test('a second look that cannot be taken fails loud without claiming a verified mismatch', async () => {
+    const entry = await entryFor('AGENT.md', TRUE_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('AGENT.md', FAKE_TEXT);
+    intercept('AGENT.md', 'upstream gone', 502);
+    const r = await readPackageFileVerified(env(), 'AGENT.md');
+    expect(r.class).toBe('integrity');
+    if (r.class !== 'integrity') return;
+    expect(r.mismatchLengthVerified).toBeUndefined();
+  });
+
+  test('a length-verified mismatch whose second look changes length is not a verified mismatch', async () => {
+    const entry = await entryFor('AGENT.md', TRUE_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('AGENT.md', FAKE_TEXT);
+    intercept('AGENT.md', 'y'.repeat(10));
+    const r = await readPackageFileVerified(env(), 'AGENT.md');
+    expect(r.class).toBe('integrity');
+    if (r.class !== 'integrity') return;
+    expect(r.mismatchLengthVerified).toBeUndefined();
+  });
+
+  test('readPackageFile stays the whole-file wrapper resources/read still calls', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    intercept('AGENT.md', AGENT_TEXT);
+    const r = await readPackageFile(env(), 'AGENT.md');
+    expect(r.class).toBe('ok');
+    if (r.class === 'ok') expect(r.content).toBe(AGENT_TEXT);
   });
 });

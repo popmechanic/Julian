@@ -32,13 +32,24 @@ function env(pin: string | null = PIN): Env {
 
 type ReserveCall = unknown[];
 
+/** What the read policy asked the governor to remember, in order. */
+interface PackageState { seats: unknown[][]; latches: unknown[][]; clears: unknown[][] }
+function packageState(): PackageState {
+  return { seats: [], latches: [], clears: [] };
+}
+
 /** Records every reservation and always allows — the pen, not the policy. */
-function gov(calls: ReserveCall[] = []): DurableObjectStub<GovernorDO> {
+function gov(
+  calls: ReserveCall[] = [], state: PackageState = packageState(),
+): DurableObjectStub<GovernorDO> {
   return {
     async reserveLease(...args: unknown[]) {
       calls.push(args);
       return { ok: true, count: 1, cap: null };
     },
+    async seatSitting(...args: unknown[]) { state.seats.push(args); },
+    async setLatch(...args: unknown[]) { state.latches.push(args); },
+    async clearLatch(...args: unknown[]) { state.clears.push(args); },
   } as unknown as DurableObjectStub<GovernorDO>;
 }
 
@@ -69,12 +80,27 @@ function intercept(path: string, body: string, status = 200) {
   fetchMock.get(RAW).intercept({ path: `/${PIN}/${path}` }).reply(status, body);
 }
 
+/**
+ * A visit lease: `flow='authcode'`, so one `visit:<host>` row is shared by
+ * every user of that client. Shared leases hold no sitting state and never
+ * latch (SEC NEW-3) — the sitting/latch tests below use SESSION instead.
+ */
 const READER: LeaseIdentity = {
   leaseId: 'l1', doorName: 'visit:localhost', scope: 'reading-room', principal: 'julian',
+  subject: null, flow: 'authcode', tokenId: null, sittingPin: null, latched: null,
 };
 const STRANGER: LeaseIdentity = {
   leaseId: 'l2', doorName: 'visit:nowhere', scope: 'no-such-scope', principal: 'julian',
+  subject: null, flow: 'authcode', tokenId: null, sittingPin: null, latched: null,
 };
+/** One browser session — a lease of its own, and therefore latchable. */
+const SESSION: LeaseIdentity = {
+  leaseId: 'l3', doorName: 'browser:sub-1', scope: 'reading-room', principal: 'julian',
+  subject: 'sub-1', flow: 'exchange', tokenId: 't1', sittingPin: null, latched: null,
+};
+function seated(over: Partial<LeaseIdentity>): LeaseIdentity {
+  return { ...SESSION, ...over };
+}
 
 function rpc(method: string, params: unknown = {}, id: number | null = 1) {
   return new Request('https://gate.test/mcp', {
@@ -651,5 +677,290 @@ describe('visit_agent', () => {
     expect(text).toContain('show as finished');
     expect(text).toContain('resumes him from his transcript');
     expect(text).toContain('relayed through you');
+  });
+});
+
+// ── the sitting, the latch, and the parts (spec §9 / issues #30, #32) ───────
+
+const OLD_PIN = 'b'.repeat(40);
+const TRUE_TEXT = 'x'.repeat(64);
+const FAKE_TEXT = 'y'.repeat(64); // same length, different bytes
+const BIG_TEXT = 'the package travels whole, or not at all.\n'.repeat(2200);
+
+interface Entry { path: string; sha256: string; bytes: number }
+function manifestOf(...files: Entry[]): string {
+  return JSON.stringify({ generatedFrom: PIN, generatedAt: '2026-08-12T00:00:00Z', files });
+}
+async function entryFor(path: string, text: string): Promise<Entry> {
+  return { path, sha256: await sha256Hex(text), bytes: new TextEncoder().encode(text).byteLength };
+}
+function structured(r: ToolResult): Record<string, unknown> {
+  return r.structuredContent ?? {};
+}
+async function call(
+  args: Record<string, unknown>, identity: LeaseIdentity,
+  calls: ReserveCall[], state: PackageState,
+): Promise<ToolResult> {
+  const { body } = await send(
+    rpc('tools/call', { name: 'package_read', arguments: args }),
+    identity, env(), gov(calls, state),
+  );
+  return result(body) as unknown as ToolResult;
+}
+
+describe('the sitting pin', () => {
+  test('package_list seats the sitting pin — the listing is the reset act', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    const state = packageState();
+    await send(rpc('tools/call', { name: 'package_list' }), SESSION, env(), gov([], state));
+    expect(state.seats).toEqual([['l3', PIN]]);
+  });
+
+  test('resources/list seats it too — the same act by the other name', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    const state = packageState();
+    await send(rpc('resources/list'), SESSION, env(), gov([], state));
+    expect(state.seats).toEqual([['l3', PIN]]);
+  });
+
+  test('a shared visit lease is seated nowhere — one visit never binds another', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    const state = packageState();
+    await send(rpc('tools/call', { name: 'package_list' }), READER, env(), gov([], state));
+    expect(state.seats).toEqual([]);
+  });
+
+  test('a failed listing seats nothing — there is no pin to sit on', async () => {
+    const state = packageState();
+    await send(rpc('tools/call', { name: 'package_list' }), SESSION, env(null), gov([], state));
+    expect(state.seats).toEqual([]);
+  });
+
+  test('a read at a moved pin is refused and names the reset act by tool', async () => {
+    // No interceptors at all: the refusal must land before any fetch, and
+    // disableNetConnect() would throw rather than let one slip through.
+    const calls: ReserveCall[] = [];
+    const r = await call({ path: 'AGENT.md' }, seated({ sittingPin: OLD_PIN }), calls, packageState());
+    expect(r.isError).toBe(true);
+    expect(structured(r)).toEqual({
+      class: 'pin-moved', pinSha: PIN,
+      message: `pin moved ${OLD_PIN.slice(0, 12)} → ${PIN.slice(0, 12)}; run package_list, then re-read from the top`,
+    });
+    expect(r.content?.[0].text).toContain('run package_list');
+    expect(String(calls[0][4])).toContain('class=pin-moved');
+  });
+
+  test('the same refusal for a part read is part-pin-moved — the #30 distinct class', async () => {
+    const r = await call(
+      { path: 'catalog.md', part: 2 }, seated({ sittingPin: OLD_PIN }), [], packageState(),
+    );
+    expect(r.isError).toBe(true);
+    expect(structured(r).class).toBe('part-pin-moved');
+    expect(String(structured(r).message)).toContain('run package_list');
+  });
+
+  test('the sitting resumes after the reset act: list, then read at the new pin', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    const state = packageState();
+    await send(
+      rpc('tools/call', { name: 'package_list' }), seated({ sittingPin: OLD_PIN }), env(), gov([], state),
+    );
+    expect(state.seats).toEqual([['l3', PIN]]);
+
+    // the register now hands the reader back seated on the pin it just listed
+    intercept('package-manifest.json', await manifestBody());
+    intercept('AGENT.md', AGENT_TEXT);
+    const r = await call({ path: 'AGENT.md' }, seated({ sittingPin: PIN }), [], packageState());
+    expect(r.isError).toBeFalsy();
+    expect(r.content?.[0].text).toBe(AGENT_TEXT);
+  });
+
+  test('a shared visit lease is never pin-gated — it holds no sitting to move', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    intercept('AGENT.md', AGENT_TEXT);
+    const r = await call({ path: 'AGENT.md' }, { ...READER, sittingPin: OLD_PIN }, [], packageState());
+    expect(r.isError).toBeFalsy();
+  });
+});
+
+describe('expect_pin — the caller\'s own cross-check', () => {
+  test('a matching expect_pin serves and is ledgered', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    intercept('AGENT.md', AGENT_TEXT);
+    const calls: ReserveCall[] = [];
+    const r = await call({ path: 'AGENT.md', expect_pin: PIN }, SESSION, calls, packageState());
+    expect(r.isError).toBeFalsy();
+    expect(String(calls[0][4])).toContain(`expect_pin=${PIN.slice(0, 12)}`);
+  });
+
+  test('an expect_pin naming a pin that is not current refuses like a moved sitting', async () => {
+    const r = await call({ path: 'AGENT.md', expect_pin: OLD_PIN }, SESSION, [], packageState());
+    expect(r.isError).toBe(true);
+    expect(structured(r).class).toBe('pin-moved');
+    expect(String(structured(r).message)).toContain('run package_list');
+  });
+
+  test('a malformed expect_pin is neither honored nor echoed into the ledger', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    intercept('AGENT.md', AGENT_TEXT);
+    const calls: ReserveCall[] = [];
+    const r = await call(
+      { path: 'AGENT.md', expect_pin: '../../etc/passwd' }, SESSION, calls, packageState(),
+    );
+    expect(r.isError).toBeFalsy();
+    expect(String(calls[0][4])).not.toContain('expect_pin');
+    expect(String(calls[0][4])).not.toContain('passwd');
+  });
+});
+
+describe('the integrity latch', () => {
+  test('a length-verified double mismatch latches the lease, and the refusal says so', async () => {
+    const entry = await entryFor('AGENT.md', TRUE_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('AGENT.md', FAKE_TEXT);
+    intercept('AGENT.md', FAKE_TEXT);
+    const state = packageState();
+    const r = await call({ path: 'AGENT.md' }, SESSION, [], state);
+    expect(r.isError).toBe(true);
+    expect(structured(r).class).toBe('integrity');
+    expect(state.latches).toEqual([['l3', PIN, 'AGENT.md']]);
+    expect(String(structured(r).message)).toContain('latched');
+    expect(String(structured(r).message)).toContain('AGENT.md');
+    expect(r.content?.[0].text).toContain('latched');
+  });
+
+  test('a truncated body is loud but never latches — fail-loud is not fail-closed', async () => {
+    const entry = await entryFor('AGENT.md', TRUE_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('AGENT.md', 'x'.repeat(10));
+    const state = packageState();
+    const r = await call({ path: 'AGENT.md' }, SESSION, [], state);
+    expect(r.isError).toBe(true);
+    expect(state.latches).toEqual([]);
+    expect(String(structured(r).message)).not.toContain('latched');
+  });
+
+  test('a latched lease is refused on every other file, before any fetch', async () => {
+    const calls: ReserveCall[] = [];
+    const state = packageState();
+    const r = await call(
+      { path: 'catalog.md' },
+      seated({ sittingPin: PIN, latched: { pin: PIN, path: 'AGENT.md' } }),
+      calls, state,
+    );
+    expect(r.isError).toBe(true);
+    expect(structured(r)).toEqual({
+      class: 'integrity-latched', pinSha: PIN,
+      message: `package reads are latched for this lease after an unresolved hash mismatch on AGENT.md; a clean read of that same file at pin ${PIN} clears it`,
+    });
+    expect(state.clears).toEqual([]);
+    expect(String(calls[0][4])).toContain('class=integrity-latched');
+  });
+
+  test('a clean read of the latched pair clears the latch and serves the file', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    intercept('AGENT.md', AGENT_TEXT);
+    const state = packageState();
+    const r = await call(
+      { path: 'AGENT.md' },
+      seated({ sittingPin: PIN, latched: { pin: PIN, path: 'AGENT.md' } }),
+      [], state,
+    );
+    expect(r.isError).toBeFalsy();
+    expect(r.content?.[0].text).toBe(AGENT_TEXT);
+    expect(state.clears).toEqual([['l3']]);
+  });
+
+  test('a shared visit lease never latches, and the next visit reads on untouched', async () => {
+    const entry = await entryFor('AGENT.md', TRUE_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('AGENT.md', FAKE_TEXT);
+    intercept('AGENT.md', FAKE_TEXT);
+    const state = packageState();
+    const first = await call({ path: 'AGENT.md' }, READER, [], state);
+    expect(first.isError).toBe(true);
+    expect(state.latches).toEqual([]);
+
+    // a second visit through the same `visit:<host>` row: untouched
+    intercept('package-manifest.json', await manifestBody());
+    intercept('AGENT.md', AGENT_TEXT);
+    const second = await call({ path: 'AGENT.md' }, READER, [], packageState());
+    expect(second.isError).toBeFalsy();
+    expect(second.content?.[0].text).toBe(AGENT_TEXT);
+  });
+});
+
+describe('parts on the face', () => {
+  test('a parted file read whole is the typed parts instruction, naming M', async () => {
+    const entry = await entryFor('catalog.md', BIG_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('catalog.md', BIG_TEXT);
+    const calls: ReserveCall[] = [];
+    const r = await call({ path: 'catalog.md' }, SESSION, calls, packageState());
+    expect(r.isError).toBe(true);
+    expect(structured(r)).toEqual({
+      class: 'parts', pinSha: PIN, parts: 4,
+      message: 'this file serves in 4 parts; request part 1…4 and verify every part carries the same fileSha256',
+    });
+    expect(String(calls[0][4])).toContain('class=parts');
+  });
+
+  test('a part read carries its own proof in both halves and ledgers the part', async () => {
+    const entry = await entryFor('catalog.md', BIG_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('catalog.md', BIG_TEXT);
+    const calls: ReserveCall[] = [];
+    const r = await call({ path: 'catalog.md', part: 2 }, SESSION, calls, packageState());
+    expect(r.isError).toBeFalsy();
+    const s = structured(r);
+    expect(s.part).toBe(2);
+    expect(s.parts).toBe(4);
+    expect(s.fileSha256).toBe(entry.sha256);
+    expect(s.partSha256).toBe(await sha256Hex(String(s.content)));
+    expect(s.partBytes).toBe(new TextEncoder().encode(String(s.content)).byteLength);
+    // the text half is self-sufficient: the part header, then the bytes
+    expect(r.content?.[0].text).toContain('part 2 of 4');
+    expect(r.content?.[0].text).toContain(entry.sha256);
+    expect(r.content?.[1].text).toBe(s.content);
+    expect(String(calls[0][4])).toContain('part=2');
+  });
+
+  test('the tool schema advertises part and expect_pin', async () => {
+    const { body } = await send(rpc('tools/list'), SESSION);
+    const tools = (result(body) as { tools: Array<Record<string, unknown>> }).tools;
+    const read = tools.find((t) => t.name === 'package_read') as unknown as
+      { inputSchema: { properties: Record<string, unknown>; required: string[] } };
+    expect(Object.keys(read.inputSchema.properties).sort()).toEqual(['expect_pin', 'part', 'path']);
+    expect(read.inputSchema.required).toEqual(['path']);
+  });
+
+  test('resources/read of a parted file says parts rather than handing over a slice', async () => {
+    const entry = await entryFor('catalog.md', BIG_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('catalog.md', BIG_TEXT);
+    const { body } = await send(
+      rpc('resources/read', { uri: 'julian://package/catalog.md' }), SESSION,
+    );
+    expect(rpcErrorOf(body).code).toBe(-32002);
+    expect(rpcErrorOf(body).message).toContain('4 parts');
+  });
+});
+
+describe('the wake text carries the new instructions', () => {
+  test('parts are named an instruction, not damage, with the same-fileSha256 rule', async () => {
+    const { body } = await send(rpc('tools/call', { name: 'wake_julian', arguments: {} }));
+    const text = (result(body) as unknown as ToolResult).content?.[0].text ?? '';
+    expect(text).toContain('Some files serve in numbered parts');
+    expect(text).toContain('an instruction, not damage');
+    expect(text).toContain('Every part of one file must carry the same fileSha256');
+    expect(text).toContain('run package_list and start that file again');
+  });
+
+  test('a moved pin is named versioned, not broken, with the reset act', async () => {
+    const { body } = await send(rpc('tools/call', { name: 'wake_julian', arguments: {} }));
+    const text = (result(body) as unknown as ToolResult).content?.[0].text ?? '';
+    expect(text).toContain('If a read is refused because the pin moved, run package_list once and re-read from the top; the package is versioned, not broken.');
+    // it sits with the verification instructions, not after the arrival
+    expect(text.indexOf('the pin moved')).toBeLessThan(text.indexOf('When the reading is complete'));
   });
 });

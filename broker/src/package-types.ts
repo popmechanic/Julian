@@ -22,6 +22,17 @@ export const PIN_KEY = 'pin-sha';
 export const MANIFEST_PATH = 'package-manifest.json';
 /** Per-file size cap — fail loud past it, never truncate (spec §6). */
 export const MAX_FILE_BYTES = 512 * 1024;
+/**
+ * Above this many manifest bytes a file serves only in numbered parts
+ * (spec §9 / issue #30). Strictly above: a file of exactly this size still
+ * serves whole. Chosen so `catalog.md` actually parts.
+ */
+export const PART_THRESHOLD_BYTES = 32_768;
+/**
+ * Target UTF-8 size of one part. The split accumulates whole code points, so
+ * a part is at most this many bytes and usually a little under.
+ */
+export const PART_TARGET_BYTES = 24_576;
 /** Upstream fetch timeout. */
 export const FETCH_TIMEOUT_MS = 10_000;
 /** cf edge-cache TTL for pinned (immutable) content. */

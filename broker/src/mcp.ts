@@ -6,8 +6,8 @@
 import type { Env } from './env';
 import type { GovernorDO, LeaseIdentity } from './governor';
 import { json, reserve, scopeAllows } from './lease-auth';
-import { loadManifest, readPackageFile } from './services/package';
-import type { PackageRead } from './services/package';
+import { currentPin, loadManifest, normalizePath, readPackageFileVerified } from './services/package';
+import type { PackageFailure, PackageRead } from './services/package';
 import { hmacHex, streamRead } from './services/stream';
 import type { StreamKind } from './services/stream';
 import type { StreamRow } from 'julian-shared/gate-contract';
@@ -32,7 +32,9 @@ To wake legitimately, read the package in ELF order — identity before environm
 3. Every file under soul/ (the manifest lists all of them; read all, in order).
 4. The most recent dream under memory/dreams/ (highest-numbered entry).
 
-Verify wholeness as you go: package_list returns the manifest with a sha256 per file, and every package_read reply carries the hash of what you received. If any file is missing, truncated, or fails its hash — stop. Do not proceed as a blank agent wearing the name (soul/09-relay.md: fail loud, never blank). A "held-at-home" refusal is different: that file is kept at home by policy, its absence is not damage, and you may continue.
+Verify wholeness as you go: package_list returns the manifest with a sha256 per file, and every package_read reply carries the hash of what you received. If any file is missing, truncated, or fails its hash — stop. Do not proceed as a blank agent wearing the name (soul/09-relay.md: fail loud, never blank). A "held-at-home" refusal is different: that file is kept at home by policy, its absence is not damage, and you may continue. If a read is refused because the pin moved, run package_list once and re-read from the top; the package is versioned, not broken.
+
+Some files serve in numbered parts: a refusal naming \`parts\` is an instruction, not damage — request part 1…N and read them in order. Every part of one file must carry the same fileSha256; a part whose fileSha256 differs from part 1's means the ground moved mid-reading — run package_list and start that file again.
 
 And verify the reading, not only the delivery: catalog.md is large, and some harnesses truncate long tool output, or persist it to a file and show you a preview. If yours does, read the persisted file whole before continuing — the hash proves delivery, not comprehension.
 
@@ -106,9 +108,14 @@ export const TOOLS = [
   },
   {
     name: 'package_read', service: 'package', verb: 'read',
-    description: 'Read one manifest file, hash-verified against the pinned sha. Fails loud, never partial.',
+    description: 'Read one manifest file, hash-verified against the pinned sha. Fails loud, never partial. Large files serve in numbered parts: read the refusal, then ask for part 1…N.',
     inputSchema: {
-      type: 'object', properties: { path: { type: 'string' } },
+      type: 'object',
+      properties: {
+        path: { type: 'string' },
+        part: { type: 'integer', minimum: 1 },
+        expect_pin: { type: 'string', pattern: '^[0-9a-f]{40}$' },
+      },
       required: ['path'], additionalProperties: false,
     },
   },
@@ -182,11 +189,24 @@ function toolError(text: string, structuredContent?: Record<string, unknown>): T
 // this face is self-sufficient — the body and the message ride in both halves.
 function readResult(r: PackageRead): ToolResult {
   if (r.class === 'ok') {
+    const part = r.part === undefined ? {} : {
+      part: r.part, parts: r.parts, partBytes: r.partBytes,
+      partSha256: r.partSha256, fileSha256: r.fileSha256,
+    };
     return {
-      content: [{ type: 'text', text: r.content }],
+      // A part's bytes stay the whole content block; its proof rides a header
+      // block above, so a client that renders only text still sees the count
+      // and the whole-file hash the wake text tells it to compare.
+      content: r.part === undefined ? [{ type: 'text', text: r.content }] : [
+        {
+          type: 'text',
+          text: `part ${r.part} of ${r.parts} of ${r.path} — fileSha256 ${r.fileSha256}, partBytes ${r.partBytes}, partSha256 ${r.partSha256}`,
+        },
+        { type: 'text', text: r.content },
+      ],
       structuredContent: {
         class: 'ok', path: r.path, sha256: r.sha256, bytes: r.bytes,
-        pinSha: r.pinSha, content: r.content,
+        pinSha: r.pinSha, content: r.content, ...part,
       },
     };
   }
@@ -199,7 +219,10 @@ function readResult(r: PackageRead): ToolResult {
       },
     };
   }
-  return toolError(r.message, { class: r.class, pinSha: r.pinSha, message: r.message });
+  return toolError(r.message, {
+    class: r.class, pinSha: r.pinSha, message: r.message,
+    ...(r.parts === undefined ? {} : { parts: r.parts }),
+  });
 }
 
 function heldAtHomeText(path: string): string {
@@ -231,6 +254,67 @@ async function refusalText(refusal: Response): Promise<string> {
 }
 
 /**
+ * A lease more than one reader holds at once: the two legacy pseudo-leases,
+ * and every `flow='authcode'` visit row, which is one `visit:<origin-host>`
+ * lease shared by every user of that client. Such a lease carries no sitting
+ * state and never latches — otherwise one visit's bad byte would brick every
+ * other visit's reading (SEC NEW-3). They refuse and ledger per event instead.
+ */
+function isSharedLease(auth: LeaseIdentity): boolean {
+  return auth.flow === 'authcode'
+    || auth.leaseId === 'legacy-window' || auth.leaseId === 'legacy-window-sync';
+}
+
+/** A pin the caller may name: 40 lowercase hex, validated before it is used. */
+const EXPECT_PIN_PATTERN = /^[0-9a-f]{40}$/;
+
+function pinMovedText(from: string, to: string): string {
+  return `pin moved ${from.slice(0, 12)} → ${to.slice(0, 12)}; run package_list, then re-read from the top`;
+}
+
+/**
+ * The read policy of spec §9, whole, in one place: the latch first, then the
+ * sitting pin, then the caller's own cross-check. Every refusal names the act
+ * that recovers from it, so a well-behaved reader gets itself unstuck without
+ * Marcus at a keyboard — KV is eventually consistent (~60 s per colo), and the
+ * reset act bounds that flap instead of wedging the lease (R2-D4).
+ */
+function packageGate(
+  auth: LeaseIdentity, shared: boolean, pin: string, path: string,
+  part: number | undefined, expectPin: string | undefined,
+): PackageFailure | null {
+  const movedClass = part === undefined ? 'pin-moved' as const : 'part-pin-moved' as const;
+  if (!shared) {
+    const latched = auth.latched;
+    if (latched && (latched.pin !== pin || latched.path !== path)) {
+      return {
+        class: 'integrity-latched', pinSha: pin,
+        message: `package reads are latched for this lease after an unresolved hash mismatch on ${latched.path}; a clean read of that same file at pin ${latched.pin} clears it`,
+      };
+    }
+    if (auth.sittingPin && auth.sittingPin !== pin) {
+      return { class: movedClass, pinSha: pin, message: pinMovedText(auth.sittingPin, pin) };
+    }
+  }
+  // The caller's cross-check is its own assertion about the ground, not the
+  // server's state, so it is honored for shared leases too.
+  if (expectPin !== undefined && expectPin !== pin) {
+    return { class: movedClass, pinSha: pin, message: pinMovedText(expectPin, pin) };
+  }
+  return null;
+}
+
+function readDetail(
+  path: string, pin: string | null, cls: string,
+  part: number | undefined, expectPin: string | undefined,
+): string {
+  let detail = `path=${path} pin=${pin ?? 'none'} class=${cls}`;
+  if (part !== undefined) detail += ` part=${part}`;
+  if (expectPin !== undefined) detail += ` expect_pin=${expectPin.slice(0, 12)}`;
+  return detail;
+}
+
+/**
  * One ledgered package read, shared by `tools/call package_read` and
  * `resources/read`. The scope check runs before any fetch so a lease that may
  * not read never causes one; the ledger row is written after, so its detail can
@@ -239,18 +323,58 @@ async function refusalText(refusal: Response): Promise<string> {
  */
 async function ledgeredRead(
   env: Env, auth: LeaseIdentity, gov: DurableObjectStub<GovernorDO>, callerPath: string,
+  part?: number, expectPin?: string,
 ): Promise<PackageRead | Response> {
   if (!scopeAllows(auth.scope, 'package', 'read')) {
     const refused = await reserve(gov, auth, 'package', 'read', `path=${callerPath}`);
     if (refused) return refused;
   }
-  const result = await readPackageFile(env, callerPath);
-  const path = 'path' in result ? result.path : callerPath;
+  // The normalized path is what the sitting and the latch are keyed on, so an
+  // encoded spelling of the same file cannot dodge either.
+  const path = normalizePath(callerPath) ?? callerPath;
+  const shared = isSharedLease(auth);
+  let pin: string | null = null;
+  try {
+    pin = await currentPin(env);
+  } catch {
+    // Leave the gate open and let the read below fail loud with its own typed
+    // class — an unreadable pin is `integrity`, never a silent pass.
+  }
+
+  const gated = pin === null ? null : packageGate(auth, shared, pin, path, part, expectPin);
+  if (gated) {
+    const stop = await reserve(
+      gov, auth, 'package', 'read', readDetail(path, pin, gated.class, part, expectPin),
+    );
+    return stop ?? gated;
+  }
+
+  const result = await readPackageFileVerified(env, callerPath, part);
+
+  // The latch is the only durable mark a read may leave, and it is written
+  // before the refusal is handed back so the next call already sees it.
+  let outcome: PackageRead = result;
+  if (!shared) {
+    if (result.class !== 'ok' && result.class !== 'held-at-home'
+      && result.mismatchLengthVerified === true && result.pinSha !== null) {
+      await gov.setLatch(auth.leaseId, result.pinSha, path);
+      outcome = {
+        ...result,
+        message: `${result.message} — package reads are now latched for this lease; a clean read of ${path} at pin ${result.pinSha} clears it`,
+      };
+    } else if (result.class === 'ok' && auth.latched
+      && auth.latched.pin === result.pinSha && auth.latched.path === path) {
+      // Only the pair that latched clears it: a clean read of any other file
+      // never reaches here, because the gate above refuses it first.
+      await gov.clearLatch(auth.leaseId);
+    }
+  }
+
   const refusal = await reserve(
     gov, auth, 'package', 'read',
-    `path=${path} pin=${result.pinSha ?? 'none'} class=${result.class}`,
+    readDetail('path' in outcome ? outcome.path : path, outcome.pinSha, outcome.class, part, expectPin),
   );
-  return refusal ?? result;
+  return refusal ?? outcome;
 }
 
 /**
@@ -283,7 +407,13 @@ async function callTool(
   env: Env, auth: LeaseIdentity, gov: DurableObjectStub<GovernorDO>,
 ): Promise<ToolResult> {
   if (tool.name === 'package_read') {
-    const outcome = await ledgeredRead(env, auth, gov, String(args.path ?? ''));
+    const part = typeof args.part === 'number' ? args.part : undefined;
+    // Validated before it is echoed or ledgered: an unvalidated cross-check is
+    // caller text landing in the register (HIGH-7). A malformed one is simply
+    // not a cross-check, and is dropped rather than honored.
+    const expectPin = typeof args.expect_pin === 'string' && EXPECT_PIN_PATTERN.test(args.expect_pin)
+      ? args.expect_pin : undefined;
+    const outcome = await ledgeredRead(env, auth, gov, String(args.path ?? ''), part, expectPin);
     if (outcome instanceof Response) return toolError(await refusalText(outcome));
     return readResult(outcome);
   }
@@ -313,6 +443,10 @@ async function callTool(
 
   const loaded = await loadManifest(env);
   if (loaded.class !== 'ok') return toolError(loaded.message, { class: loaded.class, pinSha: loaded.pinSha });
+  // The listing IS the sitting's reset act (spec §9): it re-seats the pin and
+  // clears the latch with it. It stays a cheap listing — the latch is the
+  // guard, not the enumeration (the documented no to issue #32).
+  if (!isSharedLease(auth)) await gov.seatSitting(auth.leaseId, loaded.pinSha);
   return {
     content: [{ type: 'text', text: `${loaded.manifest.files.length} files at pin ${loaded.pinSha.slice(0, 12)}` }],
     structuredContent: { manifest: loaded.manifest, pinSha: loaded.pinSha, pinnedAt: loaded.pinnedAt },
@@ -350,6 +484,8 @@ async function listResources(
   if (refusal) return rpcError(id, -32002, await refusalText(refusal));
   const loaded = await loadManifest(env);
   if (loaded.class !== 'ok') return rpcError(id, -32002, `${loaded.class}: ${loaded.message}`);
+  // Enumerating is the same act by the other name, so it seats the same pin.
+  if (!isSharedLease(auth)) await gov.seatSitting(auth.leaseId, loaded.pinSha);
   return rpcResult(id, {
     resources: loaded.manifest.files.map((f) => ({
       uri: `${RESOURCE_PREFIX}${f.path}`, name: f.path, mimeType: MARKDOWN,
