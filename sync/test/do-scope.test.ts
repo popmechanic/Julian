@@ -491,10 +491,9 @@ async function routerHandoffForTicket(consumeBody: unknown): Promise<string | nu
       }),
     },
     GATE: {
-      fetch: async (input: string | Request, init?: RequestInit) => {
+      fetch: async (input: string | Request) => {
         const path = new URL(typeof input === 'string' ? input : input.url).pathname;
         const body = path === CONSUME_TICKET_PATH ? consumeBody : { recorded: true };
-        void init;
         return new Response(JSON.stringify(body), {
           status: 200, headers: { 'Content-Type': 'application/json' },
         });
