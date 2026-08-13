@@ -540,7 +540,7 @@ describe('admin', () => {
       await enroll(g, clock);
       const dump = g.leaseExport();
       expect(JSON.stringify(dump)).not.toMatch(/jla_|jlr_/);
-      expect(dump.leases.length).toBe(2); // the door plus the legacy pseudo-lease
+      expect(dump.leases.length).toBe(3); // the door plus both legacy pseudo-leases
       expect(dump.tokens.length).toBe(2); // one access, one refresh
       for (const token of dump.tokens as Array<{ hash: string; kind: string }>) {
         expect(token.hash).toMatch(/^[0-9a-f]{64}$/);

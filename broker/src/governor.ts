@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { AUTHCODE_SCOPES, KNOCK_SCOPES } from 'julian-shared/scopes';
 
 export interface LedgerEntry {
   ts: number; sub: string; service: string; verb: string; detail: string; allowed: number;
@@ -10,8 +11,13 @@ export interface LeaseReserveResult {
   ok: boolean; refusedBy?: 'global' | 'lease'; count: number; cap: number | null;
 }
 
-export type LeaseScope = 'full-house' | 'reading-room' | 'stream-read';
+// The knock's scope vocabulary is not this file's to invent: it is spec §5's
+// mint allowlist, read straight off `julian-shared/scopes`. `stream` is absent
+// there, which is what makes it structurally unknockable.
+export type LeaseScope = (typeof KNOCK_SCOPES)[number];
 export type KnockDecision = 'approved' | 'refused';
+/** Which mint path is asking. Every reserved door name belongs to exactly one. */
+export type MintClass = 'device' | 'authcode' | 'exchange';
 
 export interface KnockCreated { deviceCode: string; userCode: string; expiresIn: number; interval: number }
 export interface KnockRefused { error: 'slow_down' }
@@ -46,15 +52,19 @@ const DEFAULT_LEASE_SEND_CAP = 5;
 const ACCESS_PREFIX = 'jla_';
 const REFRESH_PREFIX = 'jlr_';
 const LEGACY_LEASE_ID = 'legacy-window';
+// The sync worker's own legacy window. A second pseudo-lease rather than a
+// second meaning for the first, so closing the browser's raw-JWT door and
+// closing the MCP door are two separate revokes on two separate dates.
+const LEGACY_SYNC_LEASE_ID = 'legacy-window-sync';
+// Reserved door-name prefixes. `browser:` names are the browser session's, and
+// only the exchange flow may mint one; `visit:` names are the MCP visit's, and
+// only the authcode flow may mint one.
+const BROWSER_PREFIX = 'browser:';
+const VISIT_PREFIX = 'visit:';
 // Twenty consonants: no vowels (no accidental words), no 0/O/1/I/L lookalikes.
 const USER_CODE_ALPHABET = 'BCDFGHJKLMNPQRSTVWXZ';
 const USER_CODE_HALF = 4;
 const TOKEN_BYTES = 32;                // 256 bits → 43 base64url characters
-const SCOPES: readonly string[] = ['full-house', 'reading-room', 'stream-read'];
-// The MCP visit (RFC 8252 authcode flow) never gets the house. This gate lives
-// in the DO mint method itself, so the absence of a `full-house` button on the
-// consent page is never the enforcement.
-const AUTHCODE_SCOPES = ['reading-room', 'stream-read'] as const;
 // Reuse-grace for the authcode path: a client that retries the very same
 // refresh request inside this window is served the pair it already earned,
 // idempotently, rather than being read as a replay and killed.
@@ -93,6 +103,26 @@ function normalizeUserCode(input: string): string {
  */
 function claim(value: string): string {
   return value.slice(0, MAX_CLAIM);
+}
+
+/**
+ * The reserved-identifier table. Some door names are not a door's to choose:
+ * they name a *kind* of holder, and a lease under one of them is trusted for
+ * what that kind is trusted for. Three answers:
+ *
+ *   a `MintClass` — reserved, and only that one mint path may take the name
+ *   `null`        — reserved for no mint path at all (the legacy literals,
+ *                   which the constructor seeds directly and nothing mints)
+ *   `undefined`   — not reserved: an ordinary door under the ordinary rules
+ *
+ * Read from below, inside `upsertLease`, so the absence of a button on a page
+ * is never the enforcement and a flow nobody has written yet is bound too.
+ */
+function reservedOwner(doorName: string): MintClass | null | undefined {
+  if (doorName.startsWith(BROWSER_PREFIX)) return 'exchange';
+  if (doorName.startsWith(VISIT_PREFIX)) return 'authcode';
+  if (doorName === LEGACY_LEASE_ID || doorName === LEGACY_SYNC_LEASE_ID) return null;
+  return undefined;
 }
 
 /** The tighter of two caps; null is "no opinion", not "no limit". */
@@ -155,12 +185,31 @@ export class GovernorDO extends DurableObject {
     if (!leaseCols.has('flow')) {
       sql.exec("ALTER TABLE leases ADD COLUMN flow TEXT NOT NULL DEFAULT 'device'");
     }
+    // B3's three: the Pocket ID `sub` a browser-session lease belongs to, the
+    // package pin the door is currently sitting on, and the integrity latch
+    // (JSON `{"pin","path"}` or NULL). All nullable — every row that predates
+    // them is honestly "not yet known", never a fabricated default.
+    if (!leaseCols.has('subject')) sql.exec('ALTER TABLE leases ADD COLUMN subject TEXT');
+    if (!leaseCols.has('sitting_pin')) sql.exec('ALTER TABLE leases ADD COLUMN sitting_pin TEXT');
+    if (!leaseCols.has('latch')) sql.exec('ALTER TABLE leases ADD COLUMN latch TEXT');
     sql.exec(
       `CREATE TABLE IF NOT EXISTS lease_tokens (
          hash TEXT PRIMARY KEY, lease_id TEXT NOT NULL,
          kind TEXT NOT NULL,
          generation INTEGER NOT NULL, expires INTEGER, used INTEGER NOT NULL DEFAULT 0)`,
     );
+    // A stable public handle for one token, so a socket can be re-checked and a
+    // theft signal can name the credential without ever naming the credential.
+    // Nullable: tokens minted before B3 keep working with no handle at all.
+    const tokenCols = new Set(
+      (sql.exec('PRAGMA table_info(lease_tokens)').toArray() as Array<{ name: string }>).map((r) => r.name),
+    );
+    if (!tokenCols.has('token_id')) sql.exec('ALTER TABLE lease_tokens ADD COLUMN token_id TEXT');
+    // The two shapes every cap question asks of the ledger, which is now also
+    // written on the allowed path and so grows far faster than it used to.
+    // Additive and idempotent: an index is not a schema the readers can see.
+    sql.exec('CREATE INDEX IF NOT EXISTS idx_ledger_svc ON ledger (service, verb, allowed, ts)');
+    sql.exec('CREATE INDEX IF NOT EXISTS idx_ledger_sub ON ledger (sub, service, verb, allowed, ts)');
     sql.exec(
       `CREATE TABLE IF NOT EXISTS knocks (
          device_code TEXT PRIMARY KEY, user_code TEXT NOT NULL UNIQUE,
@@ -176,6 +225,17 @@ export class GovernorDO extends DurableObject {
          (lease_id, door_name, client_claims, scope, status, born, last_renewal, last_verb, send_cap_per_day)
        VALUES (?, ?, ?, ?, 'living', ?, NULL, NULL, ?)`,
       LEGACY_LEASE_ID, LEGACY_LEASE_ID, '{"issuer":"pocket-id"}', 'full-house', Date.now(), DEFAULT_LEASE_SEND_CAP,
+    );
+    // The sync worker's window, seeded the same way and closable the same way.
+    // It carries `stream`, not `full-house`: a raw Pocket ID JWT at the sync
+    // socket buys the stream and nothing else, and never the mail.
+    sql.exec(
+      `INSERT OR IGNORE INTO leases
+         (lease_id, door_name, client_claims, scope, status, born, last_renewal, last_verb,
+          send_cap_per_day, flow, principal)
+       VALUES (?, ?, ?, 'stream', 'living', ?, NULL, NULL, ?, 'legacy', 'julian')`,
+      LEGACY_SYNC_LEASE_ID, LEGACY_SYNC_LEASE_ID, '{"issuer":"pocket-id"}',
+      Date.now(), DEFAULT_LEASE_SEND_CAP,
     );
   }
 
@@ -260,6 +320,28 @@ export class GovernorDO extends DurableObject {
     return { ok: true, count: globalUsed + 1, cap: globalCap };
   }
 
+  /**
+   * The positive pen. `reserve`/`reserveLease` write the ledger as a side
+   * effect of *deciding*; this writes it as a side effect of something having
+   * *happened* — a socket opened, a part served, a read answered — where the
+   * decision was made somewhere else and no cap is at stake. One row, always
+   * `allowed:1`, never a refusal: there is no counter here to run out of.
+   *
+   * `doorName` is a label of last resort, not an identity. When the register
+   * knows the lease, the register's word is what lands in the ledger, so a
+   * caller holding the introspection secret still cannot write another door's
+   * name into the record.
+   */
+  recordAllowed(leaseId: string, doorName: string, service: string, verb: string, detail: string): void {
+    const now = this.now();
+    const row = this.sql.exec(
+      'SELECT door_name FROM leases WHERE lease_id = ?', leaseId,
+    ).toArray()[0] as Row | undefined;
+    const name = row ? String(row.door_name) : doorName;
+    this.ledger(now, `lease:${leaseId}`, service, verb, detail ? `door=${name} ${detail}` : `door=${name}`, true);
+    this.sql.exec('UPDATE leases SET last_verb = ? WHERE lease_id = ?', `${service}.${verb}`, leaseId);
+  }
+
   entries(limit = 50): LedgerEntry[] {
     const n = Math.min(Math.max(1, Math.floor(limit) || 1), MAX_LIMIT);
     return this.sql
@@ -316,8 +398,13 @@ export class GovernorDO extends DurableObject {
 
   knockDecide(userCode: string, decision: KnockDecision, doorName: string, scope: LeaseScope): boolean {
     if (decision !== 'approved' && decision !== 'refused') return false;
-    if (!SCOPES.includes(scope)) return false;
+    if (!(KNOCK_SCOPES as readonly string[]).includes(scope)) return false;
     if (doorName.trim() === '') return false;
+    // No reserved name is knockable — not even the one the device flow would
+    // otherwise own, because the device flow owns none of them. Refused here as
+    // well as in `upsertLease` so the approval page can say no before a knock
+    // is spent; `upsertLease` remains the enforcement.
+    if (reservedOwner(doorName) !== undefined) return false;
     const code = normalizeUserCode(userCode);
     if (code === '') return false;
     const row = this.sql.exec(
@@ -362,7 +449,12 @@ export class GovernorDO extends DurableObject {
     const claims = JSON.stringify({
       clientId: String(row.client_id), host: String(row.host), purpose: String(row.purpose),
     });
+    // The knock row is storage, and storage is not testimony: a `door_name`
+    // that reached it by any route other than `knockDecide` is still judged
+    // here. The knock is left un-claimed, so the answer stays `refused` on
+    // every retry rather than decaying into the ambiguous `expired`.
     const leaseId = this.upsertLease(doorName, scope, claims, now);
+    if (leaseId === null) return { status: 'refused' };
     this.insertPair(leaseId, 1, pair, now);
     this.sql.exec("UPDATE knocks SET status = 'claimed' WHERE device_code = ?", deviceCode);
     return {
@@ -387,7 +479,10 @@ export class GovernorDO extends DurableObject {
     if (!(AUTHCODE_SCOPES as readonly string[]).includes(scope)) return { status: 'invalid' };
     const pair = await this.newPair();
     const now = this.now();
-    const leaseId = this.upsertLease(doorName, scope, claims, now, 'authcode', principal);
+    const leaseId = this.upsertLease(doorName, scope, claims, now, 'authcode', principal, 'authcode');
+    // A name this flow may not take, or a `visit:` row already put down: the
+    // pair minted above is simply dropped, never written.
+    if (leaseId === null) return { status: 'invalid' };
     this.insertPair(leaseId, 1, pair, now);
     return {
       status: 'ok',
@@ -512,8 +607,21 @@ export class GovernorDO extends DurableObject {
   }
 
   legacyAllowed(): boolean {
+    return this.leaseLiving(LEGACY_LEASE_ID);
+  }
+
+  /**
+   * The sync worker's window, asked and answered exactly like the gate's. Two
+   * windows, two revokes: closing the browser's raw-JWT door early leaves the
+   * MCP door standing, and the reverse.
+   */
+  legacySyncAllowed(): boolean {
+    return this.leaseLiving(LEGACY_SYNC_LEASE_ID);
+  }
+
+  private leaseLiving(leaseId: string): boolean {
     const row = this.sql.exec(
-      'SELECT status FROM leases WHERE lease_id = ?', LEGACY_LEASE_ID,
+      'SELECT status FROM leases WHERE lease_id = ?', leaseId,
     ).toArray()[0] as Row | undefined;
     return !!row && String(row.status) === 'living';
   }
@@ -589,9 +697,14 @@ export class GovernorDO extends DurableObject {
     pair: { accessHash: string; refreshHash: string }, now: number,
   ): void {
     this.sql.exec("DELETE FROM lease_tokens WHERE lease_id = ? AND kind = 'access'", leaseId);
+    // Every access token minted from here on carries a handle of its own. It is
+    // the access row that gets one because it is the access row a live socket
+    // and a ledger row need to name; the refresh row is never spoken about out
+    // loud, so it keeps its NULL.
     this.sql.exec(
-      "INSERT INTO lease_tokens (hash, lease_id, kind, generation, expires, used) VALUES (?, ?, 'access', ?, ?, 0)",
-      pair.accessHash, leaseId, generation, now + ACCESS_TTL_SECONDS * 1000,
+      `INSERT INTO lease_tokens (hash, lease_id, kind, generation, expires, used, token_id)
+       VALUES (?, ?, 'access', ?, ?, 0, ?)`,
+      pair.accessHash, leaseId, generation, now + ACCESS_TTL_SECONDS * 1000, crypto.randomUUID(),
     );
     this.sql.exec(
       "INSERT INTO lease_tokens (hash, lease_id, kind, generation, expires, used) VALUES (?, ?, 'refresh', ?, NULL, 0)",
@@ -604,14 +717,30 @@ export class GovernorDO extends DurableObject {
    * old tokens. `flow`/`principal` default to the device-flow values so the
    * knock path is unchanged; the authcode path passes `'authcode'` and its own
    * principal, and a re-mint keeps the row on that flow.
+   *
+   * `mintClass` says which flow is asking, and it is the only thing the
+   * reserved-identifier guard trusts. `null` comes back — never a lease — when
+   * the name belongs to a different class, belongs to no class at all, or names
+   * a reserved row that has stopped being `living`. Every mint path in the DO
+   * goes through here, so the guard cannot be walked around by adding a face.
    */
   private upsertLease(
     doorName: string, scope: string, claims: string, now: number,
-    flow = 'device', principal = 'julian',
-  ): string {
+    flow = 'device', principal = 'julian', mintClass: MintClass = 'device',
+  ): string | null {
+    const owner = reservedOwner(doorName);
+    const reserved = owner !== undefined;
+    if (reserved && owner !== mintClass) return null;
+
     const existing = this.sql.exec(
-      'SELECT lease_id FROM leases WHERE door_name = ?', doorName,
+      'SELECT lease_id, status FROM leases WHERE door_name = ?', doorName,
     ).toArray()[0] as Row | undefined;
+    // A reserved name is one identity for life. Once its row stops being
+    // `living` — revoked by Marcus, or killed by a rotation replay — no mint
+    // path brings it back; only `/leases/reinstate` does. Ordinary doors keep
+    // the re-knock revival, which is the whole point of a knock.
+    if (reserved && existing && String(existing.status) !== 'living') return null;
+
     if (existing) {
       const leaseId = String(existing.lease_id);
       this.sql.exec(

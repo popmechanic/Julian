@@ -149,3 +149,168 @@ describe('leases table migration: principal + flow', () => {
     });
   });
 });
+
+// ── B3: subject / sitting_pin / latch / token_id, the ledger indexes, and the
+// second legacy window ──────────────────────────────────────────────────────
+//
+// Same trick as above, one generation later: build the B2-shaped register the
+// world is actually running, then force a reconstruction over that storage so
+// the constructor's migration runs against a table it did not just create.
+
+const B3_LEASE_COLS = ['subject', 'sitting_pin', 'latch'] as const;
+const LEDGER_INDEXES = ['idx_ledger_svc', 'idx_ledger_sub'] as const;
+const SYNC_WINDOW = 'legacy-window-sync';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+function indexNames(state: DurableObjectState): string[] {
+  return (state.storage.sql
+    .exec("SELECT name FROM sqlite_master WHERE type = 'index'")
+    .toArray() as Array<{ name: string }>).map((r) => r.name);
+}
+
+/**
+ * Rewind a constructed register to its B2 shape: drop the four columns B3 adds,
+ * drop the two ledger indexes, and delete the second legacy window. What is left
+ * is indistinguishable from the register a live B2 instance is running today.
+ */
+async function rewindToB2(open: Open): Promise<void> {
+  await runInDurableObject(open(), async (g: GovernorDO, state: DurableObjectState) => {
+    const sql = state.storage.sql;
+    for (const col of B3_LEASE_COLS) sql.exec(`ALTER TABLE leases DROP COLUMN ${col}`);
+    sql.exec('ALTER TABLE lease_tokens DROP COLUMN token_id');
+    for (const idx of LEDGER_INDEXES) sql.exec(`DROP INDEX IF EXISTS ${idx}`);
+    sql.exec('DELETE FROM leases WHERE lease_id = ?', SYNC_WINDOW);
+
+    const seam = g as unknown as TestSeam;
+    for (const col of B3_LEASE_COLS) expect(seam.__columnsOf('leases')).not.toContain(col);
+    expect(seam.__columnsOf('lease_tokens')).not.toContain('token_id');
+    for (const idx of LEDGER_INDEXES) expect(indexNames(state)).not.toContain(idx);
+    expect(g.leaseList().some((l) => l.leaseId === SYNC_WINDOW)).toBe(false);
+  });
+}
+
+describe('B3 migration: subject, sitting_pin, latch, token_id, ledger indexes', () => {
+  test('adds the four columns and both indexes over a pre-B3 register', async () => {
+    const open = register();
+    await runInDurableObject(open(), () => { /* first construction */ });
+    await rewindToB2(open);
+    await reconstruct(open);
+
+    await runInDurableObject(open(), (g: GovernorDO, state: DurableObjectState) => {
+      const seam = g as unknown as TestSeam;
+      const leaseCols = seam.__columnsOf('leases');
+      for (const col of B3_LEASE_COLS) expect(leaseCols).toContain(col);
+      expect(seam.__columnsOf('lease_tokens')).toContain('token_id');
+      const indexes = indexNames(state);
+      for (const idx of LEDGER_INDEXES) expect(indexes).toContain(idx);
+    });
+  });
+
+  test('the new lease columns are nullable and start NULL on rows that predate them', async () => {
+    const open = register();
+    await runInDurableObject(open(), () => { /* first construction */ });
+    await rewindToB2(open);
+    await reconstruct(open);
+
+    await runInDurableObject(open(), (_g: GovernorDO, state: DurableObjectState) => {
+      const row = state.storage.sql
+        .exec('SELECT subject, sitting_pin, latch FROM leases WHERE lease_id = ?', 'legacy-window')
+        .one();
+      expect(row).toEqual({ subject: null, sitting_pin: null, latch: null });
+    });
+  });
+
+  test('seeds legacy-window-sync on a register that never had one', async () => {
+    const open = register();
+    await runInDurableObject(open(), () => { /* first construction */ });
+    await rewindToB2(open);
+    await reconstruct(open);
+
+    await runInDurableObject(open(), (g: GovernorDO) => {
+      expect(g.leaseList().find((l) => l.leaseId === SYNC_WINDOW)).toMatchObject({
+        doorName: SYNC_WINDOW, scope: 'stream', status: 'living', principal: 'julian', flow: 'legacy',
+      });
+      expect(g.legacySyncAllowed()).toBe(true);
+    });
+  });
+
+  test('a revoked legacy-window-sync stays revoked across a reconstruction', async () => {
+    const open = register();
+    await runInDurableObject(open(), (g: GovernorDO) => {
+      expect(g.leaseRevoke(SYNC_WINDOW, 'marcus')).toBe(true);
+    });
+    await reconstruct(open);
+
+    await runInDurableObject(open(), (g: GovernorDO) => {
+      expect(g.legacySyncAllowed()).toBe(false);
+      expect(g.leaseList().find((l) => l.leaseId === SYNC_WINDOW)?.status).toBe('revoked');
+    });
+  });
+
+  test('a pre-B3 access token with a NULL token_id still validates after the migration', async () => {
+    const open = register();
+    const minted = await runInDurableObject(open(), async (g: GovernorDO) => {
+      const knock = await g.knockCreate('client', 'host', 'purpose');
+      if ('error' in knock) throw new Error('knock refused');
+      expect(g.knockDecide(knock.userCode, 'approved', 'door:pre-b3', 'full-house')).toBe(true);
+      const ready = await g.devicePoll(knock.deviceCode, 'client');
+      if (ready.status !== 'ready') throw new Error(`expected ready, got ${ready.status}`);
+      const lease = g.leaseList().find((l) => l.doorName === 'door:pre-b3');
+      return { token: ready.accessToken, leaseId: lease?.leaseId ?? '' };
+    });
+    await rewindToB2(open);   // drops token_id off the row this token lives on
+    await reconstruct(open);
+
+    await runInDurableObject(open(), async (g: GovernorDO, state: DurableObjectState) => {
+      expect(state.storage.sql.exec(
+        "SELECT token_id FROM lease_tokens WHERE lease_id = ? AND kind = 'access'", minted.leaseId,
+      ).one()).toEqual({ token_id: null });
+      expect(await g.validateAccess(minted.token)).toEqual({
+        leaseId: minted.leaseId, doorName: 'door:pre-b3', scope: 'full-house', principal: 'julian',
+      });
+    });
+  });
+
+  test('every new access insert stamps its own UUID token_id', async () => {
+    await runInDurableObject(register()(), async (g: GovernorDO, state: DurableObjectState) => {
+      const first = await g.mintAuthcodeLease('visit:stamp.example', 'reading-room', 'julian', '{}');
+      if (first.status !== 'ok') throw new Error('mint failed');
+      const leaseId = g.leaseList().find((l) => l.doorName === 'visit:stamp.example')?.leaseId ?? '';
+      const idOf = () => String(state.storage.sql.exec(
+        "SELECT token_id FROM lease_tokens WHERE lease_id = ? AND kind = 'access'", leaseId,
+      ).one().token_id);
+
+      const before = idOf();
+      expect(before).toMatch(UUID_RE);
+      const rotated = await g.mintFromRefresh(first.refreshToken);
+      expect(rotated.status).toBe('ok');
+      const after = idOf();
+      expect(after).toMatch(UUID_RE);
+      expect(after).not.toBe(before);
+    });
+  });
+
+  test('the B3 migration is idempotent: reconstructing neither throws nor rewrites', async () => {
+    const open = register();
+    // Values that are not the (NULL) column default: were the PRAGMA guard gone,
+    // the re-run ALTER would throw "duplicate column name"; were the columns
+    // somehow re-added, these would be gone.
+    await runInDurableObject(open(), (_g: GovernorDO, state: DurableObjectState) => {
+      state.storage.sql.exec(
+        "UPDATE leases SET subject = 'user_marcus', sitting_pin = 'pin-1', latch = '{\"pin\":\"p\",\"path\":\"x\"}'"
+        + " WHERE lease_id = 'legacy-window'",
+      );
+    });
+    await reconstruct(open);
+
+    await runInDurableObject(open(), (g: GovernorDO, state: DurableObjectState) => {
+      const seam = g as unknown as TestSeam;
+      for (const col of B3_LEASE_COLS) expect(seam.__columnsOf('leases')).toContain(col);
+      expect(state.storage.sql
+        .exec('SELECT subject, sitting_pin, latch FROM leases WHERE lease_id = ?', 'legacy-window')
+        .one()).toEqual({ subject: 'user_marcus', sitting_pin: 'pin-1', latch: '{"pin":"p","path":"x"}' });
+      expect(indexNames(state).filter((n) => (LEDGER_INDEXES as readonly string[]).includes(n)).sort())
+        .toEqual([...LEDGER_INDEXES].sort());
+    });
+  });
+});
