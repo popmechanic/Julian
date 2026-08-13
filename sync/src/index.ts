@@ -324,6 +324,11 @@ export default {
     const stub = env.JULIAN_SYNC.get(env.JULIAN_SYNC.idFromName(`${parsed.store}/${parsed.context}`));
     if (parsed.isExport) {
       if (req.method !== 'GET') return new Response('Method not allowed', { status: 405 });
+      // A healthy read is a ledger row like a healthy open below: the pen
+      // records what happened, not only what was refused. (Found missing by
+      // the first live stream-read export, 2026-08-13.)
+      reportPen(env, ctx, ALLOWED_PATH, admitted, 'export',
+        `token_id=${admitted.tokenId ?? 'jwt'}`);
       // The DO routes on `/export`, so the path is rewritten; the caller's
       // headers ride along (as they do on the socket path) and pass through
       // the one door, which is what makes the handoff strip load-bearing here

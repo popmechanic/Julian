@@ -517,14 +517,20 @@ describe('router: the allowed pen', () => {
     }]);
   });
 
-  test('the export path spends no positive pen (only an open does)', async () => {
+  test('a healthy export spends the positive pen too (Marcus’s word, 2026-08-13)', async () => {
+    // This test originally asserted the opposite, inferred from the plan's
+    // silence (only socket opens were mandated a pen). The first live
+    // stream-read export left no trace, the question was put to Marcus, and
+    // the Aug 9 "ledgered reads" posture won: an export is the heaviest read
+    // there is, and the pen records what happened.
     const gate = fakeGate({ introspect: activeLease({ lease_id: 'L-pen3', scope: 'stream-read' }) });
     const h = harness(gate);
     const res = await worker.fetch(
       new Request(EXPORT_URL, { headers: { Authorization: 'Bearer jla_pen3' } }), h.testEnv, h.ctx);
     expect(res.status).toBe(200);
     await h.settle();
-    expect(gate.allowed).toHaveLength(0);
+    expect(gate.allowed).toHaveLength(1);
+    expect(gate.allowed[0]).toMatchObject({ lease_id: 'L-pen3', service: 'stream', verb: 'export' });
   });
 });
 

@@ -69,4 +69,43 @@ describe('export endpoint', () => {
     probe.setMergeableContent(body.mergeableContent as never);
     expect(probe.getCell('messages', 'm1', 'text')).toBe('precious');
   });
+
+  test('a healthy export lands in the positive pen (the ledger records reads, not only refusals)', async () => {
+    // Found live 2026-08-13: the first stream-read export succeeded and left
+    // no ledger row — the export branch forwarded to the DO without the
+    // reportPen call the socket branch has. The pen records what happened.
+    const pens = { allowed: [] as Record<string, string>[], refusals: [] as unknown[] };
+    const gate: GateFetcher = {
+      fetch: async (input: string | Request, init?: RequestInit) => {
+        const path = new URL(typeof input === 'string' ? input : input.url).pathname;
+        if (path === '/allowed' || path === '/refusals') {
+          (path === '/allowed' ? pens.allowed : pens.refusals).push(JSON.parse(String(init?.body)) as never);
+          return new Response(JSON.stringify({ recorded: true }), { status: 200 });
+        }
+        return new Response(JSON.stringify({
+          active: true, lease_id: 'lease-se', door_name: 'door:stream-export',
+          scope: 'stream-read', principal: 'test', subject: 'julian', flow: 'device',
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      },
+    };
+    const testEnv = env as unknown as Env;
+    testEnv.GATE = gate;
+    testEnv.INTROSPECT_SECRET = 'test-secret';
+
+    const res = await worker.fetch(
+      new Request('https://sync.test/test/exp1/export', {
+        headers: { Authorization: 'Bearer jla_stream_read_lease_token' },
+      }),
+      testEnv,
+    );
+    expect(res.status).toBe(200);
+    await res.json(); // consume the DO's stream, or isolated storage cannot pop
+    await new Promise((r) => setTimeout(r, 20)); // the pen is fire-and-forget
+
+    expect(pens.refusals).toEqual([]);
+    expect(pens.allowed).toHaveLength(1);
+    expect(pens.allowed[0]).toMatchObject({
+      lease_id: 'lease-se', door_name: 'door:stream-export', service: 'stream', verb: 'export',
+    });
+  });
 });
