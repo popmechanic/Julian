@@ -42,11 +42,18 @@ hosts it may be presented to, and how to rotate it. Spec:
 | `AGENTMAIL_API_KEY` | Full read/send as julian-marcus@agentmail.to | T1 | Cloudflare worker secret on `julian-broker` + Mac `.env` | `api.agentmail.to` | AgentMail dashboard → new key → replace in Mac `.env` → `cd broker && bunx wrangler secret put AGENTMAIL_API_KEY` (Marcus types the value) | 2026-07-31 — installed by Marcus via wrangler secret put, Julian present; verified by `wrangler secret list` | active |
 | `SESSION_SECRET` | Sign approver sessions on the gate | T1 | Cloudflare worker secret on `julian-broker` | `https://julian-broker.julian-memory.workers.dev` | `cd broker && bunx wrangler secret put SESSION_SECRET` (generate 64 random hex or base64url chars locally, Marcus types) | not yet rotated | active |
 | `INTROSPECT_SECRET` | Verify introspection requests from sync and doors | T1 | Cloudflare worker secret, same value on both `julian-broker` (validates) and `julian-sync` (presents) | `https://julian-broker.julian-memory.workers.dev` (validates), `https://julian-sync.julian-memory.workers.dev` (presents) | `cd broker && bunx wrangler secret put INTROSPECT_SECRET` then `cd sync && bunx wrangler secret put INTROSPECT_SECRET` (same value, generate 64 random hex or base64url chars locally, Marcus types) | not yet rotated | active |
+| `SYNC_READ_SECRET` | Authenticate internal read requests from broker to sync | T1 | Cloudflare worker secret, same value on both `julian-broker` (sends) and `julian-sync` (validates) | `https://julian-sync.julian-memory.workers.dev` (validates), `https://julian-broker.julian-memory.workers.dev` (sends) | `cd broker && bunx wrangler secret put SYNC_READ_SECRET` then `cd sync && bunx wrangler secret put SYNC_READ_SECRET` (same value, generate 64 random hex or base64url chars locally, Marcus types) | not yet rotated | active |
 | `GATE_BREAKGLASS_SECRET` | Admin break-glass path to lease list/revoke/export | T0 (Mac) + T1 (worker) | Mac `.env` + Cloudflare worker secret `BREAKGLASS_SECRET` on `julian-broker` | `https://julian-broker.julian-memory.workers.dev` | Same value on both sides: generate locally, replace in Mac `.env`, then `cd broker && bunx wrangler secret put BREAKGLASS_SECRET` (same value) | not yet rotated | active |
 
 ## Public config (T2 — ships to VMs)
 
 `VITE_OIDC_ISSUER`, `VITE_OIDC_CLIENT_ID`, `ALLOWED_ORIGIN`, `VITE_SYNC_URL`,
 `BROKER_URL`, `AGENTMAIL_INBOX_ID` (an address, not a secret),
-`VITE_API_URL`, `VITE_CLOUD_URL` (legacy). None of these grant authority;
-all may appear in a VM's `/opt/julian/.env` and in built bundles.
+`VITE_API_URL`, `VITE_CLOUD_URL` (legacy), `STREAM_SUBS` (policy map), `APP_ORIGINS` (cors policy).
+None of these grant authority; all may appear in a VM's `/opt/julian/.env` and in built bundles.
+
+## Bindings (non-credential service bindings)
+
+| Name | Unlocks | Service | Notes |
+|---|---|---|---|
+| `EXCHANGE_RL` | Rate limiting for the `/exchange` endpoint (30 req/min) | Cloudflare Rate Limiting | Optional — its absence is a tested fail-open; the endpoint refuses no one on first-call if the binding is unset |

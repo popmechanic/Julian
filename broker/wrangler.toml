@@ -37,7 +37,20 @@ APPROVER_SUBS = "94d31ef6-0b1f-441e-b67c-c037a8993924"                          
 GATE_CLIENT_ID = "79ff255e-dd77-4ade-adc8-db4fd833f361"                         # Pocket ID client for the approval login
 GATE_REDIRECT_URI = "https://julian-broker.julian-memory.workers.dev/auth/callback"
 PUBLIC_URL = "https://julian-broker.julian-memory.workers.dev"
-LEGACY_WINDOW_END = "2026-08-23T00:00:00Z"               # after this, Pocket ID bearers are refused
+LEGACY_WINDOW_END = "2026-09-01T00:00:00Z"               # Sep 1 backstop, OPS N-6 — goes live as deploy step 1
+
+STREAM_SUBS = "94d31ef6-0b1f-441e-b67c-c037a8993924=julian"                     # sub=principal comma-separated map
+APP_ORIGINS = "https://julian.exe.xyz,https://julian-new.exe.xyz,http://localhost:8000"  # comma-separated exact origins
+
+[[services]]
+binding = "SYNC"
+service = "julian-sync"
+
+[[unsafe.bindings]]
+name = "EXCHANGE_RL"
+type = "ratelimit"
+namespace_id = "1101"
+simple = { limit = 30, period = 60 }
 
 # Worker secrets (wrangler secret put) — never vars, never in this file:
-#   AGENTMAIL_API_KEY, SESSION_SECRET, INTROSPECT_SECRET, BREAKGLASS_SECRET
+#   AGENTMAIL_API_KEY, SESSION_SECRET, INTROSPECT_SECRET, BREAKGLASS_SECRET, SYNC_READ_SECRET
