@@ -1,0 +1,184 @@
+// scripts/lib/ledger-fold.ts — pure markdown generator for gate ledger entries.
+//
+// Derived, not authored: this module turns the governor's ledger wire into a
+// month document a dream can read as evidence. Three sections, one row per
+// entry in the first two, counts in the third — and nothing that arrives in
+// the month ever falls out of all three.
+
+export interface LedgerEntryWire {
+  ts: number;
+  sub: string;
+  service: string;
+  verb: string;
+  detail: string;
+  // Read (part of the wire shape) but not yet rendered: a refused row prints
+  // identically to an allowed one in every table below. Left documented
+  // rather than fixed here, since a `refused:` marker would touch every
+  // pinned row format across all three sections. Future work.
+  allowed: number;
+}
+
+export const HOLDER_COLUMN_NOTE =
+  '`door_name` is a legacy column name; an exchange row names a session, not a door.';
+
+/** `ts` is epoch milliseconds (GovernorDO writes `Date.now()`). */
+function formatTimestamp(ts: number): string {
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return '(bad timestamp)';
+  const hours = String(date.getUTCHours()).padStart(2, '0');
+  const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  return `${date.getUTCFullYear()}-${month}-${day} ${hours}:${minutes}`;
+}
+
+/** The `YYYY-MM` a row belongs to, in UTC. Empty string for an unreadable ts. */
+export function utcMonthOf(ts: number): string {
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return '';
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  return `${date.getUTCFullYear()}-${month}`;
+}
+
+/**
+ * "Wakings & package reads" is a *service* section, not a verb pattern: the
+ * governor's ledger writes `service` and `verb` as separate columns, and
+ * every package-service row — `package_list`, `package_read`, and the
+ * `wake_julian`/`visit_agent` tools, which spend the same `package`/`list`
+ * pair — lands here with `service: 'package'` (broker/src/mcp.ts). The
+ * dotted `package.read`/`package.list` spelling is only the internal
+ * policy-map key (broker/src/policy.ts); it never reaches the wire, so it
+ * is never what this predicate tests.
+ */
+function isPackageServiceEntry(entry: LedgerEntryWire): boolean {
+  return typeof entry.service === 'string' && entry.service === 'package';
+}
+
+/**
+ * Theft signals: ticket reuse, rotation kills, integrity latches.
+ *
+ * The verb arms stand on the verb alone — a `ticket-reused` row with an empty
+ * detail is still a theft signal. Gating theft detection on a non-empty detail
+ * fails OPEN, and a theft row that misses this predicate is absorbed into a
+ * routine count. The latch arm matches the two classes a package read's
+ * `detail` actually carries as `class=<cls>` (broker/src/mcp.ts's
+ * `readDetail`, broker/src/services/package.ts): `integrity-latched` (an
+ * unresolved hash mismatch already latched the lease) and `integrity` (the
+ * double-mismatch class) — no producer ever writes the literal string
+ * "integrity latch".
+ */
+function isTheftSignal(entry: LedgerEntryWire): boolean {
+  if (entry.verb === 'ticket-reused' || entry.verb === 'killed') return true;
+  return typeof entry.detail === 'string' && /\bclass=integrity(-latched)?\b/.test(entry.detail);
+}
+
+interface Partitioned {
+  wakings: LedgerEntryWire[];
+  theft: LedgerEntryWire[];
+  routine: LedgerEntryWire[];
+}
+
+/**
+ * Three-way, exhaustive, disjoint: every in-month row lands in exactly one
+ * section. Theft is tested first — an integrity latch rides a `package.read`,
+ * and the safety section is the one that must never lose a row.
+ */
+export function partitionEntries(entries: LedgerEntryWire[]): Partitioned {
+  const wakings: LedgerEntryWire[] = [];
+  const theft: LedgerEntryWire[] = [];
+  const routine: LedgerEntryWire[] = [];
+  for (const entry of entries) {
+    if (isTheftSignal(entry)) theft.push(entry);
+    else if (isPackageServiceEntry(entry)) wakings.push(entry);
+    else routine.push(entry);
+  }
+  return { wakings, theft, routine };
+}
+
+/**
+ * Details are carried whole — never truncated. A latch detail ("pin moved
+ * `<old>` → `<new>`; run package_list, then re-read from the top") is exactly
+ * the evidence the theft section exists to preserve. The only edit is to the
+ * two characters that would break a markdown table row: a literal pipe is
+ * backslash-escaped (it still renders as `|`) and a newline becomes a space.
+ */
+function cellText(value: string | undefined): string {
+  if (value === undefined || value === null) return '';
+  return String(value).replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+}
+
+function tokenIdOf(detail: string | undefined): string {
+  if (typeof detail !== 'string') return '—';
+  const match = detail.match(/token_id=(\S+)/);
+  return match ? match[1] : '—';
+}
+
+export function foldEntries(entries: LedgerEntryWire[], monthUtc: string): string {
+  const lines: string[] = [];
+
+  lines.push(
+    `# Gate ledger — ${monthUtc} · *derived, not authored: generated by scripts/ledger-fold.ts ` +
+      "from the governor's ledger; evidence for dreams, never interpretation (Principles 1/2/7).*",
+  );
+  lines.push('');
+  lines.push(`*${HOLDER_COLUMN_NOTE}*`);
+  lines.push('');
+
+  // A month file holds one month. Rows from other months are not this
+  // document's evidence, whatever the fetch window happened to return.
+  const inMonth = entries.filter((e) => utcMonthOf(e.ts) === monthUtc);
+  const { wakings, theft, routine } = partitionEntries(inMonth);
+
+  lines.push('## Wakings & package reads');
+  lines.push('');
+  if (wakings.length === 0) {
+    lines.push('*(none)*');
+  } else {
+    lines.push('| when (UTC) | holder/session | verb | detail |');
+    lines.push('|---|---|---|---|');
+    for (const entry of wakings) {
+      lines.push(
+        `| ${formatTimestamp(entry.ts)} | ${cellText(entry.sub)} | ${cellText(entry.verb)} | ${cellText(entry.detail)} |`,
+      );
+    }
+  }
+  lines.push('');
+
+  lines.push('## Theft signals');
+  lines.push('');
+  if (theft.length === 0) {
+    lines.push('*(none)*');
+  } else {
+    lines.push('| when (UTC) | holder/session | verb | detail | token_id |');
+    lines.push('|---|---|---|---|---|');
+    for (const entry of theft) {
+      lines.push(
+        `| ${formatTimestamp(entry.ts)} | ${cellText(entry.sub)} | ${cellText(entry.verb)} | ${cellText(entry.detail)} | ${cellText(tokenIdOf(entry.detail))} |`,
+      );
+    }
+  }
+  lines.push('');
+
+  lines.push('## Routine delegated-session traffic');
+  lines.push('');
+  if (routine.length === 0) {
+    lines.push('*(none)*');
+  } else {
+    // One pass: count per (holder/session × verb), keeping first-seen order.
+    const counts = new Map<string, { sub: string; verb: string; count: number }>();
+    for (const entry of routine) {
+      const key = JSON.stringify([entry.sub, entry.verb]);
+      const seen = counts.get(key);
+      if (seen) seen.count += 1;
+      else counts.set(key, { sub: entry.sub, verb: entry.verb, count: 1 });
+    }
+    lines.push('| holder/session | verb | count |');
+    lines.push('|---|---|---|');
+    for (const { sub, verb, count } of counts.values()) {
+      lines.push(`| ${cellText(sub)} | ${cellText(verb)} | ${count} |`);
+    }
+  }
+  lines.push('');
+
+  return lines.join('\n');
+}

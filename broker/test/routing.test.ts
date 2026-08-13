@@ -298,3 +298,10 @@ describe('the /mcp face is wired ahead of the generic lease gate', () => {
     expect(res.headers.get('WWW-Authenticate')).toBe(null);
   });
 });
+
+test('the suite boots with SYNC and EXCHANGE_RL stubbed (pool-boot guard)', () => {
+  // env is the pool-provided binding surface; these exist or this file cannot run.
+  expect((env as unknown as Env).SYNC).toBeDefined();
+  expect(typeof (env as unknown as Env).STREAM_SUBS).toBe('string');
+  expect(typeof (env as unknown as Env).APP_ORIGINS).toBe('string');
+});

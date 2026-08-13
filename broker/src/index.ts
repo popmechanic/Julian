@@ -1,14 +1,17 @@
-// The gate's front door. Four faces hang off one worker: the knock (`/device`,
+// The gate's front door. Five faces hang off one worker: the knock (`/device`,
 // `/token`), the approval (`/approve`, `/auth/callback`), the register
-// (`/introspect`, `/leases*`), and the verbs themselves. The first three carry
-// their own auth; everything else must present a living lease. A token buys a
-// verb, never the key — the upstream credential is read inside the service
-// modules and is never echoed back to the caller.
+// (`/introspect`, `/consume-ticket`, the two pens `/refusals` and `/allowed`,
+// and `/leases*`), the browser pair (`/exchange`,
+// `/socket-ticket`), and the verbs themselves. The first four carry their own
+// auth; everything else must present a living lease. A token buys a verb, never
+// the key — the upstream credential is read inside the service modules and is
+// never echoed back to the caller.
 import { handleAdmin } from './as/admin';
 import { handleApprove } from './as/approve';
 import { handleAuthcode, oauthDiscovery } from './as/authcode';
 import { handleDevice } from './as/device';
 import type { Env } from './env';
+import { handleExchange, handleSocketTicket } from './exchange';
 import type { GovernorDO } from './governor';
 import { GOVERNOR_DOWN, authenticate, json, reserve } from './lease-auth';
 import { handleMcp } from './mcp';
@@ -115,6 +118,14 @@ export default {
       }
       return handleDevice(req, env, gov);
     }
+    // The browser pair, mounted here with the other self-authenticating faces
+    // and deliberately not under `/leases/`: `/exchange` presents a Pocket ID
+    // token (there is no lease yet to present), and `/socket-ticket` presents a
+    // session access token to a face that must answer CORS preflights the
+    // generic lease gate below knows nothing about.
+    if (path === '/exchange') return handleExchange(req, env, gov);
+    if (path === '/socket-ticket') return handleSocketTicket(req, env, gov);
+
     if (path === '/approve' || path.startsWith('/approve/') || path === '/auth/callback') {
       // Best-effort, not fail-closed: the device-flow desk (today's whole
       // approval surface) never touches the registrar, so a broken binding
@@ -129,7 +140,7 @@ export default {
       }
       return handleApprove(req, env, gov, reg as DurableObjectStub<RegistrarDO>);
     }
-    if (path === '/introspect' || path === '/refusals' || path === '/leases' || path.startsWith('/leases/') || path === '/ledger' || path === '/pin-bump') {
+    if (path === '/introspect' || path === '/consume-ticket' || path === '/refusals' || path === '/allowed' || path === '/leases' || path.startsWith('/leases/') || path === '/ledger' || path === '/pin-bump') {
       return handleAdmin(req, env, gov);
     }
 

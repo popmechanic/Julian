@@ -18,7 +18,7 @@ import { env, runInDurableObject, SELF, fetchMock } from 'cloudflare:test';
 import worker from '../src/index';
 import { introspectLease } from '../src/auth';
 import type { Env, GateFetcher } from '../src/auth';
-import type { JulianSyncDO } from '../src/do';
+import type { JulianSyncDO, SocketAttachment } from '../src/do';
 
 beforeAll(() => {
   fetchMock.activate();
@@ -210,6 +210,20 @@ function waitForClose(client: WebSocket, timeoutMs = 200): Promise<{ code: numbe
   });
 }
 
+// The attachment is handles, never a bearer (see sync/src/do.ts) — so these
+// re-auth tests carry `{leaseId, tokenId, flow, verifiedAt, indefiniteSweeps}`
+// and the DO asks the gate by handle. The verdict matrix in full lives in
+// do-scope.test.ts; what this block adds is the *cache* behaviour, which is
+// this file's subject: an indefinite answer is never cached, so recovery
+// inside the 60s window works.
+function staleAttachment(over: Partial<SocketAttachment> = {}): SocketAttachment {
+  return {
+    leaseId: 'L-reauth', tokenId: 't-reauth', subject: 'lease:L-reauth',
+    flow: 'device', verifiedAt: Date.now() - 400_000, indefiniteSweeps: 0,
+    ...over,
+  };
+}
+
 describe('DO webSocketMessage: traffic-driven re-auth', () => {
   function stub() {
     return env.JULIAN_SYNC.get(env.JULIAN_SYNC.idFromName(`test/reauth-${crypto.randomUUID().slice(0, 8)}`));
@@ -218,7 +232,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
   test('fresh attachment (< 5 min) skips re-introspection entirely', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
-      server.serializeAttachment({ leaseToken: 'jla_fresh1', verifiedAt: Date.now() });
+      server.serializeAttachment(staleAttachment({ leaseId: 'L-fresh1', verifiedAt: Date.now() }));
       installGate((instance as unknown as { env: Env }).env, { fetch: async () => { throw new Error('should not be called'); } });
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
@@ -233,7 +247,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
   test('stale attachment (> 5 min) + inactive introspection → closes 4001 "lease revoked"', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
-      server.serializeAttachment({ leaseToken: 'jla_stale1', verifiedAt: Date.now() - 400_000 });
+      server.serializeAttachment(staleAttachment({ leaseId: 'L-stale1', tokenId: 't-stale1' }));
       installGate((instance as unknown as { env: Env }).env, fakeGate(200, { active: false }));
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
@@ -245,7 +259,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
   test('stale attachment + gate unreachable (network failure) → closes 4002 "introspection unavailable"', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
-      server.serializeAttachment({ leaseToken: 'jla_stale2', verifiedAt: Date.now() - 400_000 });
+      server.serializeAttachment(staleAttachment({ leaseId: 'L-stale2', tokenId: 't-stale2' }));
       installGate((instance as unknown as { env: Env }).env, { fetch: async () => { throw new Error('connect timeout'); } });
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
@@ -257,13 +271,14 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
   // Distinct from the network-failure case above: here the gate answers, but
   // with a 503 (not a definitive 200) — a governor blip, not a revocation.
   // This must ALSO close 4002, never 4001, and must never be cached, so a
-  // reconnect once the gate recovers isn't refused by a stale negative.
+  // reconnect once the gate recovers isn't refused by a stale negative. The
+  // handle is deliberately reused across both halves: that is the cache key.
   test('stale attachment + gate 503 (HTTP error, not network failure) → closes 4002, never cached', async () => {
-    const leaseToken = 'jla_stale_503';
+    const handle = { leaseId: 'L-stale-503', tokenId: 't-stale-503' };
 
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
-      server.serializeAttachment({ leaseToken, verifiedAt: Date.now() - 400_000 });
+      server.serializeAttachment(staleAttachment(handle));
       installGate((instance as unknown as { env: Env }).env, fakeGate(503, 'gate down'));
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
@@ -272,12 +287,12 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
     });
 
     // Recovery: the gate comes back within the 60s window. Since the 503
-    // was never cached, a fresh re-auth attempt for the same token succeeds
+    // was never cached, a fresh re-auth attempt for the same handle succeeds
     // instead of being blocked by a stale "unavailable"/"inactive" verdict.
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
-      server.serializeAttachment({ leaseToken, verifiedAt: Date.now() - 400_000 });
-      installGate((instance as unknown as { env: Env }).env, fakeGate(200, { active: true, lease_id: 'l6', door_name: 'door:recovered2', scope: 'full-house', principal: 'julian' }));
+      server.serializeAttachment(staleAttachment(handle));
+      installGate((instance as unknown as { env: Env }).env, fakeGate(200, { active: true, lease_id: 'L-stale-503', door_name: 'door:recovered2', scope: 'full-house', principal: 'julian' }));
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
       await instance.webSocketMessage(server, 'ping');
@@ -289,23 +304,26 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
       const staleAt = Date.now() - 400_000;
-      server.serializeAttachment({ leaseToken: 'jla_stale3', verifiedAt: staleAt });
-      installGate((instance as unknown as { env: Env }).env, fakeGate(200, { active: true, lease_id: 'l4', door_name: 'door:w', scope: 'full-house', principal: 'julian' }));
+      server.serializeAttachment(staleAttachment({ leaseId: 'L-stale3', tokenId: 't-stale3', verifiedAt: staleAt }));
+      installGate((instance as unknown as { env: Env }).env, fakeGate(200, { active: true, lease_id: 'L-stale3', door_name: 'door:w', scope: 'full-house', principal: 'julian' }));
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
       await instance.webSocketMessage(server, 'ping');
       expect(await waitForClose(client)).toBeNull();
 
-      const refreshed = server.deserializeAttachment() as { leaseToken: string; verifiedAt: number };
-      expect(refreshed.leaseToken).toBe('jla_stale3');
+      const refreshed = server.deserializeAttachment() as SocketAttachment;
+      expect(refreshed.leaseId).toBe('L-stale3');
+      expect(JSON.stringify(refreshed)).not.toMatch(/jla_|jst_/);
       expect(refreshed.verifiedAt).toBeGreaterThan(staleAt);
     });
   });
 
-  test('no attachment (legacy JWT socket) skips re-auth entirely, no introspection', async () => {
+  test('no attachment at all skips re-auth entirely, no introspection', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       const { client, server } = acceptedSocket(instance);
-      // No serializeAttachment call — a legacy-JWT socket never gets one.
+      // No serializeAttachment call. Production sockets always get one — the
+      // DO refuses an upgrade whose handoff header is missing (do.test.ts) —
+      // so this covers only a socket accepted outside the fetch path.
 
       // No GATE call is scripted to succeed — proves no introspection happens.
       await instance.webSocketMessage(server, 'ping');

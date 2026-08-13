@@ -29,11 +29,22 @@ export interface Env {
   PACKAGE_RAW_BASE: string;   // raw content root, e.g. https://raw.githubusercontent.com/popmechanic/Julian
   PIN_COMPARE_BASE: string;   // branch-membership proof root, e.g. https://api.github.com/repos/popmechanic/Julian/compare/main...
 
+  // Stream authority.
+  STREAM_SUBS: string;        // sub=principal comma-separated map
+  APP_ORIGINS: string;        // comma-separated exact origins
+
+  // The sync worker binding — minted leases verify introspection with this secret.
+  SYNC: { fetch(input: string | Request, init?: RequestInit): Promise<Response> };
+
   // Secrets.
   SESSION_SECRET: string;     // signs the approver session cookie
   INTROSPECT_SECRET: string;  // shared with julian-sync for POST /introspect
+  SYNC_READ_SECRET: string;   // shared with julian-sync for internal read routes
   BREAKGLASS_SECRET: string;  // the CLI's way into /leases when no browser will do
   AGENTMAIL_API_KEY: string;
+
+  // Rate limiter for exchange endpoint (optional — absence is a tested fail-open).
+  EXCHANGE_RL?: { limit(opts: { key: string }): Promise<{ success: boolean }> };
 
   AGENTMAIL_INBOX_ID: string;
 }

@@ -55,6 +55,18 @@ export function createStreamStore(uniqueId?: string): MergeableStore {
   return createMergeableStore(uniqueId).setSchema(TABLES_SCHEMA, VALUES_SCHEMA) as MergeableStore;
 }
 
+// The segment shape a principal must have to address a store. Copied from
+// sync/src/index.ts's SEG regex — sync's path parser and this function must
+// agree, or a valid store path here could be one sync's router refuses (or
+// vice versa).
+const SEG = /^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$|^[a-z0-9]$/;
+
+export function storePathFor(principal: string): string | null {
+  if (principal === 'internal') return null;
+  if (!SEG.test(principal)) return null;
+  return `${principal}/chat`;
+}
+
 const B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'; // Crockford
 export function newLedgerId(now: number = Date.now()): string {
   let t = now, ts = '';

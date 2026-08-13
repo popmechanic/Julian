@@ -76,6 +76,12 @@ describe('knock → approve → poll lifecycle', () => {
 
       expect(await g.validateAccess(ready.accessToken)).toEqual({
         leaseId: expect.any(String), doorName: DOOR, scope: 'full-house', principal: 'julian',
+        // A device lease has no Pocket ID subject and sits on no package pin;
+        // its access row does carry the handle a socket is re-checked by.
+        subject: null, flow: 'device', tokenId: expect.any(String), sittingPin: null, latched: null,
+        // The access row's own expiry rides the identity; its arithmetic is
+        // pinned in governor-exchange.test.ts, on a clock this case does not own.
+        exp: expect.any(Number),
       });
     });
   });
@@ -540,7 +546,7 @@ describe('admin', () => {
       await enroll(g, clock);
       const dump = g.leaseExport();
       expect(JSON.stringify(dump)).not.toMatch(/jla_|jlr_/);
-      expect(dump.leases.length).toBe(2); // the door plus the legacy pseudo-lease
+      expect(dump.leases.length).toBe(3); // the door plus both legacy pseudo-leases
       expect(dump.tokens.length).toBe(2); // one access, one refresh
       for (const token of dump.tokens as Array<{ hash: string; kind: string }>) {
         expect(token.hash).toMatch(/^[0-9a-f]{64}$/);

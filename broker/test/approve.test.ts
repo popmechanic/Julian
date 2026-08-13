@@ -15,6 +15,7 @@ import worker from '../src/index';
 import type { Env } from '../src/env';
 import type { KnockDecision, KnockView, LeaseScope, ReserveResult } from '../src/governor';
 import { csrfFor, mintSession } from '../src/as/session';
+import { PENDING_COOKIE } from '../src/as/authcode';
 
 const ISSUER = 'https://soul.test';
 const BASE = 'https://gate.test';
@@ -665,3 +666,67 @@ async function readSessionFor(value: string): Promise<{ sub: string } | null> {
   const { readSession } = await import('../src/as/session');
   return readSession(`other=x; gate_session=${value}; trailing=y`, SECRET);
 }
+
+// ── RFC 9207: iss on the authcode redirect, advertised at discovery ─────────
+
+describe('RFC 9207 — iss on the authcode redirect, advertised at discovery', () => {
+  const PENDING = 'pending-xyz';
+  const VIEW = {
+    client_id: 'client-abc',
+    origin: 'https://claude.ai',
+    redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+    state: 'cli-state-42',
+  };
+
+  function registrarEnv(): Env {
+    const registrarStub = {
+      async pendingView() { return VIEW; },
+      async attachApproval() { return true; },
+    };
+    const { env } = gateEnv({}, {
+      REGISTRAR: { idFromName: () => 'registrar-id', get: () => registrarStub } as unknown as Env['REGISTRAR'],
+    });
+    return env;
+  }
+
+  // Both delivery arms — the code and the refusal — and the discovery
+  // document, in one test: `iss` on each redirect must equal `PUBLIC_URL`
+  // and be byte-identical to what discovery advertises as `issuer`.
+  test('both redirect arms carry iss=PUBLIC_URL, byte-identical to the discovery issuer', async () => {
+    const env = registrarEnv();
+    const session = await mintSession(APPROVER, SECRET);
+    const header = `gate_session=${session}; ${PENDING_COOKIE}=${PENDING}`;
+    const csrf = await csrfFor(session, PENDING, SECRET);
+
+    const discoveryRes = await worker.fetch(
+      new Request(`${BASE}/.well-known/oauth-authorization-server`), env,
+    );
+    const discovery = await discoveryRes.json() as {
+      issuer: string; authorization_response_iss_parameter_supported: boolean;
+    };
+    expect(discovery.authorization_response_iss_parameter_supported).toBe(true);
+    expect(discovery.issuer).toBe(BASE);
+
+    const opened = await worker.fetch(new Request(`${BASE}/approve/confirm`, {
+      method: 'POST',
+      headers: { ...FORM, Cookie: header },
+      body: new URLSearchParams({ csrf, decision: 'open', scope: 'reading-room' }).toString(),
+    }), env);
+    expect(opened.status).toBe(302);
+    const openedLoc = new URL(opened.headers.get('Location') ?? '');
+    expect(openedLoc.searchParams.get('code')).toBe(PENDING);
+    expect(openedLoc.searchParams.get('iss')).toBe(BASE);
+    expect(openedLoc.searchParams.get('iss')).toBe(discovery.issuer);
+
+    const refused = await worker.fetch(new Request(`${BASE}/approve/confirm`, {
+      method: 'POST',
+      headers: { ...FORM, Cookie: header },
+      body: new URLSearchParams({ csrf, decision: 'refuse', scope: 'reading-room' }).toString(),
+    }), env);
+    expect(refused.status).toBe(302);
+    const refusedLoc = new URL(refused.headers.get('Location') ?? '');
+    expect(refusedLoc.searchParams.get('error')).toBe('access_denied');
+    expect(refusedLoc.searchParams.get('iss')).toBe(BASE);
+    expect(refusedLoc.searchParams.get('iss')).toBe(discovery.issuer);
+  });
+});

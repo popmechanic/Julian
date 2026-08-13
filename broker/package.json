@@ -9,7 +9,8 @@
     "dev": "wrangler dev"
   },
   "dependencies": {
-    "jose": "^5.9.0"
+    "jose": "^5.9.0",
+    "julian-shared": "file:../shared"
   },
   "devDependencies": {
     "wrangler": "^4.122.0",

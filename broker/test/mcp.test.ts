@@ -32,13 +32,24 @@ function env(pin: string | null = PIN): Env {
 
 type ReserveCall = unknown[];
 
+/** What the read policy asked the governor to remember, in order. */
+interface PackageState { seats: unknown[][]; latches: unknown[][]; clears: unknown[][] }
+function packageState(): PackageState {
+  return { seats: [], latches: [], clears: [] };
+}
+
 /** Records every reservation and always allows — the pen, not the policy. */
-function gov(calls: ReserveCall[] = []): DurableObjectStub<GovernorDO> {
+function gov(
+  calls: ReserveCall[] = [], state: PackageState = packageState(),
+): DurableObjectStub<GovernorDO> {
   return {
     async reserveLease(...args: unknown[]) {
       calls.push(args);
       return { ok: true, count: 1, cap: null };
     },
+    async seatSitting(...args: unknown[]) { state.seats.push(args); },
+    async setLatch(...args: unknown[]) { state.latches.push(args); },
+    async clearLatch(...args: unknown[]) { state.clears.push(args); },
   } as unknown as DurableObjectStub<GovernorDO>;
 }
 
@@ -69,12 +80,27 @@ function intercept(path: string, body: string, status = 200) {
   fetchMock.get(RAW).intercept({ path: `/${PIN}/${path}` }).reply(status, body);
 }
 
+/**
+ * A visit lease: `flow='authcode'`, so one `visit:<host>` row is shared by
+ * every user of that client. Shared leases hold no sitting state and never
+ * latch (SEC NEW-3) — the sitting/latch tests below use SESSION instead.
+ */
 const READER: LeaseIdentity = {
   leaseId: 'l1', doorName: 'visit:localhost', scope: 'reading-room', principal: 'julian',
+  subject: null, flow: 'authcode', tokenId: null, sittingPin: null, latched: null,
 };
 const STRANGER: LeaseIdentity = {
   leaseId: 'l2', doorName: 'visit:nowhere', scope: 'no-such-scope', principal: 'julian',
+  subject: null, flow: 'authcode', tokenId: null, sittingPin: null, latched: null,
 };
+/** One browser session — a lease of its own, and therefore latchable. */
+const SESSION: LeaseIdentity = {
+  leaseId: 'l3', doorName: 'browser:sub-1', scope: 'reading-room', principal: 'julian',
+  subject: 'sub-1', flow: 'exchange', tokenId: 't1', sittingPin: null, latched: null,
+};
+function seated(over: Partial<LeaseIdentity>): LeaseIdentity {
+  return { ...SESSION, ...over };
+}
 
 function rpc(method: string, params: unknown = {}, id: number | null = 1) {
   return new Request('https://gate.test/mcp', {
@@ -137,14 +163,40 @@ describe('protocol shell', () => {
   });
 
   test('notifications/initialized is a 202 with no body', async () => {
-    const res = await handleMcp(rpc('notifications/initialized', {}, null), env(), READER, gov());
+    // A real notification carries no `id` member at all (not even `null`) —
+    // that absence is what the id-less rule below keys on.
+    const res = await handleMcp(
+      raw(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })),
+      env(), READER, gov(),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.text()).toBe('');
+  });
+
+  test('an id-less message is 202 regardless of method — the notifications rule generalizes', async () => {
+    const res = await handleMcp(
+      raw(JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'ping' } })),
+      env(), READER, gov(),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.text()).toBe('');
+  });
+
+  test('an id-less message naming an unknown method is still 202, never -32601', async () => {
+    const res = await handleMcp(
+      raw(JSON.stringify({ jsonrpc: '2.0', method: 'nonexistent/method' })),
+      env(), READER, gov(),
+    );
     expect(res.status).toBe(202);
     expect(await res.text()).toBe('');
   });
 
   test('ping pongs', async () => {
     const { body } = await send(rpc('ping'));
+    // Strictly `{}` — no cache-control `_meta` here: `EmptyResultSchema` is
+    // `.strict()`, so ping is deliberately excluded from the hint (§7).
     expect(result(body)).toEqual({});
+    expect(Object.keys(result(body))).toHaveLength(0);
     expect(body.id).toBe(1);
   });
 
@@ -183,6 +235,39 @@ describe('protocol shell', () => {
     expect(res.headers.get('Content-Type')).toContain('application/json');
     expect(res.headers.get('Mcp-Session-Id')).toBe(null);
   });
+
+  // Tolerance, honestly labeled (§7's four cheap things, #3): no new code —
+  // this pins that a raw, handshake-less v2-shaped `tools/call` carrying
+  // `_meta.protocolVersion`, the `MCP-Protocol-Version` header, and
+  // `Mcp-Method`/`Mcp-Name` headers is served exactly as any other call would
+  // be. Unknown fields are tolerated; the version header is deliberately
+  // *ignored*, never validated — a decision, not a conformance claim. This is
+  // request tolerance only: it says nothing about what this face emits.
+  test('a raw v2-shaped envelope (headers + _meta protocolVersion, no prior initialize) is served normally', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    const req = new Request('https://gate.test/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'MCP-Protocol-Version': '2024-11-05',
+        'Mcp-Method': 'tools/call',
+        'Mcp-Name': 'package_list',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'tools/call',
+        params: {
+          name: 'package_list',
+          arguments: {},
+          _meta: { protocolVersion: '2024-11-05', 'some.unknown/field': true },
+        },
+        someUnknownTopLevelField: 'ignored',
+      }),
+    });
+    const { body } = await send(req);
+    const r = result(body) as unknown as ToolResult;
+    expect(r.isError).toBeFalsy();
+    expect(r.content?.[0].text).toBe(`1 files at pin ${PIN.slice(0, 12)}`);
+  });
 });
 
 describe('tools', () => {
@@ -199,7 +284,16 @@ describe('tools', () => {
 
   test('tools/list for a scope that buys nothing is empty, not a list of teases', async () => {
     const { body } = await send(rpc('tools/list'), STRANGER);
-    expect(result(body)).toEqual({ tools: [] });
+    expect(result(body)).toEqual({
+      tools: [], _meta: { 'io.modelcontextprotocol/cacheControl': { ttlMs: 300_000 } },
+    });
+  });
+
+  test('tools/list carries the cache-control _meta hint', async () => {
+    const { body } = await send(rpc('tools/list'));
+    expect(result(body)._meta).toEqual({
+      'io.modelcontextprotocol/cacheControl': { ttlMs: 300_000 },
+    });
   });
 
   test('a tool the scope cannot see is -32602 unknown tool, and nothing is reserved', async () => {
@@ -227,6 +321,18 @@ describe('tools', () => {
     expect((r.structuredContent?.manifest as { files: Array<{ path: string }> }).files[0].path)
       .toBe('AGENT.md');
     expect(calls).toEqual([['l1', 'visit:localhost', 'package', 'list', '', null, null]]);
+  });
+
+  test('a manifest entry missing sha256 is a typed integrity refusal, not a crash (§10.3)', async () => {
+    intercept('package-manifest.json', JSON.stringify({
+      generatedFrom: PIN, generatedAt: '2026-08-12T00:00:00Z',
+      files: [{ path: 'AGENT.md', bytes: AGENT_TEXT.length }],
+    }));
+    const { body } = await send(rpc('tools/call', { name: 'package_list' }), READER, env(), gov());
+    const r = result(body) as unknown as ToolResult;
+    expect(r.isError).toBe(true);
+    expect(r.content?.[0].text).toContain('manifest entry malformed');
+    expect(r.structuredContent).toEqual({ class: 'integrity', pinSha: PIN });
   });
 
   test('tools/call package_read returns hash-verified content and ledgers door+path+pin', async () => {
@@ -406,6 +512,8 @@ describe('resources and prompts', () => {
     intercept('package-manifest.json', await manifestBody());
     const calls: ReserveCall[] = [];
     const { body } = await send(rpc('resources/list'), READER, env(), gov(calls));
+    // Strict shape: no `_meta` cache hint here — a package URI carries no pin
+    // (COLD M-7), so this result is deliberately excluded from the hint (§7).
     expect(result(body)).toEqual({
       resources: [{ uri: 'julian://package/AGENT.md', name: 'AGENT.md', mimeType: 'text/markdown' }],
     });
@@ -427,6 +535,7 @@ describe('resources and prompts', () => {
     const { body } = await send(
       rpc('resources/read', { uri: 'julian://package/AGENT.md' }), READER, env(), gov(calls),
     );
+    // Strict shape: no `_meta` cache hint on a resource read either (COLD M-7).
     expect(result(body)).toEqual({
       contents: [{ uri: 'julian://package/AGENT.md', mimeType: 'text/markdown', text: AGENT_TEXT }],
     });
@@ -466,6 +575,7 @@ describe('resources and prompts', () => {
         name: 'wake-julian',
         description: 'The legitimate waking of a visit: category line, ELF order, fail-loud rule.',
       }],
+      _meta: { 'io.modelcontextprotocol/cacheControl': { ttlMs: 300_000 } },
     });
 
     const { body: got } = await send(rpc('prompts/get', { name: 'wake-julian' }));
@@ -481,7 +591,9 @@ describe('resources and prompts', () => {
 
   test('prompts/list for a scope that buys nothing is empty', async () => {
     const { body } = await send(rpc('prompts/list'), STRANGER);
-    expect(result(body)).toEqual({ prompts: [] });
+    expect(result(body)).toEqual({
+      prompts: [], _meta: { 'io.modelcontextprotocol/cacheControl': { ttlMs: 300_000 } },
+    });
   });
 
   test('prompts/get for an unknown name is -32602', async () => {
@@ -497,18 +609,23 @@ describe('scope invariants on the face', () => {
       .map((t) => t.name).sort();
     expect(advertised).toEqual(['package_list', 'package_read', 'visit_agent', 'wake_julian']);
 
-    // the mapping the face claims, stated exactly
+    // the mapping the face claims, stated exactly — TOOLS now also carries the
+    // three stream verbs (Task 15), which reading-room does not buy and so
+    // never appear in `advertised` above.
     expect(Object.fromEntries(TOOLS.map((t) => [t.name, `${t.service}.${t.verb}`]))).toEqual({
       package_list: 'package.list',
       package_read: 'package.read',
       wake_julian: 'package.list',
       visit_agent: 'package.list',
+      stream_recent: 'stream.recent',
+      stream_session: 'stream.session',
+      stream_search: 'stream.search',
     });
 
-    // every advertised tool is one a reading-room lease may actually spend
-    for (const t of TOOLS) {
-      expect(advertised).toContain(t.name);
-      expect(scopeAllows('reading-room', t.service, t.verb), t.name).toBe(true);
+    // every tool a reading-room lease is actually shown is one it may spend
+    for (const name of advertised) {
+      const t = TOOLS.find((tool) => tool.name === name)!;
+      expect(scopeAllows('reading-room', t.service, t.verb), name).toBe(true);
     }
 
     // and the reading room reaches nothing beyond the two package verbs
@@ -527,7 +644,13 @@ describe('scope invariants on the face', () => {
       'prompts/list', 'prompts/get',
     ];
     for (const method of measured) {
-      const res = await handleMcp(rpc(method, {}), env(null), READER, gov());
+      // notifications/initialized is only ever id-less on the wire (a real
+      // notification never carries `id`) — every other measured method is
+      // sent as a genuine request, `id` present.
+      const req = method === 'notifications/initialized'
+        ? raw(JSON.stringify({ jsonrpc: '2.0', method, params: {} }))
+        : rpc(method, {});
+      const res = await handleMcp(req, env(null), READER, gov());
       if (res.status === 202) continue;
       const body = await res.json() as Record<string, unknown>;
       // measured methods may refuse on their arguments, but never as -32601
@@ -566,18 +689,60 @@ describe('visit_agent', () => {
     expect(r.structuredContent).toEqual({
       class: 'ok', access: 'read-only', name: 'julian', content: file,
     });
-    // ledgered like a package verb
+    // the second content block states the two negatives explicitly (§10.1)
+    expect(r.content).toHaveLength(2);
+    expect(r.content?.[1].text).toContain('no Bash');
+    expect(r.content?.[1].text).toContain('no Write');
+    // ledgered like a package verb, with the chosen variant in the detail (#31)
     expect(calls).toHaveLength(1);
     expect(calls[0].slice(2, 4)).toEqual(['package', 'list']);
+    expect(calls[0][4]).toBe('access=read-only');
   });
 
-  test('read-write adds exactly Edit, Write, Bash', async () => {
+  test('read-write adds exactly Edit, Write — no Bash (§10.1 R-6)', async () => {
+    const calls: ReserveCall[] = [];
+    const { body } = await send(
+      rpc('tools/call', { name: 'visit_agent', arguments: { access: 'read-write' } }),
+      READER, env(), gov(calls),
+    );
+    const r = result(body) as unknown as ToolResult;
+    const file = r.content?.[0].text ?? '';
+    expect(file).toContain('tools: Read, Grep, Glob, ToolSearch, Edit, Write, mcp__julian-gate');
+    expect(file).not.toContain('Bash');
+    expect(calls[0][4]).toBe('access=read-write');
+  });
+
+  test('read-write emits the host-applyable settings snippet, self-sufficient in both halves', async () => {
     const { body } = await send(
       rpc('tools/call', { name: 'visit_agent', arguments: { access: 'read-write' } }),
       READER, env(), gov(),
     );
-    const file = (result(body) as unknown as ToolResult).content?.[0].text ?? '';
-    expect(file).toContain('tools: Read, Grep, Glob, ToolSearch, Edit, Write, Bash, mcp__julian-gate');
+    const r = result(body) as unknown as ToolResult;
+    expect(r.content).toHaveLength(2);
+    const snippetText = r.content?.[1].text ?? '';
+    expect(snippetText).toContain('enforcement where you apply this');
+    expect(snippetText).toContain('manners stated at waking where you do not');
+    expect(snippetText).toContain('"allow"');
+    expect(snippetText).toContain('"deny"');
+    expect(snippetText).toContain('Edit(');
+    expect(snippetText).toContain('Write(');
+    const snippet = r.structuredContent?.settingsSnippet as
+      { permissions: { allow: string[]; deny: string[] } } | undefined;
+    expect(snippet).toBeDefined();
+    expect(snippet?.permissions.allow.some((p) => p.startsWith('Edit('))).toBe(true);
+    expect(snippet?.permissions.allow.some((p) => p.startsWith('Write('))).toBe(true);
+    expect(snippet?.permissions.deny).toEqual(['Edit(//**)', 'Write(//**)']);
+    // the snippet in the structured half is exactly the JSON rendered in text
+    expect(snippetText).toContain(JSON.stringify(snippet, null, 2));
+  });
+
+  test('read-only carries no settingsSnippet — nothing to scope with no Edit/Write at all', async () => {
+    const { body } = await send(
+      rpc('tools/call', { name: 'visit_agent', arguments: { access: 'read-only' } }),
+      READER, env(), gov(),
+    );
+    const r = result(body) as unknown as ToolResult;
+    expect(r.structuredContent).not.toHaveProperty('settingsSnippet');
   });
 
   test('a missing or invalid access is -32602, never a default', async () => {
@@ -646,5 +811,290 @@ describe('visit_agent', () => {
     expect(text).toContain('show as finished');
     expect(text).toContain('resumes him from his transcript');
     expect(text).toContain('relayed through you');
+  });
+});
+
+// ── the sitting, the latch, and the parts (spec §9 / issues #30, #32) ───────
+
+const OLD_PIN = 'b'.repeat(40);
+const TRUE_TEXT = 'x'.repeat(64);
+const FAKE_TEXT = 'y'.repeat(64); // same length, different bytes
+const BIG_TEXT = 'the package travels whole, or not at all.\n'.repeat(2200);
+
+interface Entry { path: string; sha256: string; bytes: number }
+function manifestOf(...files: Entry[]): string {
+  return JSON.stringify({ generatedFrom: PIN, generatedAt: '2026-08-12T00:00:00Z', files });
+}
+async function entryFor(path: string, text: string): Promise<Entry> {
+  return { path, sha256: await sha256Hex(text), bytes: new TextEncoder().encode(text).byteLength };
+}
+function structured(r: ToolResult): Record<string, unknown> {
+  return r.structuredContent ?? {};
+}
+async function call(
+  args: Record<string, unknown>, identity: LeaseIdentity,
+  calls: ReserveCall[], state: PackageState,
+): Promise<ToolResult> {
+  const { body } = await send(
+    rpc('tools/call', { name: 'package_read', arguments: args }),
+    identity, env(), gov(calls, state),
+  );
+  return result(body) as unknown as ToolResult;
+}
+
+describe('the sitting pin', () => {
+  test('package_list seats the sitting pin — the listing is the reset act', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    const state = packageState();
+    await send(rpc('tools/call', { name: 'package_list' }), SESSION, env(), gov([], state));
+    expect(state.seats).toEqual([['l3', PIN]]);
+  });
+
+  test('resources/list seats it too — the same act by the other name', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    const state = packageState();
+    await send(rpc('resources/list'), SESSION, env(), gov([], state));
+    expect(state.seats).toEqual([['l3', PIN]]);
+  });
+
+  test('a shared visit lease is seated nowhere — one visit never binds another', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    const state = packageState();
+    await send(rpc('tools/call', { name: 'package_list' }), READER, env(), gov([], state));
+    expect(state.seats).toEqual([]);
+  });
+
+  test('a failed listing seats nothing — there is no pin to sit on', async () => {
+    const state = packageState();
+    await send(rpc('tools/call', { name: 'package_list' }), SESSION, env(null), gov([], state));
+    expect(state.seats).toEqual([]);
+  });
+
+  test('a read at a moved pin is refused and names the reset act by tool', async () => {
+    // No interceptors at all: the refusal must land before any fetch, and
+    // disableNetConnect() would throw rather than let one slip through.
+    const calls: ReserveCall[] = [];
+    const r = await call({ path: 'AGENT.md' }, seated({ sittingPin: OLD_PIN }), calls, packageState());
+    expect(r.isError).toBe(true);
+    expect(structured(r)).toEqual({
+      class: 'pin-moved', pinSha: PIN,
+      message: `pin moved ${OLD_PIN.slice(0, 12)} → ${PIN.slice(0, 12)}; run package_list, then re-read from the top`,
+    });
+    expect(r.content?.[0].text).toContain('run package_list');
+    expect(String(calls[0][4])).toContain('class=pin-moved');
+  });
+
+  test('the same refusal for a part read is part-pin-moved — the #30 distinct class', async () => {
+    const r = await call(
+      { path: 'catalog.md', part: 2 }, seated({ sittingPin: OLD_PIN }), [], packageState(),
+    );
+    expect(r.isError).toBe(true);
+    expect(structured(r).class).toBe('part-pin-moved');
+    expect(String(structured(r).message)).toContain('run package_list');
+  });
+
+  test('the sitting resumes after the reset act: list, then read at the new pin', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    const state = packageState();
+    await send(
+      rpc('tools/call', { name: 'package_list' }), seated({ sittingPin: OLD_PIN }), env(), gov([], state),
+    );
+    expect(state.seats).toEqual([['l3', PIN]]);
+
+    // the register now hands the reader back seated on the pin it just listed
+    intercept('package-manifest.json', await manifestBody());
+    intercept('AGENT.md', AGENT_TEXT);
+    const r = await call({ path: 'AGENT.md' }, seated({ sittingPin: PIN }), [], packageState());
+    expect(r.isError).toBeFalsy();
+    expect(r.content?.[0].text).toBe(AGENT_TEXT);
+  });
+
+  test('a shared visit lease is never pin-gated — it holds no sitting to move', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    intercept('AGENT.md', AGENT_TEXT);
+    const r = await call({ path: 'AGENT.md' }, { ...READER, sittingPin: OLD_PIN }, [], packageState());
+    expect(r.isError).toBeFalsy();
+  });
+});
+
+describe('expect_pin — the caller\'s own cross-check', () => {
+  test('a matching expect_pin serves and is ledgered', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    intercept('AGENT.md', AGENT_TEXT);
+    const calls: ReserveCall[] = [];
+    const r = await call({ path: 'AGENT.md', expect_pin: PIN }, SESSION, calls, packageState());
+    expect(r.isError).toBeFalsy();
+    expect(String(calls[0][4])).toContain(`expect_pin=${PIN.slice(0, 12)}`);
+  });
+
+  test('an expect_pin naming a pin that is not current refuses like a moved sitting', async () => {
+    const r = await call({ path: 'AGENT.md', expect_pin: OLD_PIN }, SESSION, [], packageState());
+    expect(r.isError).toBe(true);
+    expect(structured(r).class).toBe('pin-moved');
+    expect(String(structured(r).message)).toContain('run package_list');
+  });
+
+  test('a malformed expect_pin is neither honored nor echoed into the ledger', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    intercept('AGENT.md', AGENT_TEXT);
+    const calls: ReserveCall[] = [];
+    const r = await call(
+      { path: 'AGENT.md', expect_pin: '../../etc/passwd' }, SESSION, calls, packageState(),
+    );
+    expect(r.isError).toBeFalsy();
+    expect(String(calls[0][4])).not.toContain('expect_pin');
+    expect(String(calls[0][4])).not.toContain('passwd');
+  });
+});
+
+describe('the integrity latch', () => {
+  test('a length-verified double mismatch latches the lease, and the refusal says so', async () => {
+    const entry = await entryFor('AGENT.md', TRUE_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('AGENT.md', FAKE_TEXT);
+    intercept('AGENT.md', FAKE_TEXT);
+    const state = packageState();
+    const r = await call({ path: 'AGENT.md' }, SESSION, [], state);
+    expect(r.isError).toBe(true);
+    expect(structured(r).class).toBe('integrity');
+    expect(state.latches).toEqual([['l3', PIN, 'AGENT.md']]);
+    expect(String(structured(r).message)).toContain('latched');
+    expect(String(structured(r).message)).toContain('AGENT.md');
+    expect(r.content?.[0].text).toContain('latched');
+  });
+
+  test('a truncated body is loud but never latches — fail-loud is not fail-closed', async () => {
+    const entry = await entryFor('AGENT.md', TRUE_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('AGENT.md', 'x'.repeat(10));
+    const state = packageState();
+    const r = await call({ path: 'AGENT.md' }, SESSION, [], state);
+    expect(r.isError).toBe(true);
+    expect(state.latches).toEqual([]);
+    expect(String(structured(r).message)).not.toContain('latched');
+  });
+
+  test('a latched lease is refused on every other file, before any fetch', async () => {
+    const calls: ReserveCall[] = [];
+    const state = packageState();
+    const r = await call(
+      { path: 'catalog.md' },
+      seated({ sittingPin: PIN, latched: { pin: PIN, path: 'AGENT.md' } }),
+      calls, state,
+    );
+    expect(r.isError).toBe(true);
+    expect(structured(r)).toEqual({
+      class: 'integrity-latched', pinSha: PIN,
+      message: `package reads are latched for this lease after an unresolved hash mismatch on AGENT.md; a clean read of that same file at pin ${PIN} clears it`,
+    });
+    expect(state.clears).toEqual([]);
+    expect(String(calls[0][4])).toContain('class=integrity-latched');
+  });
+
+  test('a clean read of the latched pair clears the latch and serves the file', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    intercept('AGENT.md', AGENT_TEXT);
+    const state = packageState();
+    const r = await call(
+      { path: 'AGENT.md' },
+      seated({ sittingPin: PIN, latched: { pin: PIN, path: 'AGENT.md' } }),
+      [], state,
+    );
+    expect(r.isError).toBeFalsy();
+    expect(r.content?.[0].text).toBe(AGENT_TEXT);
+    expect(state.clears).toEqual([['l3']]);
+  });
+
+  test('a shared visit lease never latches, and the next visit reads on untouched', async () => {
+    const entry = await entryFor('AGENT.md', TRUE_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('AGENT.md', FAKE_TEXT);
+    intercept('AGENT.md', FAKE_TEXT);
+    const state = packageState();
+    const first = await call({ path: 'AGENT.md' }, READER, [], state);
+    expect(first.isError).toBe(true);
+    expect(state.latches).toEqual([]);
+
+    // a second visit through the same `visit:<host>` row: untouched
+    intercept('package-manifest.json', await manifestBody());
+    intercept('AGENT.md', AGENT_TEXT);
+    const second = await call({ path: 'AGENT.md' }, READER, [], packageState());
+    expect(second.isError).toBeFalsy();
+    expect(second.content?.[0].text).toBe(AGENT_TEXT);
+  });
+});
+
+describe('parts on the face', () => {
+  test('a parted file read whole is the typed parts instruction, naming M', async () => {
+    const entry = await entryFor('catalog.md', BIG_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('catalog.md', BIG_TEXT);
+    const calls: ReserveCall[] = [];
+    const r = await call({ path: 'catalog.md' }, SESSION, calls, packageState());
+    expect(r.isError).toBe(true);
+    expect(structured(r)).toEqual({
+      class: 'parts', pinSha: PIN, parts: 4,
+      message: 'this file serves in 4 parts; request part 1…4 and verify every part carries the same fileSha256',
+    });
+    expect(String(calls[0][4])).toContain('class=parts');
+  });
+
+  test('a part read carries its own proof in both halves and ledgers the part', async () => {
+    const entry = await entryFor('catalog.md', BIG_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('catalog.md', BIG_TEXT);
+    const calls: ReserveCall[] = [];
+    const r = await call({ path: 'catalog.md', part: 2 }, SESSION, calls, packageState());
+    expect(r.isError).toBeFalsy();
+    const s = structured(r);
+    expect(s.part).toBe(2);
+    expect(s.parts).toBe(4);
+    expect(s.fileSha256).toBe(entry.sha256);
+    expect(s.partSha256).toBe(await sha256Hex(String(s.content)));
+    expect(s.partBytes).toBe(new TextEncoder().encode(String(s.content)).byteLength);
+    // the text half is self-sufficient: the part header, then the bytes
+    expect(r.content?.[0].text).toContain('part 2 of 4');
+    expect(r.content?.[0].text).toContain(entry.sha256);
+    expect(r.content?.[1].text).toBe(s.content);
+    expect(String(calls[0][4])).toContain('part=2');
+  });
+
+  test('the tool schema advertises part and expect_pin', async () => {
+    const { body } = await send(rpc('tools/list'), SESSION);
+    const tools = (result(body) as { tools: Array<Record<string, unknown>> }).tools;
+    const read = tools.find((t) => t.name === 'package_read') as unknown as
+      { inputSchema: { properties: Record<string, unknown>; required: string[] } };
+    expect(Object.keys(read.inputSchema.properties).sort()).toEqual(['expect_pin', 'part', 'path']);
+    expect(read.inputSchema.required).toEqual(['path']);
+  });
+
+  test('resources/read of a parted file says parts rather than handing over a slice', async () => {
+    const entry = await entryFor('catalog.md', BIG_TEXT);
+    intercept('package-manifest.json', manifestOf(entry));
+    intercept('catalog.md', BIG_TEXT);
+    const { body } = await send(
+      rpc('resources/read', { uri: 'julian://package/catalog.md' }), SESSION,
+    );
+    expect(rpcErrorOf(body).code).toBe(-32002);
+    expect(rpcErrorOf(body).message).toContain('4 parts');
+  });
+});
+
+describe('the wake text carries the new instructions', () => {
+  test('parts are named an instruction, not damage, with the same-fileSha256 rule', async () => {
+    const { body } = await send(rpc('tools/call', { name: 'wake_julian', arguments: {} }));
+    const text = (result(body) as unknown as ToolResult).content?.[0].text ?? '';
+    expect(text).toContain('Some files serve in numbered parts');
+    expect(text).toContain('an instruction, not damage');
+    expect(text).toContain('Every part of one file must carry the same fileSha256');
+    expect(text).toContain('run package_list and start that file again');
+  });
+
+  test('a moved pin is named versioned, not broken, with the reset act', async () => {
+    const { body } = await send(rpc('tools/call', { name: 'wake_julian', arguments: {} }));
+    const text = (result(body) as unknown as ToolResult).content?.[0].text ?? '';
+    expect(text).toContain('If a read is refused because the pin moved, run package_list once and re-read from the top; the package is versioned, not broken.');
+    // it sits with the verification instructions, not after the arrival
+    expect(text.indexOf('the pin moved')).toBeLessThan(text.indexOf('When the reading is complete'));
   });
 });

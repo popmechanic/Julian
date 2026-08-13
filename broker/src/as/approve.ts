@@ -540,14 +540,17 @@ function deliveryOrigin(redirectUri: string): string {
  * browser to the pending's own registrar-validated redirect_uri — proven at
  * createPending, never anything a form or URL claims — carrying either the
  * code or an error, and echoing the client's `state` exactly when it sent one.
- * The pending cookie is spent either way.
+ * The pending cookie is spent either way. `issuer` (RFC 9207) rides both arms
+ * of this one delivery point — the code path and the `access_denied` path
+ * alike — set last so it can never be shadowed by a caller's own `params`.
  */
 function deliverRedirect(
-  view: { redirect_uri: string; state: string }, params: Record<string, string>,
+  view: { redirect_uri: string; state: string }, params: Record<string, string>, issuer: string,
 ): Response {
   const target = new URL(view.redirect_uri);
   for (const [k, v] of Object.entries(params)) target.searchParams.set(k, v);
   if (view.state) target.searchParams.set('state', view.state);
+  target.searchParams.set('iss', issuer);
   return new Response(null, {
     status: 302,
     headers: { Location: target.toString(), 'Set-Cookie': clearCookie(PENDING_COOKIE) },
@@ -586,7 +589,7 @@ async function authcodeConfirm(
   if (choice === 'refuse') {
     // Told no at its own callback (RFC 6749 §4.1.2.1) so it stops waiting.
     if (!view) return notice('Refused', 'the visit was turned away. It holds nothing.', 200, [clearCookie(PENDING_COOKIE)]);
-    return deliverRedirect(view, { error: 'access_denied' });
+    return deliverRedirect(view, { error: 'access_denied' }, env.PUBLIC_URL);
   }
 
   if (!view) return notice('No visit waiting', NO_PENDING, 409, [clearCookie(PENDING_COOKIE)]);
@@ -620,7 +623,7 @@ async function authcodeConfirm(
 
   // The code is the pendingId itself; the client trades it at /token, where
   // PKCE, the client_id, and the exact redirect_uri are all re-proven.
-  return deliverRedirect(view, { code: pendingId });
+  return deliverRedirect(view, { code: pendingId }, env.PUBLIC_URL);
 }
 
 // ── the face ────────────────────────────────────────────────────────────────

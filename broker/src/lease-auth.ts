@@ -9,6 +9,7 @@ import { keySetFor, verifyWithKeySet } from './auth';
 import type { Env } from './env';
 import type { GovernorDO, LeaseIdentity, LeaseReserveResult } from './governor';
 import { policyFor } from './policy';
+import { SCOPE_VERBS } from 'julian-shared/scopes';
 
 export const ACCESS_PREFIX = 'jla_';
 export const LEGACY_LEASE_ID = 'legacy-window';
@@ -19,6 +20,10 @@ export const LEGACY_SCOPE = 'full-house';
 // no per-lease reader, so the default lives here as well; a lease with a
 // bespoke cap will need a governor accessor before this can honour it.
 export const LEASE_SEND_CAP_PER_DAY = 5;
+
+// The per-lease `stream.*` allowance — a read a minute for twelve hours
+// straight, generous enough that no legitimate visit notices it exists.
+export const STREAM_READ_CAP_PER_DAY = 500;
 
 export const GOVERNOR_DOWN = 'governor unavailable — refusing without a ledger entry';
 
@@ -35,36 +40,29 @@ export function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-/** What each scope may ask for. Unknown scopes buy nothing.
- *  reading-room = the public identity package only (attribution, not confidentiality).
- *  stream-read  = package + the private live record, read-only.
- *  full-house   = everything, incl. mail verbs — held by home doors, not MCP leases. */
-const PACKAGE_VERBS = ['package.list', 'package.read'] as const;
-const STREAM_VERBS = ['stream.recent', 'stream.session', 'stream.search'] as const;
-const MAIL_VERBS = ['mail.send', 'mail.list', 'mail.read', 'mail.health'] as const;
-
-const SCOPE_VERBS: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  'reading-room': Object.freeze([...PACKAGE_VERBS]),
-  'stream-read': Object.freeze([...PACKAGE_VERBS, ...STREAM_VERBS]),
-  'full-house': Object.freeze([...PACKAGE_VERBS, ...STREAM_VERBS, ...MAIL_VERBS]),
-});
-
+// What each scope may ask for lives in julian-shared/scopes (spec §5's
+// table) — reading-room = the public identity package only (attribution,
+// not confidentiality); stream-read/stream = package + the private live
+// record, read-only (and, for stream, the socket); full-house = everything,
+// incl. mail verbs — held by home doors, not MCP leases.
 export function scopeAllows(scope: string, service: string, verb: string): boolean {
   if (!Object.hasOwn(SCOPE_VERBS, scope)) return false;
-  return SCOPE_VERBS[scope].includes(`${service}.${verb}`);
+  return (SCOPE_VERBS as Readonly<Record<string, readonly string[]>>)[scope].includes(`${service}.${verb}`);
 }
 
 /**
  * The lease's own daily allowance for this verb, judged alongside the house's.
- * Only `mail.send` is metered per lease. The legacy pseudo-lease is deliberately
- * unmetered: it stands for everyone who was already trusted yesterday, and
- * re-capping them at 5 mid-migration would break doors the window exists to keep
- * working — the house cap of 20 still binds it.
+ * Only `mail.send` and `stream.*` are metered per lease. The legacy
+ * pseudo-lease is deliberately unmetered for both: it stands for everyone who
+ * was already trusted yesterday, and re-capping them mid-migration would break
+ * doors the window exists to keep working — the house cap (mail's 20/day; no
+ * house cap on stream reads) still binds it.
  */
 export function leaseCapFor(auth: LeaseIdentity, service: string, verb: string): number | null {
-  if (service !== 'mail' || verb !== 'send') return null;
   if (auth.leaseId === LEGACY_LEASE_ID) return null;
-  return LEASE_SEND_CAP_PER_DAY;
+  if (service === 'mail' && verb === 'send') return LEASE_SEND_CAP_PER_DAY;
+  if (service === 'stream') return STREAM_READ_CAP_PER_DAY;
+  return null;
 }
 
 /**

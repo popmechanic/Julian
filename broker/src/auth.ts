@@ -2,7 +2,7 @@ import { createRemoteJWKSet, createLocalJWKSet } from 'jose';
 import type { JWTVerifyGetKey } from 'jose';
 import type { Env } from './env';
 
-export { verifyWithKeySet } from '../../sync/src/auth';
+export { verifyWithKeySet } from 'julian-shared/auth';
 
 let remoteKeySet: JWTVerifyGetKey | null = null;
 export function keySetFor(env: Env): JWTVerifyGetKey {

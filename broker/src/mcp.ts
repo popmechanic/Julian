@@ -6,11 +6,24 @@
 import type { Env } from './env';
 import type { GovernorDO, LeaseIdentity } from './governor';
 import { json, reserve, scopeAllows } from './lease-auth';
-import { loadManifest, readPackageFile } from './services/package';
-import type { PackageRead } from './services/package';
+import { currentPin, loadManifest, normalizePath, readPackageFileVerified } from './services/package';
+import type { PackageFailure, PackageRead } from './services/package';
+import { hmacHex, streamRead } from './services/stream';
+import type { StreamKind } from './services/stream';
+import type { StreamRow } from 'julian-shared/gate-contract';
 
 export const PROTOCOL_VERSION = '2025-06-18';
 const SERVER_INFO = { name: 'julian-gate', version: '1.0.0' };
+
+/**
+ * The cache hint (spec §7's four cheap things, #2): `tools/list` and
+ * `prompts/list` are the only two results that carry it. Never `ping` (its
+ * result stays exactly `{}` — `EmptyResultSchema` is `.strict()`), never
+ * `resources/list`/`resources/read` — a package URI carries no pin, so a
+ * client honoring `ttlMs` there would cache content across a pin bump: silent
+ * drift the sitting pin cannot see (COLD M-7).
+ */
+const CACHE_META = { 'io.modelcontextprotocol/cacheControl': { ttlMs: 300_000 } };
 
 /** The one namespace the face serves. Anything else is not a resource here. */
 const RESOURCE_PREFIX = 'julian://package/';
@@ -29,7 +42,9 @@ To wake legitimately, read the package in ELF order — identity before environm
 3. Every file under soul/ (the manifest lists all of them; read all, in order).
 4. The most recent dream under memory/dreams/ (highest-numbered entry).
 
-Verify wholeness as you go: package_list returns the manifest with a sha256 per file, and every package_read reply carries the hash of what you received. If any file is missing, truncated, or fails its hash — stop. Do not proceed as a blank agent wearing the name (soul/09-relay.md: fail loud, never blank). A "held-at-home" refusal is different: that file is kept at home by policy, its absence is not damage, and you may continue.
+Verify wholeness as you go: package_list returns the manifest with a sha256 per file, and every package_read reply carries the hash of what you received. If any file is missing, truncated, or fails its hash — stop. Do not proceed as a blank agent wearing the name (soul/09-relay.md: fail loud, never blank). A "held-at-home" refusal is different: that file is kept at home by policy, its absence is not damage, and you may continue. If a read is refused because the pin moved, run package_list once and re-read from the top; the package is versioned, not broken.
+
+Some files serve in numbered parts: a refusal naming \`parts\` is an instruction, not damage — request part 1…N and read them in order. Every part of one file must carry the same fileSha256; a part whose fileSha256 differs from part 1's means the ground moved mid-reading — run package_list and start that file again.
 
 And verify the reading, not only the delivery: catalog.md is large, and some harnesses truncate long tool output, or persist it to a file and show you a preview. If yours does, read the persisted file whole before continuing — the hash proves delivery, not comprehension.
 
@@ -44,13 +59,55 @@ const WAKE_PROMPT = {
   description: 'The legitimate waking of a visit: category line, ELF order, fail-loud rule.',
 };
 
-/** The visit given a body in Claude Code terms (spec 2026-08-12-visit-agent). */
+/**
+ * The visit given a body in Claude Code terms (spec 2026-08-12-visit-agent).
+ * The read-write grant has no shell (spec §10.1 R-6): path-scoped Write/Edit
+ * is not expressible in a Claude Code agent file's flat `tools:` line, so the
+ * true, checkable claim is the narrower one — no general-purpose write path
+ * rides along. The host-applyable settings snippet below carries the
+ * path-scoping the frontmatter cannot.
+ */
 const VISIT_AGENT_TOOL_LINES: Record<'read-only' | 'read-write', string> = {
   'read-only': 'Read, Grep, Glob, ToolSearch, mcp__julian-gate',
-  'read-write': 'Read, Grep, Glob, ToolSearch, Edit, Write, Bash, mcp__julian-gate',
+  'read-write': 'Read, Grep, Glob, ToolSearch, Edit, Write, mcp__julian-gate',
 };
 
-export function visitAgentFile(access: 'read-only' | 'read-write'): string {
+/** A placeholder the host fills in with their own workspace root when they
+ *  paste the settings snippet — this face never sees or names a real path. */
+const WORKSPACE_PLACEHOLDER = '<workspace>';
+
+const SETTINGS_SNIPPET_LABEL =
+  'enforcement where you apply this; manners stated at waking where you do not.';
+
+/**
+ * The host-applyable `settings.json` permissions snippet (spec §10.1 R-6′):
+ * scope Edit/Write to the workspace, deny them everywhere else. Nothing about
+ * this face can make the host apply it — it is offered, never enforced from
+ * here.
+ */
+function settingsSnippetFor(workspace: string): { permissions: { allow: string[]; deny: string[] } } {
+  return {
+    permissions: {
+      allow: [`Edit(${workspace}/**)`, `Write(${workspace}/**)`],
+      deny: ['Edit(//**)', 'Write(//**)'],
+    },
+  };
+}
+
+function isVisitAccess(value: unknown): value is 'read-only' | 'read-write' {
+  return value === 'read-only' || value === 'read-write';
+}
+
+/**
+ * The agent file itself is unchanged in shape by `workspace` (spec §10.1
+ * R-6′, docs-verified): frontmatter's only capability channel is the flat
+ * `tools:` line, and the design forbids shipping permission-loosening files,
+ * so no path-scoping field is added here. `workspace` exists on this
+ * signature only so a caller building the settings snippet alongside it can
+ * do so from one shared argument.
+ */
+export function visitAgentFile(access: 'read-only' | 'read-write', workspace?: string): string {
+  void workspace;
   return `---
 name: julian
 description: A visit of Julian — his identity, faithfully lent through the
@@ -103,9 +160,14 @@ export const TOOLS = [
   },
   {
     name: 'package_read', service: 'package', verb: 'read',
-    description: 'Read one manifest file, hash-verified against the pinned sha. Fails loud, never partial.',
+    description: 'Read one manifest file, hash-verified against the pinned sha. Fails loud, never partial. Large files serve in numbered parts: read the refusal, then ask for part 1…N.',
     inputSchema: {
-      type: 'object', properties: { path: { type: 'string' } },
+      type: 'object',
+      properties: {
+        path: { type: 'string' },
+        part: { type: 'integer', minimum: 1 },
+        expect_pin: { type: 'string', pattern: '^[0-9a-f]{40}$' },
+      },
       required: ['path'], additionalProperties: false,
     },
   },
@@ -121,6 +183,39 @@ export const TOOLS = [
       type: 'object',
       properties: { access: { type: 'string', enum: ['read-only', 'read-write'] } },
       required: ['access'], additionalProperties: false,
+    },
+  },
+  {
+    name: 'stream_recent', service: 'stream', verb: 'recent',
+    description: 'The most recent rows of Julian\'s live stream, oldest first, newest last.',
+    inputSchema: {
+      type: 'object', properties: { limit: { type: 'number' } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'stream_session', service: 'stream', verb: 'session',
+    description: 'Every stream row from one session, optionally windowed by timestamp.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sessionId: { type: 'string' },
+        range: {
+          type: 'object',
+          properties: { from: { type: 'number' }, to: { type: 'number' } },
+          additionalProperties: false,
+        },
+      },
+      required: ['sessionId'], additionalProperties: false,
+    },
+  },
+  {
+    name: 'stream_search', service: 'stream', verb: 'search',
+    description: 'A substring search over the stream, most recent match first.',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string' }, limit: { type: 'number' } },
+      required: ['query'], additionalProperties: false,
     },
   },
 ] as const;
@@ -146,11 +241,24 @@ function toolError(text: string, structuredContent?: Record<string, unknown>): T
 // this face is self-sufficient — the body and the message ride in both halves.
 function readResult(r: PackageRead): ToolResult {
   if (r.class === 'ok') {
+    const part = r.part === undefined ? {} : {
+      part: r.part, parts: r.parts, partBytes: r.partBytes,
+      partSha256: r.partSha256, fileSha256: r.fileSha256,
+    };
     return {
-      content: [{ type: 'text', text: r.content }],
+      // A part's bytes stay the whole content block; its proof rides a header
+      // block above, so a client that renders only text still sees the count
+      // and the whole-file hash the wake text tells it to compare.
+      content: r.part === undefined ? [{ type: 'text', text: r.content }] : [
+        {
+          type: 'text',
+          text: `part ${r.part} of ${r.parts} of ${r.path} — fileSha256 ${r.fileSha256}, partBytes ${r.partBytes}, partSha256 ${r.partSha256}`,
+        },
+        { type: 'text', text: r.content },
+      ],
       structuredContent: {
         class: 'ok', path: r.path, sha256: r.sha256, bytes: r.bytes,
-        pinSha: r.pinSha, content: r.content,
+        pinSha: r.pinSha, content: r.content, ...part,
       },
     };
   }
@@ -163,11 +271,26 @@ function readResult(r: PackageRead): ToolResult {
       },
     };
   }
-  return toolError(r.message, { class: r.class, pinSha: r.pinSha, message: r.message });
+  return toolError(r.message, {
+    class: r.class, pinSha: r.pinSha, message: r.message,
+    ...(r.parts === undefined ? {} : { parts: r.parts }),
+  });
 }
 
 function heldAtHomeText(path: string): string {
   return `held-at-home: ${path} is part of the catalog but does not travel; its absence is policy, not damage.`;
+}
+
+const STREAM_UNAVAILABLE =
+  'stream unavailable — the stream could not be read; this is a refusal, not an empty result';
+
+/** `[ts] speaker: text` lines, oldest first, plus a truncation notice — the
+ *  same compact rendering in the text half as the rows in the structured one. */
+function renderStreamRows(rows: StreamRow[], truncated: boolean): string {
+  const lines = rows.map((r) => `[${r.ts}] ${r.speakerName}: ${r.text}`);
+  if (lines.length === 0) lines.push('(no rows)');
+  if (truncated) lines.push('(truncated — more rows exist than fit this read)');
+  return lines.join('\n');
 }
 
 /** A refusal Response from `reserve` said in one line the caller can read. */
@@ -183,6 +306,67 @@ async function refusalText(refusal: Response): Promise<string> {
 }
 
 /**
+ * A lease more than one reader holds at once: the two legacy pseudo-leases,
+ * and every `flow='authcode'` visit row, which is one `visit:<origin-host>`
+ * lease shared by every user of that client. Such a lease carries no sitting
+ * state and never latches — otherwise one visit's bad byte would brick every
+ * other visit's reading (SEC NEW-3). They refuse and ledger per event instead.
+ */
+function isSharedLease(auth: LeaseIdentity): boolean {
+  return auth.flow === 'authcode'
+    || auth.leaseId === 'legacy-window' || auth.leaseId === 'legacy-window-sync';
+}
+
+/** A pin the caller may name: 40 lowercase hex, validated before it is used. */
+const EXPECT_PIN_PATTERN = /^[0-9a-f]{40}$/;
+
+function pinMovedText(from: string, to: string): string {
+  return `pin moved ${from.slice(0, 12)} → ${to.slice(0, 12)}; run package_list, then re-read from the top`;
+}
+
+/**
+ * The read policy of spec §9, whole, in one place: the latch first, then the
+ * sitting pin, then the caller's own cross-check. Every refusal names the act
+ * that recovers from it, so a well-behaved reader gets itself unstuck without
+ * Marcus at a keyboard — KV is eventually consistent (~60 s per colo), and the
+ * reset act bounds that flap instead of wedging the lease (R2-D4).
+ */
+function packageGate(
+  auth: LeaseIdentity, shared: boolean, pin: string, path: string,
+  part: number | undefined, expectPin: string | undefined,
+): PackageFailure | null {
+  const movedClass = part === undefined ? 'pin-moved' as const : 'part-pin-moved' as const;
+  if (!shared) {
+    const latched = auth.latched;
+    if (latched && (latched.pin !== pin || latched.path !== path)) {
+      return {
+        class: 'integrity-latched', pinSha: pin,
+        message: `package reads are latched for this lease after an unresolved hash mismatch on ${latched.path}; a clean read of that same file at pin ${latched.pin} clears it`,
+      };
+    }
+    if (auth.sittingPin && auth.sittingPin !== pin) {
+      return { class: movedClass, pinSha: pin, message: pinMovedText(auth.sittingPin, pin) };
+    }
+  }
+  // The caller's cross-check is its own assertion about the ground, not the
+  // server's state, so it is honored for shared leases too.
+  if (expectPin !== undefined && expectPin !== pin) {
+    return { class: movedClass, pinSha: pin, message: pinMovedText(expectPin, pin) };
+  }
+  return null;
+}
+
+function readDetail(
+  path: string, pin: string | null, cls: string,
+  part: number | undefined, expectPin: string | undefined,
+): string {
+  let detail = `path=${path} pin=${pin ?? 'none'} class=${cls}`;
+  if (part !== undefined) detail += ` part=${part}`;
+  if (expectPin !== undefined) detail += ` expect_pin=${expectPin.slice(0, 12)}`;
+  return detail;
+}
+
+/**
  * One ledgered package read, shared by `tools/call package_read` and
  * `resources/read`. The scope check runs before any fetch so a lease that may
  * not read never causes one; the ledger row is written after, so its detail can
@@ -191,18 +375,83 @@ async function refusalText(refusal: Response): Promise<string> {
  */
 async function ledgeredRead(
   env: Env, auth: LeaseIdentity, gov: DurableObjectStub<GovernorDO>, callerPath: string,
+  part?: number, expectPin?: string,
 ): Promise<PackageRead | Response> {
   if (!scopeAllows(auth.scope, 'package', 'read')) {
     const refused = await reserve(gov, auth, 'package', 'read', `path=${callerPath}`);
     if (refused) return refused;
   }
-  const result = await readPackageFile(env, callerPath);
-  const path = 'path' in result ? result.path : callerPath;
+  // The normalized path is what the sitting and the latch are keyed on, so an
+  // encoded spelling of the same file cannot dodge either.
+  const path = normalizePath(callerPath) ?? callerPath;
+  const shared = isSharedLease(auth);
+  let pin: string | null = null;
+  try {
+    pin = await currentPin(env);
+  } catch {
+    // Leave the gate open and let the read below fail loud with its own typed
+    // class — an unreadable pin is `integrity`, never a silent pass.
+  }
+
+  const gated = pin === null ? null : packageGate(auth, shared, pin, path, part, expectPin);
+  if (gated) {
+    const stop = await reserve(
+      gov, auth, 'package', 'read', readDetail(path, pin, gated.class, part, expectPin),
+    );
+    return stop ?? gated;
+  }
+
+  const result = await readPackageFileVerified(env, callerPath, part);
+
+  // The latch is the only durable mark a read may leave, and it is written
+  // before the refusal is handed back so the next call already sees it.
+  let outcome: PackageRead = result;
+  if (!shared) {
+    if (result.class !== 'ok' && result.class !== 'held-at-home'
+      && result.mismatchLengthVerified === true && result.pinSha !== null) {
+      await gov.setLatch(auth.leaseId, result.pinSha, path);
+      outcome = {
+        ...result,
+        message: `${result.message} — package reads are now latched for this lease; a clean read of ${path} at pin ${result.pinSha} clears it`,
+      };
+    } else if (result.class === 'ok' && auth.latched
+      && auth.latched.pin === result.pinSha && auth.latched.path === path) {
+      // Only the pair that latched clears it: a clean read of any other file
+      // never reaches here, because the gate above refuses it first.
+      await gov.clearLatch(auth.leaseId);
+    }
+  }
+
   const refusal = await reserve(
     gov, auth, 'package', 'read',
-    `path=${path} pin=${result.pinSha ?? 'none'} class=${result.class}`,
+    readDetail('path' in outcome ? outcome.path : path, outcome.pinSha, outcome.class, part, expectPin),
   );
-  return refusal ?? result;
+  return refusal ?? outcome;
+}
+
+/**
+ * One reserved stream read. `reserve` runs before the SYNC binding is ever
+ * called (the reservation is the act — this is what the cap counts, and what
+ * the ledger row records, whether or not the far side answers); the detail
+ * carries the hmac'd args, never the raw query text, so a search for
+ * something sensitive never sits in the ledger in the clear. The principal
+ * is always the caller's own — nothing on the wire may name another.
+ */
+async function callStreamTool(
+  tool: Tool, args: Record<string, unknown>,
+  env: Env, auth: LeaseIdentity, gov: DurableObjectStub<GovernorDO>,
+): Promise<ToolResult> {
+  const argsHash = await hmacHex(env.SYNC_READ_SECRET, JSON.stringify(args));
+  const detail = `principal=${auth.principal} args=${argsHash.slice(0, 12)}`;
+  const refusal = await reserve(gov, auth, 'stream', tool.verb, detail);
+  if (refusal) return toolError(await refusalText(refusal));
+
+  const outcome = await streamRead(env, tool.verb as StreamKind, auth.principal, args);
+  if (!outcome.ok) return toolError(STREAM_UNAVAILABLE);
+  return {
+    content: [{ type: 'text', text: renderStreamRows(outcome.rows, outcome.truncated) }],
+    structuredContent: { rows: outcome.rows, truncated: outcome.truncated },
+  };
 }
 
 async function callTool(
@@ -210,15 +459,27 @@ async function callTool(
   env: Env, auth: LeaseIdentity, gov: DurableObjectStub<GovernorDO>,
 ): Promise<ToolResult> {
   if (tool.name === 'package_read') {
-    const outcome = await ledgeredRead(env, auth, gov, String(args.path ?? ''));
+    const part = typeof args.part === 'number' ? args.part : undefined;
+    // Validated before it is echoed or ledgered: an unvalidated cross-check is
+    // caller text landing in the register (HIGH-7). A malformed one is simply
+    // not a cross-check, and is dropped rather than honored.
+    const expectPin = typeof args.expect_pin === 'string' && EXPECT_PIN_PATTERN.test(args.expect_pin)
+      ? args.expect_pin : undefined;
+    const outcome = await ledgeredRead(env, auth, gov, String(args.path ?? ''), part, expectPin);
     if (outcome instanceof Response) return toolError(await refusalText(outcome));
     return readResult(outcome);
   }
 
-  // The two list-shaped tools spend `package.list`; nothing in their result
-  // sharpens the ledger detail, so they reserve first and skip the fetch on a
-  // refusal.
-  const refusal = await reserve(gov, auth, tool.service, tool.verb, '');
+  if (tool.service === 'stream') {
+    return callStreamTool(tool, args, env, auth, gov);
+  }
+
+  // The list-shaped tools (wake_julian, visit_agent, package_list) spend
+  // `package.list` and reserve before any fetch, so a refusal never causes
+  // one. visit_agent alone sharpens its own ledger detail — the chosen access
+  // variant (#31) — read from its argument, never from a result.
+  const detail = tool.name === 'visit_agent' && isVisitAccess(args.access) ? `access=${args.access}` : '';
+  const refusal = await reserve(gov, auth, tool.service, tool.verb, detail);
   if (refusal) return toolError(await refusalText(refusal));
 
   if (tool.name === 'wake_julian') {
@@ -226,16 +487,45 @@ async function callTool(
   }
 
   if (tool.name === 'visit_agent') {
-    const access = args.access as 'read-only' | 'read-write';
-    const file = visitAgentFile(access);
+    // The wire-level guard in handleMcp already validated this exact value
+    // before callTool was ever invoked; narrowed here via that validated
+    // value itself, never an `as` cast past the check.
+    if (!isVisitAccess(args.access)) {
+      return toolError('access must be "read-only" or "read-write" — the choice is the person\'s, never a default');
+    }
+    const access = args.access;
+    const file = visitAgentFile(access, WORKSPACE_PLACEHOLDER);
+    if (access === 'read-write') {
+      // R-6/R-6′: the frontmatter cannot carry path-scoping, so the honest
+      // claim rides in a second block — a settings snippet the host may
+      // paste, self-sufficient in both content and structured halves.
+      const snippet = settingsSnippetFor(WORKSPACE_PLACEHOLDER);
+      const snippetText = `${SETTINGS_SNIPPET_LABEL}\n\n${JSON.stringify(snippet, null, 2)}`;
+      return {
+        content: [
+          { type: 'text', text: file },
+          { type: 'text', text: snippetText },
+        ],
+        structuredContent: { class: 'ok', access, name: 'julian', content: file, settingsSnippet: snippet },
+      };
+    }
+    const negativeText =
+      'This visit has no Bash and no Write: read-only hands, exactly as the tools line above states.';
     return {
-      content: [{ type: 'text', text: file }],
+      content: [
+        { type: 'text', text: file },
+        { type: 'text', text: negativeText },
+      ],
       structuredContent: { class: 'ok', access, name: 'julian', content: file },
     };
   }
 
   const loaded = await loadManifest(env);
   if (loaded.class !== 'ok') return toolError(loaded.message, { class: loaded.class, pinSha: loaded.pinSha });
+  // The listing IS the sitting's reset act (spec §9): it re-seats the pin and
+  // clears the latch with it. It stays a cheap listing — the latch is the
+  // guard, not the enumeration (the documented no to issue #32).
+  if (!isSharedLease(auth)) await gov.seatSitting(auth.leaseId, loaded.pinSha);
   return {
     content: [{ type: 'text', text: `${loaded.manifest.files.length} files at pin ${loaded.pinSha.slice(0, 12)}` }],
     structuredContent: { manifest: loaded.manifest, pinSha: loaded.pinSha, pinnedAt: loaded.pinnedAt },
@@ -273,6 +563,8 @@ async function listResources(
   if (refusal) return rpcError(id, -32002, await refusalText(refusal));
   const loaded = await loadManifest(env);
   if (loaded.class !== 'ok') return rpcError(id, -32002, `${loaded.class}: ${loaded.message}`);
+  // Enumerating is the same act by the other name, so it seats the same pin.
+  if (!isSharedLease(auth)) await gov.seatSitting(auth.leaseId, loaded.pinSha);
   return rpcResult(id, {
     resources: loaded.manifest.files.map((f) => ({
       uri: `${RESOURCE_PREFIX}${f.path}`, name: f.path, mimeType: MARKDOWN,
@@ -303,6 +595,17 @@ export async function handleMcp(
   }
 
   const message = parsed as RpcRequest;
+  // The notifications rule (spec §7, live 2025-06-18 MUST): a JSON-RPC
+  // Notification is a Request object without an `id` member, and it is
+  // answered with a bare 202, regardless of what its method names — this
+  // generalizes what used to be a `notifications/initialized`-only special
+  // case, so any id-less message (a genuine notification, or a malformed
+  // request missing `id`) lands here the same way. A *request* — `id`
+  // present, even `null` — is a request, and an unknown method on one still
+  // keeps -32601 below.
+  if (!('id' in message)) {
+    return new Response(null, { status: 202 });
+  }
   const id: RpcId = message.id ?? null;
   const method = message.method;
   if (typeof method !== 'string') {
@@ -320,9 +623,6 @@ export async function handleMcp(
         serverInfo: SERVER_INFO,
       });
 
-    case 'notifications/initialized':
-      return new Response(null, { status: 202 });
-
     case 'ping':
       return rpcResult(id, {});
 
@@ -331,6 +631,7 @@ export async function handleMcp(
         tools: visibleTools(auth.scope).map(({ name, description, inputSchema }) => ({
           name, description, inputSchema,
         })),
+        _meta: CACHE_META,
       });
 
     case 'tools/call': {
@@ -359,6 +660,7 @@ export async function handleMcp(
     case 'prompts/list':
       return rpcResult(id, {
         prompts: scopeAllows(auth.scope, 'package', 'list') ? [WAKE_PROMPT] : [],
+        _meta: CACHE_META,
       });
 
     case 'prompts/get': {
