@@ -1,6 +1,10 @@
+// The verifier is no longer sync's — it lives in `julian-shared/auth`, and
+// sync's own auth module holds no keys at all now (the gate is the one
+// authority). `shared/auth.test.ts` owns the verifier's contract; these cases
+// stay as a second, independent reading of it.
 import { describe, expect, test } from 'vitest';
 import { SignJWT, generateKeyPair, exportJWK, createLocalJWKSet } from 'jose';
-import { verifyWithKeySet } from '../src/auth';
+import { verifyWithKeySet } from 'julian-shared/auth';
 
 const ISSUER = 'https://soul.test';
 

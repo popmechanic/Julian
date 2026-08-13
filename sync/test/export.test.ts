@@ -1,44 +1,39 @@
 // sync/test/export.test.ts — Exodus integration proof for the /export route.
 //
-// Adaptation note (kept semantics-identical to the plan): `[vars]` bindings are
-// resolved by the workerd runtime, so mutating the `cloudflare:test` `env` facade
-// does NOT propagate to `SELF` — the deployed worker keeps reading the wrangler.toml
-// values, and `keySetFor` can never see a per-test `OIDC_JWKS_JSON` through `SELF`
-// (verified: an authed `SELF.fetch` throws `Invalid URL string` on the placeholder
-// `OIDC_JWKS_URL`). The gate (401 without a token) is proven through `SELF`, which
-// needs no env; the authed path is proven by invoking the worker's default handler
-// with the mutated `env` passed explicitly as the argument, so `keySetFor` receives
-// the injected JWKS while the real DO forwarding + export path still run end-to-end.
-// The fixture also injects `OIDC_AUDIENCE` and signs a matching `aud`, so this proves
-// the audience check end-to-end (and overrides the wrangler.toml deploy placeholder,
-// which would otherwise reject every aud-less token).
+// Adaptation note (kept semantics-identical to the plan): `[vars]`/`[[services]]`
+// bindings are resolved by the workerd runtime, so mutating the `cloudflare:test`
+// `env` facade does NOT propagate to `SELF` — the gate (401 without a token) is
+// proven through `SELF`, which needs no env; the authed path is proven by
+// invoking the worker's default handler with a mutated `env` passed explicitly
+// as the argument, so the injected fake `GATE` answers the introspection while
+// the real DO forwarding + export path still run end-to-end.
+//
+// Sync no longer verifies anything locally (no JWKS, no issuer, no audience):
+// the credential here is a legacy Pocket ID JWT, and the only thing that makes
+// it good is the gate's JWT arm saying so.
 import { describe, expect, test } from 'vitest';
 import { env, runInDurableObject, SELF } from 'cloudflare:test';
-import { SignJWT, generateKeyPair, exportJWK } from 'jose';
 import worker from '../src/index';
-import type { Env } from '../src/auth';
+import type { Env, GateFetcher } from '../src/auth';
 
-const ISSUER = 'https://soul.test';
-const AUDIENCE = 'julian-app';
-
-async function authedEnv() {
-  const { publicKey, privateKey } = await generateKeyPair('RS256');
-  const jwk = { ...(await exportJWK(publicKey)), kid: 'k1', alg: 'RS256', use: 'sig' };
-  (env as unknown as Env).OIDC_JWKS_JSON = JSON.stringify({ keys: [jwk] });
-  (env as unknown as Env).OIDC_ISSUER = ISSUER;
-  (env as unknown as Env).OIDC_AUDIENCE = AUDIENCE;
-  const token = await new SignJWT({ sub: 'user_marcus' })
-    .setProtectedHeader({ alg: 'RS256', kid: 'k1' })
-    .setIssuer(ISSUER).setAudience(AUDIENCE).setIssuedAt()
-    .setExpirationTime(Math.floor(Date.now() / 1000) + 3600)
-    .sign(privateKey);
-  return token;
+/** The gate's JWT arm, answering for a living legacy window. */
+function legacyWindowGate(principal: string): GateFetcher {
+  return {
+    fetch: async () => new Response(JSON.stringify({
+      active: true,
+      lease_id: 'legacy-window-sync',
+      door_name: 'legacy-window-sync',
+      scope: 'stream',
+      principal,
+      subject: 'user_marcus',
+      flow: 'legacy',
+      exp: 1893456000,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+  };
 }
 
 describe('export endpoint', () => {
   test('401 without token; verified content with token', async () => {
-    const token = await authedEnv();
-
     // Gate: no token → 401, proven through the routed worker (SELF).
     const anon = await SELF.fetch('https://sync.test/test/exp1/export');
     expect(anon.status).toBe(401);
@@ -51,11 +46,17 @@ describe('export endpoint', () => {
       },
     );
 
-    // Authed: valid OIDC JWT → 200 with verified content. Direct handler
-    // invocation carries the injected env so keySetFor sees the test JWKS.
+    // Authed: the gate vouches for the legacy session → 200 with verified
+    // content. `test/exp1` is owned by principal `test`.
+    const testEnv = env as unknown as Env;
+    testEnv.GATE = legacyWindowGate('test');
+    testEnv.INTROSPECT_SECRET = 'test-secret';
+
     const res = await worker.fetch(
-      new Request('https://sync.test/test/exp1/export', { headers: { Authorization: `Bearer ${token}` } }),
-      env as unknown as Env,
+      new Request('https://sync.test/test/exp1/export', {
+        headers: { Authorization: 'Bearer eyJhbGciOi.export-legacy.sig' },
+      }),
+      testEnv,
     );
     expect(res.status).toBe(200);
     const body = await res.json() as { mergeableContent: unknown; contentHash: number };

@@ -19,23 +19,31 @@ import { describe, expect, test } from 'vitest';
 import { env } from 'cloudflare:test';
 import worker from '../src/index';
 import type { Env, GateFetcher } from '../src/auth';
+import { SOCKET_REQUIRED_MSG } from 'julian-shared/scopes';
 
-/** A fake GATE binding: counts /introspect calls, records /refusals reports. */
+/** A fake GATE binding: counts /introspect calls, records the two pens. */
 function fakeGate(body: {
-  active: boolean; leaseId?: string; doorName?: string; scope?: string; principal?: string;
-}): GateFetcher & { calls: number; refusals: unknown[] } {
+  active: boolean; leaseId?: string; doorName?: string; scope?: string;
+  principal?: string; subject?: string; flow?: string;
+}): GateFetcher & { calls: number; refusals: unknown[]; allowed: unknown[] } {
   const gate = {
     calls: 0,
     refusals: [] as unknown[],
+    allowed: [] as unknown[],
     fetch: async (input: string | Request, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.url;
-      if (new URL(url).pathname === '/refusals') {
-        gate.refusals.push(JSON.parse(String(init?.body)));
+      const path = new URL(url).pathname;
+      if (path === '/refusals' || path === '/allowed') {
+        (path === '/refusals' ? gate.refusals : gate.allowed).push(JSON.parse(String(init?.body)));
         return new Response(JSON.stringify({ recorded: true }), { status: 200 });
       }
       gate.calls += 1;
       return new Response(JSON.stringify(body.active
-        ? { active: true, lease_id: body.leaseId, door_name: body.doorName ?? 'door:x', scope: body.scope, principal: body.principal }
+        ? {
+            active: true, lease_id: body.leaseId, door_name: body.doorName ?? 'door:x',
+            scope: body.scope, principal: body.principal,
+            subject: body.subject ?? 'julian', flow: body.flow ?? 'device',
+          }
         : { active: false }),
         { status: 200, headers: { 'Content-Type': 'application/json' } });
     },
@@ -120,17 +128,18 @@ describe('router: lease scope + principal enforcement', () => {
   });
 });
 
-describe('router: a socket is a write surface — full-house-only', () => {
+describe('router: a socket is a write surface — socket-capable scopes only', () => {
   test('stream-read is accepted at export', async () => {
     const gate = fakeGate({ active: true, leaseId: 'L10', doorName: 'door:t', scope: 'stream-read', principal: 'julian' });
     const res = await worker.fetch(exportReq('jla_sockpolicy1'), testEnvWithFakeStub(gate));
     expect(res.status).not.toBe(403);
   });
 
-  test('stream-read is refused at the WS upgrade — sockets are full-house-only', async () => {
+  test('stream-read is refused at the WS upgrade — reads are not a write surface', async () => {
     const gate = fakeGate({ active: true, leaseId: 'L11', doorName: 'door:t', scope: 'stream-read', principal: 'julian' });
     const res = await worker.fetch(wsUpgradeReq('jla_sockpolicy2'), testEnv(gate));
     expect(res.status).toBe(403);
+    expect(await res.text()).toBe(SOCKET_REQUIRED_MSG);
     expect(gate.refusals).toHaveLength(1);
     expect(gate.refusals[0]).toMatchObject({ lease_id: 'L11', service: 'stream', verb: 'socket' });
   });
@@ -141,10 +150,66 @@ describe('router: a socket is a write surface — full-house-only', () => {
     expect(res.status).not.toBe(403);
   });
 
+  test('the `stream` scope is accepted at the WS upgrade and refused at nothing it owns', async () => {
+    const gate = fakeGate({ active: true, leaseId: 'L14', doorName: 'browser:s', scope: 'stream', principal: 'julian', flow: 'exchange' });
+    const res = await worker.fetch(wsUpgradeReq('jla_sockpolicy5'), testEnvWithFakeStub(gate));
+    expect(res.status).not.toBe(403);
+    expect(gate.refusals).toHaveLength(0);
+  });
+
   test('a foreign-principal refusal is reported to the gate ledger', async () => {
     const gate = fakeGate({ active: true, leaseId: 'L13', doorName: 'door:t', scope: 'full-house', principal: 'guest-ada' });
     const res = await worker.fetch(exportReq('jla_sockpolicy4'), testEnv(gate));
     expect(res.status).toBe(403);
     expect(gate.refusals[0]).toMatchObject({ lease_id: 'L13', service: 'stream', verb: 'export' });
+  });
+});
+
+// The legacy Pocket ID JWT is no longer verified here: sync holds no JWKS and
+// no issuer/audience config. A JWT is just a token to sync now, handed to the
+// gate's /introspect JWT arm like any other — one authority, one window, one
+// place the sunset lands (spec §6.5).
+describe('router: the legacy JWT arm is the gate, not a local verifier', () => {
+  test('an active legacy-window-sync answer admits the socket at scope `stream`', async () => {
+    const gate = fakeGate({
+      active: true, leaseId: 'legacy-window-sync', doorName: 'legacy-window-sync',
+      scope: 'stream', principal: 'julian', subject: 'user_marcus', flow: 'legacy',
+    });
+    const res = await worker.fetch(wsUpgradeReq('eyJhbGciOi.legacy1.sig'), testEnvWithFakeStub(gate));
+    expect(res.status).not.toBe(403);
+    expect(res.status).toBe(200);
+    expect(gate.calls).toBe(1);
+  });
+
+  test('an inactive answer drops the legacy token — the window has closed', async () => {
+    const gate = fakeGate({ active: false });
+    const res = await worker.fetch(wsUpgradeReq('eyJhbGciOi.legacy2.sig'), testEnv(gate));
+    expect(res.status).toBe(401);
+    expect(gate.calls).toBe(1);
+  });
+
+  test('a legacy token in the query string reaches the same arm', async () => {
+    const gate = fakeGate({
+      active: true, leaseId: 'legacy-window-sync', doorName: 'legacy-window-sync',
+      scope: 'stream', principal: 'julian', subject: 'user_marcus', flow: 'legacy',
+    });
+    const res = await worker.fetch(
+      new Request('https://sync.test/julian/chat?token=eyJhbGciOi.legacy3.sig', {
+        headers: { Upgrade: 'websocket' },
+      }),
+      testEnvWithFakeStub(gate));
+    expect(res.status).toBe(200);
+    expect(gate.calls).toBe(1);
+  });
+
+  test('a legacy token whose scope cannot read the stream is refused at export', async () => {
+    const gate = fakeGate({
+      active: true, leaseId: 'legacy-window-sync', doorName: 'legacy-window-sync',
+      scope: 'reading-room', principal: 'julian', subject: 'user_marcus', flow: 'legacy',
+    });
+    const res = await worker.fetch(
+      new Request('https://sync.test/julian/chat/export?token=eyJhbGciOi.legacy4.sig'),
+      testEnv(gate));
+    expect(res.status).toBe(403);
   });
 });
