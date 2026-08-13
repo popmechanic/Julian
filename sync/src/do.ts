@@ -108,6 +108,41 @@ function handleForm(attachment: SocketAttachment): Record<string, string> | null
     : null;
 }
 
+/**
+ * Which close an inactive by-handle answer earns: 4001 (terminal — the lease
+ * itself is gone) or 4004 (recoverable — the minting access token merely aged
+ * out). Two signals decide it, in this order.
+ *
+ * The gate's `reason:'token-expired'` is authoritative wherever it appears: it
+ * is the register's own reading of its own rows, on any flow.
+ *
+ * Absent it, an `exchange` attachment can still answer the question by itself.
+ * It carries `exp`, the expiry of the very access token that minted the socket,
+ * as the gate stated it at upgrade time (seconds since the epoch, JWT
+ * convention). An inactive answer arriving after that moment is an aged token,
+ * not a revocation — and telling a live Pocket ID session it was revoked is a
+ * terminal lie that stops the app. Getting it wrong the other way costs
+ * nothing: 4004 grants no access, it only sends the browser back to
+ * `POST /exchange`, which is the authority and answers a genuinely revoked
+ * session with its own terminal `class:"revoked"`.
+ *
+ * No other flow infers it. "Re-exchange" is the browser's recovery and only the
+ * browser's; a device door refreshes, and for it the gate must be the one to
+ * speak.
+ */
+function inactiveClose(
+  attachment: SocketAttachment, reason: string | undefined, now: number,
+): { code: number; message: string } {
+  const expired =
+    reason === 'token-expired' ||
+    (attachment.flow === 'exchange' &&
+      attachment.exp !== undefined &&
+      attachment.exp * 1000 <= now);
+  return expired
+    ? { code: CLOSE_TOKEN_EXPIRED, message: TOKEN_EXPIRED_MSG }
+    : { code: CLOSE_REVOKED, message: REVOKED_MSG };
+}
+
 // Cloudflare's WS message cap is ~1 MiB; every synchronizer sets an explicit fragment size.
 const FRAGMENT_SIZE = 262_144; // 256 KiB
 // Any single cell whose JSON serialization exceeds this many bytes is rejected at the write boundary.
@@ -294,8 +329,10 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
   //   throw (unreachable, 401 config error, 5xx)  -> 4002, never 4001: a
   //       governor blip must never read as revocation. Same failure shape as
   //       a brand-new connection refused when the gate can't be reached.
-  //   active:false                                -> 4001, terminal.
-  //   active:false + reason 'token-expired'       -> 4004: the lease lives,
+  //   active:false                                -> 4001, terminal — unless
+  //       `inactiveClose` reads it as an aged token (see there).
+  //   active:false + reason 'token-expired', or an exchange attachment whose
+  //       own access-token `exp` has passed        -> 4004: the lease lives,
   //       the minting access token aged out. The browser re-exchanges its
   //       Pocket ID session and comes back; nothing was revoked.
   //   active, but scope or ownership lost         -> 4003.
@@ -317,13 +354,8 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
         return;
       }
       if (!introspection.active) {
-        // The by-handle answer carries one sub-reason and only one. Absent, the
-        // lease itself is gone and the door must stop knocking.
-        if (introspection.reason === 'token-expired') {
-          ws.close(CLOSE_TOKEN_EXPIRED, TOKEN_EXPIRED_MSG);
-        } else {
-          ws.close(CLOSE_REVOKED, REVOKED_MSG);
-        }
+        const { code, message } = inactiveClose(attachment, introspection.reason, Date.now());
+        ws.close(code, message);
         return;
       }
       // Defense in depth: even though the router already refused a

@@ -18,6 +18,13 @@
 //       active, scope/ownership lost  -> 4003
 //       active, everything holds      -> stays open, verifiedAt re-stamped
 //
+//     The 4004 arm has TWO producers, and the tests below pin both. The gate's
+//     `reason:'token-expired'` is authoritative whenever it is present. When it
+//     is absent — a gate whose by-handle arm does not yet emit the sub-reason —
+//     an `exchange` attachment still holds its own access token's `exp`, and an
+//     inactive answer arriving after that moment is an aged token rather than a
+//     dead lease. No other flow infers it: only the gate may say so for them.
+//
 // Testing pattern matches sync/test/lease-introspect.test.ts: a real
 // WebSocketPair accepted through the DO's own ctx.acceptWebSocket (a
 // duck-typed plain object fails super.webSocketMessage's ctx.getTags native
@@ -216,6 +223,68 @@ describe('JulianSyncDO webSocketMessage: 4001 vs 4004 — a dead lease is not an
       const { client, server } = acceptedSocket(instance);
       server.serializeAttachment(staleAttachment({
         leaseId: 'L-expired-1', tokenId: 't-expired-1', flow: 'exchange',
+      }));
+      installGate(instance, fakeGate({ active: false, reason: 'token-expired' }));
+
+      await instance.webSocketMessage(server, 'ping');
+      expect(await waitForClose(client))
+        .toEqual({ code: 4004, reason: 'access token expired — re-exchange' });
+    });
+  });
+
+  test('an exchange socket past its own attachment exp closes 4004 even when the answer carries no reason', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { client, server } = acceptedSocket(instance);
+      // Exactly the live failure: a browser session whose 3600 s access token
+      // aged out. The lease is alive; the token is not. A gate that answers a
+      // bare `{active:false}` must not be read as "revoked" — the attachment
+      // already knows the token's own expiry, and that is enough to be sure.
+      server.serializeAttachment(staleAttachment({
+        leaseId: 'L-agedout-1', tokenId: 't-agedout-1', flow: 'exchange',
+        exp: Math.floor(Date.now() / 1000) - 60,
+      }));
+      installGate(instance, fakeGate({ active: false }));
+
+      await instance.webSocketMessage(server, 'ping');
+      expect(await waitForClose(client))
+        .toEqual({ code: 4004, reason: 'access token expired — re-exchange' });
+    });
+  });
+
+  test('an exchange socket whose token is still young reads a bare active:false as the revocation it is', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { client, server } = acceptedSocket(instance);
+      server.serializeAttachment(staleAttachment({
+        leaseId: 'L-young-1', tokenId: 't-young-1', flow: 'exchange',
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      }));
+      installGate(instance, fakeGate({ active: false }));
+
+      await instance.webSocketMessage(server, 'ping');
+      expect(await waitForClose(client)).toEqual({ code: 4001, reason: 'lease revoked' });
+    });
+  });
+
+  test('a device-flow socket never infers 4004 from its own exp — re-exchange is not its recovery', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { client, server } = acceptedSocket(instance);
+      server.serializeAttachment(staleAttachment({
+        leaseId: 'L-devexp-1', tokenId: 't-devexp-1', flow: 'device',
+        exp: Math.floor(Date.now() / 1000) - 60,
+      }));
+      installGate(instance, fakeGate({ active: false }));
+
+      await instance.webSocketMessage(server, 'ping');
+      expect(await waitForClose(client)).toEqual({ code: 4001, reason: 'lease revoked' });
+    });
+  });
+
+  test("the gate's reason outranks the attachment's own clock, on any flow", async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { client, server } = acceptedSocket(instance);
+      server.serializeAttachment(staleAttachment({
+        leaseId: 'L-reasonwins-1', tokenId: 't-reasonwins-1', flow: 'device',
+        exp: Math.floor(Date.now() / 1000) + 3600,
       }));
       installGate(instance, fakeGate({ active: false, reason: 'token-expired' }));
 
