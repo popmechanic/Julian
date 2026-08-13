@@ -29,6 +29,13 @@ export interface IntrospectionWire {
   flow?: string;
   token_id?: string;
   exp?: number;
+  // By-handle form ONLY, and only alongside `active:false`: the one sub-reason
+  // an inactive by-handle answer carries. A hibernating socket re-auths by
+  // handle and cannot otherwise tell "the lease died" (WS 4001, terminal) from
+  // "the minting access token simply aged out" (WS 4004, re-exchange and come
+  // back). `reason:'token-expired'` is that distinction and nothing else —
+  // absent means the lease itself is dead.
+  reason?: 'token-expired';
 }
 
 // The internal handoff the sync router hands to its DO after auth. Set once

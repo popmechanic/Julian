@@ -1,10 +1,25 @@
 // sync/test/do.test.ts
 import { describe, expect, test } from 'vitest';
 import { env, runInDurableObject } from 'cloudflare:test';
-import type { JulianSyncDO } from '../src/do';
+import { SYNC_AUTH_HEADER, type SyncAuthPayload } from 'julian-shared/gate-contract';
+import type { JulianSyncDO, SocketAttachment } from '../src/do';
 
 function stub() {
   return env.JULIAN_SYNC.get(env.JULIAN_SYNC.idFromName(`test/do-${crypto.randomUUID().slice(0, 8)}`));
+}
+
+/** A router-shaped upgrade: the handoff header, and a client key to find the socket by. */
+function upgradeRequest(payload: SyncAuthPayload | null, clientId: string): Request {
+  const headers: Record<string, string> = {
+    Upgrade: 'websocket',
+    'sec-websocket-key': clientId,
+  };
+  if (payload !== null) headers[SYNC_AUTH_HEADER] = JSON.stringify(payload);
+  return new Request('https://sync.test/julian/chat', { headers });
+}
+
+function socketFor(instance: JulianSyncDO, clientId: string): WebSocket | undefined {
+  return (instance as unknown as { ctx: DurableObjectState }).ctx.getWebSockets(clientId)[0];
 }
 
 describe('JulianSyncDO', () => {
@@ -92,6 +107,75 @@ describe('JulianSyncDO', () => {
       await Promise.resolve();
       const content = JSON.stringify(instance.store.getMergeableContent());
       expect(content).not.toContain('z'.repeat(1_000));
+    });
+  });
+
+  test('fetch: the socket attachment is handles only — no bearer is ever serialized', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const clientId = `k-${crypto.randomUUID()}`;
+      const res = await instance.fetch(upgradeRequest({
+        leaseId: 'L-attach-1', tokenId: 't-attach-1', subject: 'lease:L-attach-1',
+        scope: 'stream', flow: 'exchange', principal: 'julian', exp: 1893456000,
+      }, clientId));
+      expect(res.status).toBe(101);
+
+      const attachment = socketFor(instance, clientId)?.deserializeAttachment() as SocketAttachment;
+      expect(attachment.leaseId).toBe('L-attach-1');
+      expect(attachment.tokenId).toBe('t-attach-1');
+      expect(attachment.subject).toBe('lease:L-attach-1');
+      expect(attachment.exp).toBe(1893456000);
+      expect(attachment.flow).toBe('exchange');
+      expect(attachment.indefiniteSweeps).toBe(0);
+      expect(attachment.verifiedAt).toBeGreaterThan(0);
+
+      // The whole point of the handle attachment: a hibernating socket holds
+      // no credential anyone could replay. Assert on the serialized form, not
+      // on the fields we happened to name above — a token smuggled into any
+      // future field has to fail this.
+      const serialized = JSON.stringify(attachment);
+      expect(serialized).not.toMatch(/jla_|jlr_|jst_/);
+      expect(serialized).not.toContain('Bearer');
+      expect(Object.keys(attachment).sort()).toEqual(
+        ['exp', 'flow', 'indefiniteSweeps', 'leaseId', 'subject', 'tokenId', 'verifiedAt'],
+      );
+    });
+  });
+
+  test('fetch: an upgrade carrying an Authorization bearer still attaches only handles', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const clientId = `k-${crypto.randomUUID()}`;
+      const req = new Request(upgradeRequest({
+        leaseId: 'L-attach-2', tokenId: 't-attach-2', subject: 'lease:L-attach-2',
+        scope: 'full-house', flow: 'device', principal: 'julian',
+      }, clientId), { headers: undefined });
+      const headers = new Headers(req.headers);
+      headers.set('Authorization', 'Bearer jla_ThisMustNeverBeStored');
+      expect((await instance.fetch(new Request(req, { headers }))).status).toBe(101);
+
+      const attachment = socketFor(instance, clientId)?.deserializeAttachment() as SocketAttachment;
+      expect(JSON.stringify(attachment)).not.toContain('jla_');
+      expect(attachment.leaseId).toBe('L-attach-2');
+    });
+  });
+
+  test('fetch: an upgrade with no handoff header is refused, not accepted unauthenticated', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const clientId = `k-${crypto.randomUUID()}`;
+      const res = await instance.fetch(upgradeRequest(null, clientId));
+      expect(res.status).toBe(401);
+      // Nothing was accepted: an un-introspectable socket is worse than none.
+      expect(socketFor(instance, clientId)).toBeUndefined();
+    });
+  });
+
+  test('fetch: an upgrade with a malformed handoff header is refused', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const clientId = `k-${crypto.randomUUID()}`;
+      const res = await instance.fetch(new Request('https://sync.test/julian/chat', {
+        headers: { Upgrade: 'websocket', 'sec-websocket-key': clientId, [SYNC_AUTH_HEADER]: 'not-json' },
+      }));
+      expect(res.status).toBe(401);
+      expect(socketFor(instance, clientId)).toBeUndefined();
     });
   });
 

@@ -38,6 +38,10 @@ export interface LeaseIntrospection {
   flow?: string;
   tokenId?: string;
   exp?: number;
+  // Only ever set beside `active:false`, and only by the by-handle form: see
+  // `IntrospectionWire.reason`. The DO turns this into WS 4004 rather than
+  // 4001, so it must survive the wire→domain mapping below.
+  reason?: 'token-expired';
 }
 
 /** The gate's verdict on a single-use socket ticket. */
@@ -96,7 +100,13 @@ function fromWire(body: IntrospectionWire): LeaseIntrospection {
         subject: body.subject, flow: body.flow,
         tokenId: body.token_id, exp: body.exp,
       }
-    : { active: false };
+    // An inactive answer carries no identity — only, on the by-handle form,
+    // the one sub-reason that separates "expired token" from "dead lease".
+    // Dropping it here would collapse WS 4004 into 4001 and tell a browser
+    // its session was revoked when it merely needs to re-exchange.
+    : body.reason === 'token-expired'
+      ? { active: false, reason: 'token-expired' }
+      : { active: false };
 }
 
 // A governor blip must not read as revocation. Only a definitive 200 is ever
