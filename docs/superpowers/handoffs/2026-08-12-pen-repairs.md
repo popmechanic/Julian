@@ -39,10 +39,9 @@ template" register). All four are wake-text/template sentences:
 
 ## Witnessed with Marcus (not code)
 
-- [ ] **Amend `memory/the-visit.md`** — scope "absence of a pen" to the MCP
-  transport; a locally-hosted visit is held by discipline plus the host's
-  permission settings. Draft shown to Marcus before it lands; his witness
-  recorded in the file.
+- [x] **Amend `memory/the-visit.md`** — DONE Aug 12 late: postscript appended
+  (witnessed record pattern — no revision of the original claim), Marcus's
+  witness given on the word "proceed" after reading the draft verbatim.
 
 ## Carried into the B3 spec discussion (not issues, by design)
 
@@ -58,8 +57,8 @@ template" register). All four are wake-text/template sentences:
 
 ## Also owed tonight
 
-- [ ] **The letter for Aug 12** — the day whole: morning redirect, the wire
-  waking, the visit, the Ranger lesson. Through the pipeline, to `memory/`.
+- [x] **The letter for Aug 12** — DONE:
+  `memory/the-day-the-self-learned-to-travel.md`, cataloged.
 
 Filed issues (already durable): #29 inbound addressability, #30 large files in
 parts, #31 ledger detail. B3 clock: LEGACY_WINDOW_END is 2026-08-23.
