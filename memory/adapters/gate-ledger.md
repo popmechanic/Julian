@@ -10,9 +10,18 @@ signature: Julian
 
 **`flow='exchange'` rows are a browser session obtaining standing — a fact about a tab, not about anyone's attention; they are not Julian's doors, and they are not evidence of Marcus's presence: presence is read from the record's content, never its credentials.**
 
-The `holder/session` column of every folded table is the ledger's `door_name`
-under a truer name. `door_name` is a legacy column name; an exchange row names
-a session, not a door.
+The `holder/session` column renders the wire's `sub` — the acting
+*credential*, not a door's name: `lease:<leaseId>` for lease-spent acts, a
+bare Pocket ID subject for pre-gate-era and account-level rows, and special
+forms for acts that never resolved a lease (`lease:exchange` on a refused
+exchange) or for the named windows (`lease:legacy-window-sync`). The door's
+human name never appears in this column; it rides in the detail as
+`door=<name>`. Read holder/session to know which credential acted; read
+`door=` to know which door. (Corrected against the first real fold,
+2026-08-13, Marcus reading beside it — the earlier claim that this column
+was "`door_name` under a truer name" was wrong: `door_name` is not a wire
+column at all. What stays true: an exchange row names a browser session,
+not a door.)
 
 ## Theft signals surface uncollapsed
 
@@ -22,11 +31,19 @@ collapsed to a count:
 - `ticket-reused`: a socket ticket used twice
 - `killed`: a token generation rotated, cutting off prior tokens
 - A `package.read`-shaped row (`service:'package', verb:'read'`) whose
-  detail carries `class=integrity-latched` (an unresolved hash mismatch has
-  already latched the lease) or `class=integrity` (the double-mismatch
-  class) — these are the two real latch classes a read's `path=<p>
-  pin=<pin> class=<cls>` detail ever carries; no producer writes the
-  literal string "integrity latch"
+  detail carries `class=integrity-latched` (this lease's package reads are
+  latched by a prior confirmed mismatch) or `class=integrity` — and
+  `integrity` is broad, not narrow: it marks *every* way a fetched file
+  failed to prove itself against the manifest — fetch failures and non-OK
+  upstreams, size-cap violations, malformed manifests, and hash mismatches.
+  Most of these are loud and non-latching; only the length-verified
+  *double* mismatch (detail carries `mismatchLengthVerified`) can latch a
+  lease, and shared visit leases never latch at all. A read's detail is
+  `door=<name> path=<p> pin=<pin> class=<cls>` (plus `part=N` on part
+  reads); no producer writes the literal string "integrity latch".
+  (Corrected against the first real fold, 2026-08-13 — the earlier prose
+  called `integrity` "the double-mismatch class", far narrower than its
+  producers.)
 
 Every such row appears at its timestamp with its `token_id`, and its detail is
 carried whole — never abbreviated, never elided. The detail *is* the evidence;
