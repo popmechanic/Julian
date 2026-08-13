@@ -55,6 +55,24 @@ export type ExchangeMintResult =
   | { status: 'ok'; leaseId: string; accessToken: string; tokenId: string; expiresIn: number }
   | { status: 'revoked' }
   | { status: 'session-cap' };
+/**
+ * The answer to `/socket-ticket`. There is no third outcome: a ticket is either
+ * minted or the lease is holding too many live ones already.
+ */
+export type MintTicketResult =
+  | { status: 'ok'; ticket: string; expiresIn: typeof TICKET_TTL_SECONDS }
+  | { status: 'cap' };
+/**
+ * The answer to `/consume-ticket`. The ok-shape is the whole identity the sync
+ * worker needs to open the socket, because the ticket is gone by the time it
+ * reads this and there is nobody left to ask.
+ */
+export type ConsumeTicketResult =
+  | {
+    ok: true; leaseId: string; tokenId: string; subject: string | null;
+    scope: string; flow: string; principal: string;
+  }
+  | { ok: false; error: 'unknown' | 'expired' | 'reused' };
 /** The answer to `/leases/reinstate`. One verb, three ways to be told no. */
 export type ReinstateResult =
   | { ok: true }
@@ -104,6 +122,21 @@ const AUTHCODE_GRACE_MS = 10_000;
  * from a revoke to the person looking at it, and the honest answer is cheap.
  */
 export const EXCHANGE_SESSION_CAP = 6;
+
+/**
+ * The socket ticket. A WebSocket upgrade has no header a browser may set, so
+ * the credential has to ride in the URL — where it will be logged, kept in
+ * history, and handed to anyone reading over a shoulder. Everything about this
+ * shape is an answer to that: sixty seconds of life, one single use, and no
+ * standing of its own (the ticket buys a lookup of the lease, never a scope).
+ *
+ * `TICKET_MINT_CAP` bounds how many may be live for one lease at once. Ten is
+ * generous for a reconnect storm and small enough that a stolen access token
+ * cannot quietly manufacture a drawer full of upgrade credentials.
+ */
+export const TICKET_PREFIX = 'jst_';
+export const TICKET_TTL_SECONDS = 60;
+export const TICKET_MINT_CAP = 10;
 // The exchange flow hands out exactly one scope, and it is not this file's to
 // choose: `EXCHANGE_SCOPES` is spec §5's mint allowlist.
 const EXCHANGE_SCOPE = EXCHANGE_SCOPES[0];
@@ -764,6 +797,133 @@ export class GovernorDO extends DurableObject {
       accessHash, leaseId, now + ACCESS_TTL_SECONDS * 1000, tokenId,
     );
     return { status: 'ok', leaseId, accessToken, tokenId, expiresIn: ACCESS_TTL_SECONDS };
+  }
+
+  // ── the socket ticket (a bearer that survives one URL) ────────────────────
+
+  /**
+   * Mint one sixty-second, single-use ticket against a live access token. The
+   * ticket carries no standing of its own: what it stores is the `(leaseId,
+   * tokenId)` binding, so consuming it is a lookup of the credential the
+   * browser already holds and never a second grant.
+   *
+   * The prune is kind-scoped, the mirror of `mintExchangeAccess`'s: dead
+   * *ticket* rows go, and an access row — expired or not — is none of this
+   * predicate's business. A spent ticket is kept until it expires, because a
+   * deleted row answers `unknown` and `unknown` is exactly what a reuse must
+   * not be allowed to sound like.
+   *
+   * A retried mint after a lost response is simply a second row. Two live
+   * tickets for one session is not a fault; each is single-use, each dies in a
+   * minute, and the cap is what bounds the retry.
+   */
+  async mintTicket(leaseId: string, tokenId: string): Promise<MintTicketResult> {
+    // The only await, taken first: every read and write below then runs in one
+    // uninterrupted turn, so two concurrent mints cannot both pass the cap.
+    const ticket = TICKET_PREFIX + randomToken();
+    const hash = await sha256Hex(ticket);
+    const now = this.now();
+
+    this.sql.exec(
+      "DELETE FROM lease_tokens WHERE lease_id = ? AND kind = 'ticket' AND expires <= ?", leaseId, now,
+    );
+    const live = Number(
+      this.sql.exec(
+        "SELECT COUNT(*) AS n FROM lease_tokens WHERE lease_id = ? AND kind = 'ticket'", leaseId,
+      ).one().n,
+    );
+    if (live >= TICKET_MINT_CAP) return { status: 'cap' };
+
+    // Generation 0, like the exchange access rows: there is no chain to be a
+    // link in. Two different guards keep this row out of the rotation
+    // arithmetic, and they are not the same guard. The tombstone sweep and the
+    // successor lookup are `kind`-scoped to the refresh family, so a ticket is
+    // outside their WHERE clause entirely. `MAX(generation)` is *not*
+    // kind-scoped — it spans every row of the lease — and what keeps a ticket
+    // from perturbing it is the hardcoded `0` below: the floor of the
+    // generation column can never raise a maximum. Both are load-bearing; this
+    // literal is the one holding up the half nothing else covers.
+    this.sql.exec(
+      `INSERT INTO lease_tokens (hash, lease_id, kind, generation, expires, used, token_id)
+       VALUES (?, ?, 'ticket', 0, ?, 0, ?)`,
+      hash, leaseId, now + TICKET_TTL_SECONDS * 1000, tokenId,
+    );
+    return { status: 'ok', ticket, expiresIn: TICKET_TTL_SECONDS };
+  }
+
+  /**
+   * Spend a ticket. Single-use is claimed by many systems and implemented by
+   * few, so here it is as a mechanism rather than an adverb (SEC NEW-8):
+   * `sha256Hex` is the only await and it is taken first, so the read, the burn
+   * and the ledger below are one uninterrupted turn of the DO's single thread.
+   * The burn is a conditional `UPDATE … WHERE used = 0` and **its write count
+   * is the arbiter** — the second of two racing presentations writes no row and
+   * is told `reused`, with no window between checking and taking.
+   *
+   * A reuse is a theft signal, not an error code: somebody presented a
+   * credential that had already been spent, which one holder cannot do. It
+   * lands in the ledger as its own verb so the fold can never collapse it into
+   * a count of routine traffic.
+   *
+   * Expiry is judged *after* the burn, deliberately. A late ticket is dead
+   * either way, and spending it on the way out means a ticket that expires
+   * mid-flight can never be presented a second time and read as fresh.
+   */
+  async consumeTicket(ticket: string): Promise<ConsumeTicketResult> {
+    const hash = await sha256Hex(ticket);
+    const now = this.now();
+    const row = this.sql.exec(
+      `SELECT t.lease_id AS lease_id, t.token_id AS token_id, t.expires AS expires,
+              l.door_name AS door_name, l.scope AS scope, l.principal AS principal,
+              l.subject AS subject, l.flow AS flow, l.status AS status
+         FROM lease_tokens t JOIN leases l ON l.lease_id = t.lease_id
+        WHERE t.hash = ? AND t.kind = 'ticket'`,
+      hash,
+    ).toArray()[0] as Row | undefined;
+    // An unknown ticket, a ticket of the wrong kind, and a ticket whose lease
+    // was revoked out from under it (the revoke burns the rows) all sound
+    // identical from outside, and none of them is worth a ledger row.
+    if (!row) return { ok: false, error: 'unknown' };
+
+    const leaseId = String(row.lease_id);
+    const doorName = String(row.door_name);
+    const tokenId = row.token_id === null || row.token_id === undefined ? '' : String(row.token_id);
+    const sub = `lease:${leaseId}`;
+
+    const burn = this.sql.exec('UPDATE lease_tokens SET used = 1 WHERE hash = ? AND used = 0', hash);
+    burn.toArray();
+    if (burn.rowsWritten === 0) {
+      this.ledger(
+        now, sub, 'stream', 'ticket-reused',
+        `door=${doorName} socket ticket presented twice token_id=${tokenId}`, false,
+      );
+      return { ok: false, error: 'reused' };
+    }
+
+    if (Number(row.expires) <= now) return { ok: false, error: 'expired' };
+
+    // The lease stopped standing while the ticket was in flight. Refused in the
+    // same shape as an unknown ticket — the presenter learns nothing about
+    // whose lease died — but with a detail of its own in the record, because
+    // from inside the house this is a different event entirely.
+    if (String(row.status) !== 'living') {
+      this.ledger(
+        now, sub, 'stream', 'ticket.consume',
+        `door=${doorName} ticket refused: lease not living token_id=${tokenId}`, false,
+      );
+      return { ok: false, error: 'unknown' };
+    }
+
+    this.ledger(now, sub, 'stream', 'ticket.consume', `door=${doorName} token_id=${tokenId}`, true);
+    return {
+      ok: true,
+      leaseId,
+      tokenId,
+      subject: row.subject === null || row.subject === undefined ? null : String(row.subject),
+      scope: String(row.scope),
+      flow: String(row.flow),
+      principal: String(row.principal),
+    };
   }
 
   legacyAllowed(): boolean {
