@@ -178,6 +178,9 @@ describe('consumeTicket', () => {
         scope: 'stream',
         flow: 'exchange',
         principal: 'julian',
+        // The minting access token's expiry, not the ticket's — the socket's
+        // only clock once the ticket is spent. Pinned in governor-exchange.test.ts.
+        exp: (START + 3600_000) / 1000,
       });
     });
   });

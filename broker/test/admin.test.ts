@@ -10,7 +10,7 @@ import type { KeyLike } from 'jose';
 import worker from '../src/index';
 import type { Env } from '../src/env';
 import type {
-  ConsumeTicketResult, LeaseExport, LeaseIdentity, LeaseSummary, ReinstateResult,
+  ConsumeTicketResult, HandleVerdict, LeaseExport, LeaseIdentity, LeaseSummary, ReinstateResult,
 } from '../src/governor';
 import { mintSession } from '../src/as/session';
 import { PIN_KEY } from '../src/package-types';
@@ -56,7 +56,7 @@ function sessionJwt(
 
 interface Script {
   validateAccess?: (token: string) => LeaseIdentity | null;
-  validateByHandle?: (leaseId: string, tokenId: string) => LeaseIdentity | null;
+  validateByHandle?: (leaseId: string, tokenId: string) => HandleVerdict;
   consumeTicket?: (ticket: string) => ConsumeTicketResult;
   legacySyncAllowed?: () => boolean;
   reinstate?: (doorNameOrId: string, by: string, reason: string) => ReinstateResult;
@@ -106,10 +106,10 @@ function gateEnv(script: Script = {}, overrides: Partial<Env> = {}): { env: Env;
       if (script.governorDown) throw new Error('governor down');
       return script.leaseExport ? script.leaseExport() : { leases: [], tokens: [], knocks: [] };
     },
-    async validateByHandle(leaseId: string, tokenId: string): Promise<LeaseIdentity | null> {
+    async validateByHandle(leaseId: string, tokenId: string): Promise<HandleVerdict> {
       calls.validateByHandle.push([leaseId, tokenId]);
       if (script.governorDown) throw new Error('governor down');
-      return script.validateByHandle ? script.validateByHandle(leaseId, tokenId) : null;
+      return script.validateByHandle ? script.validateByHandle(leaseId, tokenId) : { status: 'dead' };
     },
     async consumeTicket(ticket: string): Promise<ConsumeTicketResult> {
       calls.consumeTicket.push(ticket);
@@ -195,13 +195,22 @@ function introspectReq(secret: string | null, token: string): Request {
   return introspectForm(secret, { token });
 }
 
+/** The access token's own expiry, in the seconds the wire speaks. */
+const TOKEN_EXP = 1893456000;
+
 /** A living lease's identity, with the B3 columns filled in. */
 function identity(over: Partial<LeaseIdentity> = {}): LeaseIdentity {
   return {
     leaseId: 'lease-1', doorName: 'door:aurora', scope: 'full-house', principal: 'julian',
     subject: null, flow: 'device', tokenId: 'tok-1', sittingPin: null, latched: null,
+    exp: TOKEN_EXP,
     ...over,
   };
+}
+
+/** The by-handle verdict for a lease that is alive and whose token has not aged out. */
+function alive(id: LeaseIdentity): HandleVerdict {
+  return { status: 'active', identity: id };
 }
 
 describe('POST /introspect', () => {
@@ -244,14 +253,17 @@ describe('POST /introspect', () => {
     expect(calls.consumeTicket).toEqual([]);
   });
 
-  test('living lease token → active:true with door_name, subject, flow and token_id', async () => {
+  test('living lease token → active:true with door_name, subject, flow, token_id and exp', async () => {
     const live = identity({ subject: SUB, flow: 'exchange', doorName: `browser:${SUB}`, scope: 'stream' });
     const { env, calls } = gateEnv({ validateAccess: (token) => (token === 'jla_good' ? live : null) });
     const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, 'jla_good'), env);
     expect(res.status).toBe(200);
+    // `exp` is the whole reason a socket can tell an aged token (4004) from a
+    // revoked lease (4001): sync carries it into the attachment, so an answer
+    // without it silently disarms the distinction.
     expect(await res.json()).toEqual({
       active: true, lease_id: 'lease-1', door_name: `browser:${SUB}`, scope: 'stream',
-      principal: 'julian', subject: SUB, flow: 'exchange', token_id: 'tok-1',
+      principal: 'julian', subject: SUB, flow: 'exchange', token_id: 'tok-1', exp: TOKEN_EXP,
     });
     expect(calls.validateAccess).toEqual(['jla_good']);
   });
@@ -262,7 +274,7 @@ describe('POST /introspect', () => {
     const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, 'jla_old'), env);
     expect(await res.json()).toEqual({
       active: true, lease_id: 'lease-1', door_name: 'door:aurora', scope: 'full-house',
-      principal: 'julian', flow: 'device',
+      principal: 'julian', flow: 'device', exp: TOKEN_EXP,
     });
   });
 
@@ -399,36 +411,49 @@ describe('POST /introspect — the JWT arm (the legacy window, §6.6 step 2)', (
 describe('POST /introspect — by handle (a hibernating socket re-auths)', () => {
   test('a live handle answers with the same identity shape', async () => {
     const live = identity({ leaseId: 'L1', tokenId: 'T1', subject: SUB, flow: 'exchange', scope: 'stream' });
-    const { env, calls } = gateEnv({ validateByHandle: () => live });
+    const { env, calls } = gateEnv({ validateByHandle: () => alive(live) });
     const res = await worker.fetch(
       introspectForm(INTROSPECT_SECRET, { lease_id: 'L1', token_id: 'T1' }), env);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       active: true, lease_id: 'L1', door_name: 'door:aurora', scope: 'stream',
-      principal: 'julian', subject: SUB, flow: 'exchange', token_id: 'T1',
+      principal: 'julian', subject: SUB, flow: 'exchange', token_id: 'T1', exp: TOKEN_EXP,
     });
     expect(calls.validateByHandle).toEqual([['L1', 'T1']]);
     expect(calls.validateAccess).toEqual([]);
   });
 
-  test('a dead handle is inactive', async () => {
-    const { env } = gateEnv({ validateByHandle: () => null });
+  test('a dead handle is inactive, and says nothing more than that', async () => {
+    const { env } = gateEnv({ validateByHandle: () => ({ status: 'dead' }) });
     const res = await worker.fetch(
       introspectForm(INTROSPECT_SECRET, { lease_id: 'L1', token_id: 'T1' }), env);
     expect(await res.json()).toEqual({ active: false });
   });
 
-  test('an exchange lease whose sub left STREAM_SUBS is inactive — the account kill switch (§6.2)', async () => {
-    const live = identity({ leaseId: 'L1', tokenId: 'T1', subject: SUB, flow: 'exchange', scope: 'stream' });
-    const { env } = gateEnv({ validateByHandle: () => live }, { STREAM_SUBS: 'someone-else=julian' });
+  // The one sub-reason on the wire, and the by-handle form is the only place it
+  // may appear: a socket told "token-expired" closes 4004 and the browser
+  // re-exchanges; a socket told the bare no closes 4001 and the app stops.
+  test('an expired token on a living lease answers reason:token-expired', async () => {
+    const { env } = gateEnv({ validateByHandle: () => ({ status: 'token-expired' }) });
     const res = await worker.fetch(
       introspectForm(INTROSPECT_SECRET, { lease_id: 'L1', token_id: 'T1' }), env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ active: false, reason: 'token-expired' });
+  });
+
+  test('an exchange lease whose sub left STREAM_SUBS is inactive — the account kill switch (§6.2)', async () => {
+    const live = identity({ leaseId: 'L1', tokenId: 'T1', subject: SUB, flow: 'exchange', scope: 'stream' });
+    const { env } = gateEnv({ validateByHandle: () => alive(live) }, { STREAM_SUBS: 'someone-else=julian' });
+    const res = await worker.fetch(
+      introspectForm(INTROSPECT_SECRET, { lease_id: 'L1', token_id: 'T1' }), env);
+    // Struck from the map is struck, not merely stale: no `reason`, so the
+    // socket closes terminal rather than re-exchanging into the same refusal.
     expect(await res.json()).toEqual({ active: false });
   });
 
   test('a device lease is not re-judged against STREAM_SUBS', async () => {
     const live = identity({ leaseId: 'L1', tokenId: 'T1' });
-    const { env } = gateEnv({ validateByHandle: () => live }, { STREAM_SUBS: '' });
+    const { env } = gateEnv({ validateByHandle: () => alive(live) }, { STREAM_SUBS: '' });
     const res = await worker.fetch(
       introspectForm(INTROSPECT_SECRET, { lease_id: 'L1', token_id: 'T1' }), env);
     expect(await res.json()).toMatchObject({ active: true, lease_id: 'L1', flow: 'device' });
@@ -535,20 +560,36 @@ describe('POST /consume-ticket', () => {
     expect(calls.consumeTicket).toEqual([]);
   });
 
-  test('a good ticket returns the whole identity the socket needs', async () => {
+  test('a good ticket returns the whole identity the socket needs, expiry included', async () => {
     const { env, calls } = gateEnv({
       consumeTicket: () => ({
         ok: true, leaseId: 'L1', tokenId: 'T1', subject: SUB,
-        scope: 'stream', flow: 'exchange', principal: 'julian',
+        scope: 'stream', flow: 'exchange', principal: 'julian', exp: TOKEN_EXP,
       }),
     });
     const res = await worker.fetch(consumeReq(TICKET, INTROSPECT_SECRET), env);
     expect(res.status).toBe(200);
+    // The ticket is spent by the time anyone reads this, so everything the
+    // socket will ever know has to be in this one body — including when the
+    // access token behind it dies, which is what a 4004 is measured against.
     expect(await res.json()).toEqual({
       ok: true, lease_id: 'L1', token_id: 'T1', subject: SUB,
-      scope: 'stream', flow: 'exchange', principal: 'julian',
+      scope: 'stream', flow: 'exchange', principal: 'julian', exp: TOKEN_EXP,
     });
     expect(calls.consumeTicket).toEqual([TICKET]);
+  });
+
+  test('a register that gives no expiry sends none, rather than inventing one', async () => {
+    const { env } = gateEnv({
+      consumeTicket: () => ({
+        ok: true, leaseId: 'L1', tokenId: 'T1', subject: null,
+        scope: 'stream', flow: 'exchange', principal: 'julian',
+      }),
+    });
+    const res = await worker.fetch(consumeReq(TICKET, INTROSPECT_SECRET), env);
+    expect(await res.json()).toEqual({
+      ok: true, lease_id: 'L1', token_id: 'T1', scope: 'stream', flow: 'exchange', principal: 'julian',
+    });
   });
 
   test('the governor verdicts pass through verbatim', async () => {

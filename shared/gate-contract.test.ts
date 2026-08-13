@@ -46,6 +46,11 @@ describe('wire shapes typecheck against one literal fixture apiece', () => {
     expect(wire.active).toBe(false);
   });
 
+  test('IntrospectionWire — the one inactive sub-reason, carried by the by-handle form alone', () => {
+    const wire: IntrospectionWire = { active: false, reason: 'token-expired' };
+    expect(wire).toEqual({ active: false, reason: 'token-expired' });
+  });
+
   test('SyncAuthPayload', () => {
     const payload: SyncAuthPayload = {
       leaseId: 'L1',
@@ -68,8 +73,12 @@ describe('wire shapes typecheck against one literal fixture apiece', () => {
       scope: 'stream',
       flow: 'exchange',
       principal: 'julian',
+      // The minting access token's expiry, not the ticket's: it rides to the
+      // socket attachment so an aged token reads as 4004, never as 4001.
+      exp: 1234567890,
     };
     expect(wire.ok).toBe(true);
+    expect(wire.exp).toBe(1234567890);
   });
 
   test('ConsumeTicketWire — refused', () => {
