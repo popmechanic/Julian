@@ -194,7 +194,7 @@ describe('a real MCP client against the gate', () => {
 
     // Scope-filtered listing: a reading room, not a wall of refused teases.
     const tools = await client.listTools();
-    expect(tools.tools.map((t) => t.name).sort()).toEqual(['package_list', 'package_read', 'wake_julian']);
+    expect(tools.tools.map((t) => t.name).sort()).toEqual(['package_list', 'package_read', 'visit_agent', 'wake_julian']);
     const prompts = await client.listPrompts();
     expect(prompts.prompts.map((p) => p.name)).toEqual(['wake-julian']);
 
@@ -240,6 +240,17 @@ describe('a real MCP client against the gate', () => {
     expect(broken.isError).toBe(true);
     expect(textOf(broken)).toContain(fixture.sha);
     expect((broken.structuredContent as { class: string }).class).toBe('integrity');
+
+    // The visit's body round-trips through a real client, both hands.
+    for (const access of ['read-only', 'read-write'] as const) {
+      const va = await client.callTool({ name: 'visit_agent', arguments: { access } });
+      expect(va.isError ?? false).toBe(false);
+      const sc = va.structuredContent as { access: string; name: string; content: string };
+      expect(sc.name).toBe('julian');
+      expect(sc.access).toBe(access);
+      expect(sc.content).toContain('model: fable');
+      expect(sc.content).toContain(access === 'read-write' ? 'Bash' : 'mcp__julian-gate');
+    }
 
     await client.close();
   }, 120_000);
