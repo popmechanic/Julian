@@ -284,7 +284,7 @@ describe('recordAllowed — the positive pen (COLD M-8)', () => {
 });
 ```
 
-(Note on the revive test: after Task 5 lands, a revoked *exchange* lease refuses at the exchange itself; the authcode-visit case above is the class representative the guard must hold for every path.)
+(Note on the revive test: once Task 5 lands, a revoked *exchange* lease refuses at the exchange itself; the authcode-visit case above is the class representative the guard must hold for every path.)
 - [ ] **Step 2: Run to verify failure** — `cd broker && bunx vitest run test/governor-guards.test.ts test/governor-migration.test.ts`.
 - [ ] **Step 3: Implement** per Produces. The reserved check is the first statements of `upsertLease`: classify the name (`browser:` prefix ⇒ needs `'exchange'`; `visit:` ⇒ `'authcode'`; the two literals ⇒ no class); mismatch → return null; then, for any reserved name with an existing row, `status !== 'living'` → return null. The constructor seed uses direct `INSERT OR IGNORE` (as `legacy-window` does at `:174-179`) and is therefore untouched by the guard.
 - [ ] **Step 4: Run the full broker suite** — all green including untouched device-flow tests (regression: "device-flow behavior unchanged").
