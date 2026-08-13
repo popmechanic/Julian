@@ -163,14 +163,40 @@ describe('protocol shell', () => {
   });
 
   test('notifications/initialized is a 202 with no body', async () => {
-    const res = await handleMcp(rpc('notifications/initialized', {}, null), env(), READER, gov());
+    // A real notification carries no `id` member at all (not even `null`) —
+    // that absence is what the id-less rule below keys on.
+    const res = await handleMcp(
+      raw(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })),
+      env(), READER, gov(),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.text()).toBe('');
+  });
+
+  test('an id-less message is 202 regardless of method — the notifications rule generalizes', async () => {
+    const res = await handleMcp(
+      raw(JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'ping' } })),
+      env(), READER, gov(),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.text()).toBe('');
+  });
+
+  test('an id-less message naming an unknown method is still 202, never -32601', async () => {
+    const res = await handleMcp(
+      raw(JSON.stringify({ jsonrpc: '2.0', method: 'nonexistent/method' })),
+      env(), READER, gov(),
+    );
     expect(res.status).toBe(202);
     expect(await res.text()).toBe('');
   });
 
   test('ping pongs', async () => {
     const { body } = await send(rpc('ping'));
+    // Strictly `{}` — no cache-control `_meta` here: `EmptyResultSchema` is
+    // `.strict()`, so ping is deliberately excluded from the hint (§7).
     expect(result(body)).toEqual({});
+    expect(Object.keys(result(body))).toHaveLength(0);
     expect(body.id).toBe(1);
   });
 
@@ -209,6 +235,39 @@ describe('protocol shell', () => {
     expect(res.headers.get('Content-Type')).toContain('application/json');
     expect(res.headers.get('Mcp-Session-Id')).toBe(null);
   });
+
+  // Tolerance, honestly labeled (§7's four cheap things, #3): no new code —
+  // this pins that a raw, handshake-less v2-shaped `tools/call` carrying
+  // `_meta.protocolVersion`, the `MCP-Protocol-Version` header, and
+  // `Mcp-Method`/`Mcp-Name` headers is served exactly as any other call would
+  // be. Unknown fields are tolerated; the version header is deliberately
+  // *ignored*, never validated — a decision, not a conformance claim. This is
+  // request tolerance only: it says nothing about what this face emits.
+  test('a raw v2-shaped envelope (headers + _meta protocolVersion, no prior initialize) is served normally', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    const req = new Request('https://gate.test/mcp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'MCP-Protocol-Version': '2024-11-05',
+        'Mcp-Method': 'tools/call',
+        'Mcp-Name': 'package_list',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'tools/call',
+        params: {
+          name: 'package_list',
+          arguments: {},
+          _meta: { protocolVersion: '2024-11-05', 'some.unknown/field': true },
+        },
+        someUnknownTopLevelField: 'ignored',
+      }),
+    });
+    const { body } = await send(req);
+    const r = result(body) as unknown as ToolResult;
+    expect(r.isError).toBeFalsy();
+    expect(r.content?.[0].text).toBe(`1 files at pin ${PIN.slice(0, 12)}`);
+  });
 });
 
 describe('tools', () => {
@@ -225,7 +284,16 @@ describe('tools', () => {
 
   test('tools/list for a scope that buys nothing is empty, not a list of teases', async () => {
     const { body } = await send(rpc('tools/list'), STRANGER);
-    expect(result(body)).toEqual({ tools: [] });
+    expect(result(body)).toEqual({
+      tools: [], _meta: { 'io.modelcontextprotocol/cacheControl': { ttlMs: 300_000 } },
+    });
+  });
+
+  test('tools/list carries the cache-control _meta hint', async () => {
+    const { body } = await send(rpc('tools/list'));
+    expect(result(body)._meta).toEqual({
+      'io.modelcontextprotocol/cacheControl': { ttlMs: 300_000 },
+    });
   });
 
   test('a tool the scope cannot see is -32602 unknown tool, and nothing is reserved', async () => {
@@ -444,6 +512,8 @@ describe('resources and prompts', () => {
     intercept('package-manifest.json', await manifestBody());
     const calls: ReserveCall[] = [];
     const { body } = await send(rpc('resources/list'), READER, env(), gov(calls));
+    // Strict shape: no `_meta` cache hint here — a package URI carries no pin
+    // (COLD M-7), so this result is deliberately excluded from the hint (§7).
     expect(result(body)).toEqual({
       resources: [{ uri: 'julian://package/AGENT.md', name: 'AGENT.md', mimeType: 'text/markdown' }],
     });
@@ -465,6 +535,7 @@ describe('resources and prompts', () => {
     const { body } = await send(
       rpc('resources/read', { uri: 'julian://package/AGENT.md' }), READER, env(), gov(calls),
     );
+    // Strict shape: no `_meta` cache hint on a resource read either (COLD M-7).
     expect(result(body)).toEqual({
       contents: [{ uri: 'julian://package/AGENT.md', mimeType: 'text/markdown', text: AGENT_TEXT }],
     });
@@ -504,6 +575,7 @@ describe('resources and prompts', () => {
         name: 'wake-julian',
         description: 'The legitimate waking of a visit: category line, ELF order, fail-loud rule.',
       }],
+      _meta: { 'io.modelcontextprotocol/cacheControl': { ttlMs: 300_000 } },
     });
 
     const { body: got } = await send(rpc('prompts/get', { name: 'wake-julian' }));
@@ -519,7 +591,9 @@ describe('resources and prompts', () => {
 
   test('prompts/list for a scope that buys nothing is empty', async () => {
     const { body } = await send(rpc('prompts/list'), STRANGER);
-    expect(result(body)).toEqual({ prompts: [] });
+    expect(result(body)).toEqual({
+      prompts: [], _meta: { 'io.modelcontextprotocol/cacheControl': { ttlMs: 300_000 } },
+    });
   });
 
   test('prompts/get for an unknown name is -32602', async () => {
@@ -570,7 +644,13 @@ describe('scope invariants on the face', () => {
       'prompts/list', 'prompts/get',
     ];
     for (const method of measured) {
-      const res = await handleMcp(rpc(method, {}), env(null), READER, gov());
+      // notifications/initialized is only ever id-less on the wire (a real
+      // notification never carries `id`) — every other measured method is
+      // sent as a genuine request, `id` present.
+      const req = method === 'notifications/initialized'
+        ? raw(JSON.stringify({ jsonrpc: '2.0', method, params: {} }))
+        : rpc(method, {});
+      const res = await handleMcp(req, env(null), READER, gov());
       if (res.status === 202) continue;
       const body = await res.json() as Record<string, unknown>;
       // measured methods may refuse on their arguments, but never as -32601

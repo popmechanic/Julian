@@ -268,6 +268,9 @@ export function oauthDiscovery(env: Env, path: string): Response | null {
       grant_types_supported: ['authorization_code', 'refresh_token'],
       code_challenge_methods_supported: ['S256'],
       token_endpoint_auth_methods_supported: ['none'],
+      // RFC 9207: a MUST when the AS emits `iss` on the redirect (it always
+      // does here, in `deliverRedirect`) — byte-identical to `issuer` above.
+      authorization_response_iss_parameter_supported: true,
     });
   }
   return null;

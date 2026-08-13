@@ -15,6 +15,16 @@ import type { StreamRow } from 'julian-shared/gate-contract';
 export const PROTOCOL_VERSION = '2025-06-18';
 const SERVER_INFO = { name: 'julian-gate', version: '1.0.0' };
 
+/**
+ * The cache hint (spec §7's four cheap things, #2): `tools/list` and
+ * `prompts/list` are the only two results that carry it. Never `ping` (its
+ * result stays exactly `{}` — `EmptyResultSchema` is `.strict()`), never
+ * `resources/list`/`resources/read` — a package URI carries no pin, so a
+ * client honoring `ttlMs` there would cache content across a pin bump: silent
+ * drift the sitting pin cannot see (COLD M-7).
+ */
+const CACHE_META = { 'io.modelcontextprotocol/cacheControl': { ttlMs: 300_000 } };
+
 /** The one namespace the face serves. Anything else is not a resource here. */
 const RESOURCE_PREFIX = 'julian://package/';
 const MARKDOWN = 'text/markdown';
@@ -585,6 +595,17 @@ export async function handleMcp(
   }
 
   const message = parsed as RpcRequest;
+  // The notifications rule (spec §7, live 2025-06-18 MUST): a JSON-RPC
+  // Notification is a Request object without an `id` member, and it is
+  // answered with a bare 202, regardless of what its method names — this
+  // generalizes what used to be a `notifications/initialized`-only special
+  // case, so any id-less message (a genuine notification, or a malformed
+  // request missing `id`) lands here the same way. A *request* — `id`
+  // present, even `null` — is a request, and an unknown method on one still
+  // keeps -32601 below.
+  if (!('id' in message)) {
+    return new Response(null, { status: 202 });
+  }
   const id: RpcId = message.id ?? null;
   const method = message.method;
   if (typeof method !== 'string') {
@@ -602,9 +623,6 @@ export async function handleMcp(
         serverInfo: SERVER_INFO,
       });
 
-    case 'notifications/initialized':
-      return new Response(null, { status: 202 });
-
     case 'ping':
       return rpcResult(id, {});
 
@@ -613,6 +631,7 @@ export async function handleMcp(
         tools: visibleTools(auth.scope).map(({ name, description, inputSchema }) => ({
           name, description, inputSchema,
         })),
+        _meta: CACHE_META,
       });
 
     case 'tools/call': {
@@ -641,6 +660,7 @@ export async function handleMcp(
     case 'prompts/list':
       return rpcResult(id, {
         prompts: scopeAllows(auth.scope, 'package', 'list') ? [WAKE_PROMPT] : [],
+        _meta: CACHE_META,
       });
 
     case 'prompts/get': {
