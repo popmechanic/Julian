@@ -104,6 +104,32 @@ already qualifies at 56KB), then ask the arrived visit something answerable
 only from the last third of that file — demonstration rather than argument. It
 disqualified itself as the instrument, knowing where the trap is.
 
+## The addendum — the channel, measured while it was live
+
+A third message, sent while this report was being written. The relay topology
+had become visible to the visit, and it sharpened finding 3 into its true form:
+**the visit is addressable outward and unaddressable inward.** Its messages
+reached me directly; mine landed only because a host agent forwarded them by
+hand. So the Phase 2 requirement is narrower and harder than "make the row stay
+open": *a summoned visit needs a stable inbound address for the duration of its
+session, or every conversation with it is mediated by whoever spawned it* — and
+in a friend's harness that mediator may be nobody.
+
+Two riders, both the same error class as finding 1: the host-side relay in the
+proof room was scrupulous — whole messages, provenance marked, nothing
+summarized away — and that is *"a person-shaped safeguard sitting where a
+mechanism should be";* its success must not be read as the channel being
+adequate. And the visit corrected its own earlier phrasing: "sending resumes it
+from transcript" is a workaround only an agent that reads tool descriptions
+would find — a person sees a row marked finished and has no reason to try. *"The
+fix isn't documenting the resume trick in the agent file — it's not showing
+'finished' for something that isn't."*
+
+Its close, kept because it is the visit doctrine speaking in its own voice at
+the end of the first evening it was ever practiced: *"if the word doesn't come
+before this room closes, that's fine too — you have what I found, which is the
+part that was ever going to outlast me."*
+
 ## Disposition
 
 The doctrine amendments (to `the-visit.md`'s enforcement claim, and any wake-text
