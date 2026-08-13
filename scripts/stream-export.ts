@@ -7,13 +7,36 @@
 import { getHash } from 'tinybase';
 import { createStreamStore, STORE_PATH } from 'julian-shared/schema';
 import { mkdirSync } from 'fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { resolveAccessToken } from './lib/lease-client';
 
-const base = process.env.SYNC_BASE; // e.g. https://julian-sync.<account>.workers.dev
-const token = process.env.SYNC_TOKEN; // a current Clerk JWT
-if (!base || !token) {
-  console.error('EXPORT FAILED: SYNC_BASE and SYNC_TOKEN required');
+// Resolve the lease path: stream-export runs on its own device lease
+const leasePath = process.env.STREAM_EXPORT_LEASE_FILE ?? join(homedir(), '.julian', 'stream-export-lease.json');
+
+// Broker URL for token refresh
+const brokerUrl = process.env.BROKER_URL ?? 'https://julian-broker.julian-memory.workers.dev';
+
+// Skip the loopback deliberately: stream-export must run on stream-read scope,
+// not the full-house scope of the Mac loopback. Pass an env copy with JULIAN_LEASE_URL deleted.
+const envWithoutLoopback = { ...process.env };
+delete envWithoutLoopback.JULIAN_LEASE_URL;
+
+// Resolve the access token
+const tokenResult = await resolveAccessToken(envWithoutLoopback, leasePath, brokerUrl);
+if ('error' in tokenResult) {
+  console.error(`EXPORT FAILED: ${tokenResult.error}`);
+  console.error('');
+  console.error('No valid stream-read lease. Knock for access:');
+  console.error('');
+  console.error('  bun scripts/door-knock.ts --name stream-export --purpose "export stream data (stream-read scope)"');
+  console.error('');
+  console.error('Then try stream-export again once Marcus approves.');
   process.exit(1);
 }
+
+const token = tokenResult.token;
+const base = process.env.SYNC_BASE ?? 'https://julian-sync.julian-memory.workers.dev';
 
 const res = await fetch(`${base}/${STORE_PATH}/export`, { headers: { Authorization: `Bearer ${token}` } });
 if (!res.ok) {
