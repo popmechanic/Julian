@@ -55,19 +55,23 @@ Full first-time setup. Run all steps in order.
 4. Push to GitHub: `git push`
 5. Print target: VM name and URL (`https://<vmname>.exe.xyz/`)
 
-#### OIDC Pre-flight
+#### OIDC and Services Pre-flight
 
-Read the local `.env` and check for `VITE_OIDC_ISSUER` and `VITE_OIDC_CLIENT_ID`:
+Read the local `.env` and check for `VITE_OIDC_ISSUER`, `VITE_OIDC_CLIENT_ID`, `VITE_SYNC_URL`, and `VITE_GATE_URL`:
 
-- **If both present** (issuer is an HTTPS URL; currently `https://souls.exe.xyz`):
-  extract both for later. Proceed.
-- **If missing**: STOP and have the user add to `.env`:
-  `VITE_OIDC_ISSUER=https://souls.exe.xyz` and
-  `VITE_OIDC_CLIENT_ID=<client id from the Pocket ID admin>`.
+- **If all four present** (OIDC issuer and gate URL are HTTPS URLs; currently `https://souls.exe.xyz` and `https://julian-broker.julian-memory.workers.dev`):
+  extract all for later. Proceed.
+- **If any missing**: STOP and have the user add to `.env`:
+  ```
+  VITE_OIDC_ISSUER=https://souls.exe.xyz
+  VITE_OIDC_CLIENT_ID=<client id from the Pocket ID admin>
+  VITE_SYNC_URL=https://julian-sync.julian-memory.workers.dev
+  VITE_GATE_URL=https://julian-broker.julian-memory.workers.dev
+  ```
 
 The Bun server also honors `OIDC_ISSUER` (falls back to the VITE_ value) and
 `OIDC_JWKS_JSON` (test seam); the token audience is `VITE_OIDC_CLIENT_ID`.
-The VM needs only the two VITE_ variables.
+The VM needs all four VITE_ variables for auth and service communication.
 
 ### Step P1: Create VM
 
@@ -161,12 +165,14 @@ thinks auth is disabled, skips the passkey gate, and CONNECT TO CLAUDE 401s.
 
 ### Step P6: Create .env
 
-Use the `VITE_OIDC_ISSUER` and `VITE_OIDC_CLIENT_ID` from pre-flight (do NOT hardcode):
+Use the VITE values from pre-flight (do NOT hardcode):
 
 ```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cat > /opt/julian/.env << 'ENVEOF'
 VITE_OIDC_ISSUER=<value from local .env>
 VITE_OIDC_CLIENT_ID=<value from local .env>
+VITE_SYNC_URL=https://julian-sync.julian-memory.workers.dev
+VITE_GATE_URL=https://julian-broker.julian-memory.workers.dev
 ALLOWED_ORIGIN=https://<vmname>.exe.xyz
 BROKER_URL=https://julian-broker.julian-memory.workers.dev
 ENVEOF"
@@ -250,6 +256,29 @@ and the site is blank. Verify the env made it into the bundle:
 ```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "grep -rl souls.exe.xyz /opt/julian/app/dist/assets/ >/dev/null && echo baked || echo MISSING-ENV-REBUILD-NEEDED"
 ```
+
+### Step P6e: Smoke check the bundle
+
+Verify the build baked both the sync and the gate URL. The failure this catches
+is silent by construction: a bundle built before `.env` carried `VITE_SYNC_URL`
+serves fine, renders fine, and syncs nowhere — nothing in the page says so.
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && /home/exedev/.bun/bin/bun scripts/verify-app-bundle.ts"
+```
+
+- **Exit 0**: bundle includes both URLs. Continue.
+- **Exit 1**: STOP and report the smoke check output. Rebuild is needed —
+  fix `/opt/julian/.env` first, then re-run Step P6d, then re-run this check.
+
+**Instance `.env` first, always.** The bundle is baked from the `.env` on the
+box, so the box's `.env` must be right *before* any build. Editing this skill
+changes nothing on a VM that is already provisioned: its `/opt/julian/.env` was
+written by whatever version of Step P6 ran the day it was provisioned, and it
+predates `VITE_SYNC_URL` / `VITE_GATE_URL`. Reaching an already-provisioned box
+takes a deliberate act on that box — Step U1b on the Update path here, and the
+release runbook for the fleet. The build never repairs the `.env`; the `.env`
+is repaired, and only then does the build mean anything.
 
 ### Step P7: Install and start systemd services
 
@@ -367,6 +396,48 @@ ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && git 
 
 If there are merge conflicts after stash pop, report them to the user.
 
+### Step U1b: Reconcile the instance `.env` (before any rebuild)
+
+`/opt/julian/.env` is **not** in git — `git pull` never updates it. A VM
+provisioned before a variable was added to Step P6 still has the old file, so
+the newest code plus the oldest `.env` bakes a bundle that is missing exactly
+the variable the new code needs. Run this check on every Update, and run it
+**before** the Step U2 rebuild — the instance `.env` comes first, the build
+second.
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz 'for v in VITE_OIDC_ISSUER VITE_OIDC_CLIENT_ID VITE_SYNC_URL VITE_GATE_URL; do grep -q "^$v=" /opt/julian/.env || echo "MISSING $v"; done; echo checked'
+```
+
+The remote command is single-quoted on purpose: double quotes would expand `$v`
+on the Mac and the loop would test the empty string on every pass.
+
+- **`checked` alone**: the instance `.env` is current. Continue to Step U2.
+- **Any `MISSING <var>` line**: repair the file before going further, below.
+
+`VITE_SYNC_URL` and `VITE_GATE_URL` are tier T2 public config, identical on
+every instance, so append the reported lines verbatim — but append **only** the
+lines the check reported. A key added twice leaves a duplicate and the last one
+wins, which is how a correct-looking `.env` bakes a wrong bundle:
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cat >> /opt/julian/.env << 'ENVEOF'
+VITE_SYNC_URL=https://julian-sync.julian-memory.workers.dev
+VITE_GATE_URL=https://julian-broker.julian-memory.workers.dev
+ENVEOF"
+```
+
+Keep `ENVEOF` at the start of its line — an indented terminator does not close a
+`<<` heredoc, and the rest of your command is swallowed into the file.
+
+A missing `VITE_OIDC_ISSUER` or `VITE_OIDC_CLIENT_ID` is a different matter:
+those are per-instance values read from the local `.env` (Step P6), never
+hardcoded here. STOP, write them from the local `.env`, then continue.
+
+After any repair, treat this deploy as a frontend change no matter what the
+change analysis said — the `.env` moved, so the bundle on the box is stale even
+when no `app/` file changed. Step U2 rebuilds it.
+
 ### Step U2: Install dependencies and rebuild (if needed)
 
 Both checks below diff against `<server-head>`. Substitute it yourself with the
@@ -399,8 +470,13 @@ that fast-forwards more than one commit puts the pre-pull state further back tha
 `HEAD~1`. Either mistake reports `skip` and leaves `app/dist` unbuilt — the
 blank-site failure. The literal pre-pull hash is the only reliable reference.
 
-On `rebuild` (or in doubt), run the Step P5 installs, then the Step P6d build
-(the VM's `.env` already exists on the Update path, so the bake is correct).
+On `rebuild` (or in doubt), and always when Step U1b changed the instance `.env`,
+run the Step P5 installs, then the Step P6d build, then the Step P6e smoke check.
+The VM's `.env` existing is not the same as its being current — that is what
+Step U1b settles, and why it runs first. A build over a stale `.env` is the
+silent failure: it succeeds, it reports success, and the app it produces syncs
+nowhere. The smoke check is the only thing between that bundle and a green
+deploy report, so do not skip it on the Update path.
 
 ### Step U3: Restart services
 
@@ -426,6 +502,8 @@ Confirm the `version` field in the health response matches the current git hash.
 - **git pull/push auth error**: Deploy key issue. Check `ssh <vmname>.exe.xyz "ssh -T git@github.com"`. Re-run Step P4 if needed.
 - **git pull merge conflict**: Julian has uncommitted changes. Stash first (see Step U1).
 - **Instance in registry but VM gone**: Remove the entry from `deploy/instances.json` and re-run — it will take the Provision path.
+- **`BUNDLE SMOKE FAILED` from Step P6e**: the bundle was baked without a required `VITE_*` URL. Fix `/opt/julian/.env` (Step P6 on Provision, Step U1b on Update), re-run the Step P6d build, then re-run the check. Never wave it through — the app looks healthy and syncs nowhere.
+- **App loads and signs in but nothing syncs**: almost always an old instance `.env`. Run the Step U1b check; a VM provisioned before `VITE_SYNC_URL` existed needs the line added and the SPA rebuilt.
 - **Sign-in fails with redirect_uri not registered**: run the Step P6c registration script for this VM.
 - **401 on `/tokens/with-email`**: Missing OIDC JWT configuration. Check Pocket ID admin panel for proper token template setup.
 - **VM creation fails**: Check exe.dev status, retry once.
