@@ -39,7 +39,11 @@ export class ExchangeClient {
   constructor(opts: ExchangeClientOptions) {
     this.gateUrl = opts.gateUrl.replace(/\/$/, '');
     this.getJwt = opts.getJwt;
-    this.fetchImpl = opts.fetchImpl ?? fetch;
+    // Never store the bare global: browsers brand-check fetch's receiver, so
+    // `this.fetchImpl(...)` on the raw function throws `Illegal invocation`
+    // before any network dispatch. The lambda also late-binds, so a harness
+    // that patches window.fetch after module load is still observed.
+    this.fetchImpl = opts.fetchImpl ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
   }
 
   /** Consecutive terminal-shaped failures (`revoked` or `error`), reset by any other outcome. */

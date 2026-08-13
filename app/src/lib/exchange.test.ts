@@ -212,3 +212,34 @@ describe('ExchangeClient in-flight dedupe', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('ExchangeClient default fetch binding (the Aug 13 field bug)', () => {
+  // Chrome, Firefox, and Safari all brand-check fetch's receiver: invoking the
+  // native function with `this` bound to anything but undefined or the global
+  // throws `TypeError: Illegal invocation` synchronously, before any network
+  // dispatch. Storing the bare global on an instance property and calling
+  // `this.fetchImpl(...)` does exactly that — so a default-constructed client
+  // in a real browser never reached the wire, while every mock-injecting test
+  // (and Bun's non-brand-checking fetch) stayed green. This test simulates the
+  // brand check the way the browser enforces it.
+  test('default fetchImpl invokes the global fetch with a legal receiver', async () => {
+    const realFetch = globalThis.fetch;
+    const dispatched: unknown[] = [];
+    function brandCheckedFetch(this: unknown, ...args: Parameters<typeof fetch>): Promise<Response> {
+      if (this !== undefined && this !== globalThis) {
+        throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
+      }
+      dispatched.push(args[0]);
+      return Promise.resolve(jsonRes(200, { access_token: 'jla_bound', expires_in: 3600 }));
+    }
+    globalThis.fetch = brandCheckedFetch as typeof fetch;
+    try {
+      const client = new ExchangeClient({ gateUrl: 'https://gate.example', getJwt: async () => 'jwt' });
+      const state = await client.access();
+      expect(dispatched).toHaveLength(1); // the request must actually reach fetch
+      expect(state.kind).toBe('ok'); // not `retry` minted from a swallowed TypeError
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
