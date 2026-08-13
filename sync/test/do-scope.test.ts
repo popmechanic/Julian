@@ -46,6 +46,8 @@
 import { describe, expect, test } from 'vitest';
 import { env, runInDurableObject } from 'cloudflare:test';
 import { SOCKET_REQUIRED_MSG } from 'julian-shared/scopes';
+import { CONSUME_TICKET_PATH, SYNC_AUTH_HEADER } from 'julian-shared/gate-contract';
+import worker from '../src/index';
 import type { Env, GateFetcher } from '../src/auth';
 import type { JulianSyncDO, SocketAttachment } from '../src/do';
 
@@ -449,6 +451,145 @@ describe('JulianSyncDO webSocketMessage: scope + ownership re-check on traffic-d
 
       await instance.webSocketMessage(server, 'ping');
       expect(await waitForClose(client)).toEqual({ code: 4002, reason: 'introspection unavailable' });
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The seam, unfabricated.
+//
+// Every 4004 test above hand-writes the attachment it then judges. That is a
+// fine way to pin `inactiveClose`, and a useless way to prove the fallback is
+// reachable: an attachment a test builds can carry an `exp` the production
+// path never delivers — which is exactly what was true of the browser's own
+// flow. A ticket-opened socket is minted by the router from the gate's
+// /consume-ticket answer, and if `exp` is dropped anywhere along that road the
+// exchange arm of `inactiveClose` is dead code and every aged browser session
+// is told, terminally, that it was revoked.
+//
+// So these two drive the whole road: the real router authors the handoff, the
+// real DO turns it into the attachment, and only the attachment's *clock*
+// (verifiedAt) is touched afterwards — never its credential.
+// ---------------------------------------------------------------------------
+
+const ctxOf = (instance: JulianSyncDO): DurableObjectState =>
+  (instance as unknown as { ctx: DurableObjectState }).ctx;
+
+/**
+ * Runs the real sync router over a `?ticket=` upgrade against a fake gate whose
+ * /consume-ticket answers `consumeBody`, and returns the `X-Sync-Auth` header
+ * the router handed its Durable Object. Nothing about the handoff is written
+ * by this test — it is read off the wire the router actually wrote.
+ */
+async function routerHandoffForTicket(consumeBody: unknown): Promise<string | null> {
+  const forwarded: Request[] = [];
+  const routerEnv = Object.assign(Object.create(null), env, {
+    JULIAN_SYNC: {
+      idFromName: (name: string) => name,
+      get: () => ({
+        fetch: async (req: Request) => { forwarded.push(req); return new Response(null, { status: 200 }); },
+      }),
+    },
+    GATE: {
+      fetch: async (input: string | Request, init?: RequestInit) => {
+        const path = new URL(typeof input === 'string' ? input : input.url).pathname;
+        const body = path === CONSUME_TICKET_PATH ? consumeBody : { recorded: true };
+        void init;
+        return new Response(JSON.stringify(body), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+      },
+    },
+    INTROSPECT_SECRET: 'test-secret',
+  }) as unknown as Env;
+  const ctx = {
+    waitUntil: () => {}, passThroughOnException: () => {},
+  } as unknown as ExecutionContext;
+
+  const res = await worker.fetch(
+    new Request(`https://sync.test/${DEFAULT_PATH_ID}?ticket=jst_seam`, { headers: { Upgrade: 'websocket' } }),
+    routerEnv, ctx);
+  expect(res.status).toBe(200);
+  expect(forwarded).toHaveLength(1);
+  return forwarded[0].headers.get(SYNC_AUTH_HEADER);
+}
+
+/** Opens a real socket on the DO with a handoff the router authored. */
+async function openWithHandoff(
+  instance: JulianSyncDO, handoff: string,
+): Promise<{ client: WebSocket; server: WebSocket; attachment: SocketAttachment }> {
+  const clientId = `k-${crypto.randomUUID()}`;
+  const res = await instance.fetch(new Request(`https://sync.test/${DEFAULT_PATH_ID}`, {
+    headers: { Upgrade: 'websocket', 'sec-websocket-key': clientId, [SYNC_AUTH_HEADER]: handoff },
+  }));
+  expect(res.status).toBe(101);
+  const [server] = ctxOf(instance).getWebSockets(clientId);
+  const client = (res as unknown as { webSocket: WebSocket }).webSocket;
+  client.accept();
+  return { client, server, attachment: server.deserializeAttachment() as SocketAttachment };
+}
+
+const ticketAnswer = (over: Record<string, unknown> = {}) => ({
+  ok: true, lease_id: 'L-seam', token_id: 'T-seam', subject: 'sub-marcus',
+  scope: 'stream', flow: 'exchange', principal: 'julian', ...over,
+});
+
+describe('router → DO: the exchange socket carries its access token’s exp all the way', () => {
+  test('a ticket-opened socket past its own exp closes 4004 on the path production exercises', async () => {
+    const aged = Math.floor(Date.now() / 1000) - 60;
+    const handoff = await routerHandoffForTicket(
+      ticketAnswer({ lease_id: 'L-seam-aged-1', token_id: 'T-seam-aged-1', exp: aged }));
+    expect(handoff).not.toBeNull();
+
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { client, server, attachment } = await openWithHandoff(instance, handoff as string);
+      // The credential half of the attachment came from the gate through the
+      // router; this is the assertion the fabricated tests could not make.
+      expect(attachment.exp).toBe(aged);
+      expect(attachment.flow).toBe('exchange');
+
+      // Only the clock is moved — enough to reach the re-auth, nothing else.
+      server.serializeAttachment({ ...attachment, verifiedAt: Date.now() - 400_000 });
+      installGate(instance, fakeGate({ active: false }));
+
+      await instance.webSocketMessage(server, 'ping');
+      expect(await waitForClose(client))
+        .toEqual({ code: 4004, reason: 'access token expired — re-exchange' });
+    });
+  });
+
+  test('a gate that sends no exp still opens the socket; the local fallback simply stays quiet', async () => {
+    // Deploy order must never matter: sync ships before or after the gate
+    // learns to send `exp`, and an absent one is not an error — it only means
+    // the sweep and the gate's own `reason` remain the sole 4004 producers.
+    const handoff = await routerHandoffForTicket(
+      ticketAnswer({ lease_id: 'L-seam-noexp-1', token_id: 'T-seam-noexp-1' }));
+    expect(JSON.parse(handoff as string)).not.toHaveProperty('exp');
+
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { client, server, attachment } = await openWithHandoff(instance, handoff as string);
+      expect(attachment.exp).toBeUndefined();
+
+      server.serializeAttachment({ ...attachment, verifiedAt: Date.now() - 400_000 });
+      installGate(instance, fakeGate({ active: false }));
+
+      await instance.webSocketMessage(server, 'ping');
+      expect(await waitForClose(client)).toEqual({ code: 4001, reason: 'lease revoked' });
+    });
+  });
+
+  test('the gate’s own reason still reaches a ticket-opened socket as 4004', async () => {
+    const handoff = await routerHandoffForTicket(
+      ticketAnswer({ lease_id: 'L-seam-reason-1', token_id: 'T-seam-reason-1' }));
+
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { client, server, attachment } = await openWithHandoff(instance, handoff as string);
+      server.serializeAttachment({ ...attachment, verifiedAt: Date.now() - 400_000 });
+      installGate(instance, fakeGate({ active: false, reason: 'token-expired' }));
+
+      await instance.webSocketMessage(server, 'ping');
+      expect(await waitForClose(client))
+        .toEqual({ code: 4004, reason: 'access token expired — re-exchange' });
     });
   });
 });

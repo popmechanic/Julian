@@ -61,6 +61,14 @@ export interface ConsumeTicketWire {
   scope?: string;
   flow?: string;
   principal?: string;
+  // Expiry (seconds since the epoch) of the ACCESS TOKEN that minted this
+  // ticket — not of the ticket, which is spent by the time anyone reads this.
+  // It rides through to the socket attachment so a hibernating exchange socket
+  // can tell an aged token (WS 4004, re-exchange) from a revoked lease (WS
+  // 4001, terminal) even when the gate's by-handle answer carries no reason.
+  // Optional on purpose: a gate that does not send it costs the socket
+  // nothing but that local fallback, so the two workers deploy in any order.
+  exp?: number;
   error?: string;
 }
 

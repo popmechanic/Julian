@@ -258,6 +258,14 @@ export default {
         scope: consumed.scope ?? '', principal: consumed.principal ?? '',
         subject: consumed.subject ?? '', flow: consumed.flow ?? '',
         tokenId: consumed.tokenId,
+        // The minting access token's expiry, carried through to the
+        // attachment. A ticket-opened socket is the browser's socket, and
+        // this is the only road by which its `exp` can reach the DO — without
+        // it the exchange arm of `inactiveClose` never fires and an aged
+        // session is told, terminally, that it was revoked (WS 4001 instead
+        // of 4004). Absent is fine: the gate's own `reason` and the sweep
+        // still govern, so the two workers deploy in either order.
+        exp: consumed.exp,
       };
     } else {
       const token = headerToken ?? queryToken ?? '';

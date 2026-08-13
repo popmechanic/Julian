@@ -61,6 +61,10 @@ export interface ConsumeTicket {
   scope?: string;
   flow?: string;
   principal?: string;
+  // The minting access token's expiry — see `ConsumeTicketWire.exp`. Carried
+  // through to the socket attachment, where it is the exchange flow's own
+  // evidence that an inactive answer means "aged out", not "revoked".
+  exp?: number;
   error?: string;
 }
 
@@ -222,6 +226,7 @@ export async function consumeTicket(
         ok: true,
         leaseId: body.lease_id, tokenId: body.token_id, subject: body.subject,
         scope: body.scope, flow: body.flow, principal: body.principal,
+        exp: body.exp,
       }
     : { ok: false, error: body.error };
 }

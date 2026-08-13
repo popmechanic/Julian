@@ -20,6 +20,7 @@ import {
   INTROSPECT_PATH,
   REFUSALS_PATH,
   SYNC_AUTH_HEADER,
+  SYNC_READ_SECRET_HEADER,
 } from 'julian-shared/gate-contract';
 import { SOCKET_REQUIRED_MSG } from 'julian-shared/scopes';
 
@@ -435,6 +436,35 @@ describe('router: X-Sync-Auth is minted, never inherited', () => {
     });
   });
 
+  // The 4004 fallback in the DO reads `exp` off the attachment — the expiry of
+  // the very access token that minted the ticket. The router is the only thing
+  // that can put it there, and a browser whose token quietly ages out is the
+  // whole reason 4004 exists: without this the DO's exchange arm never fires
+  // and every aged session is told, terminally, that it was revoked.
+  test('an exchange ticket’s exp reaches the DO — the 4004 fallback has a seam to stand on', async () => {
+    const exp = 1893456000;
+    const gate = fakeGate({ consume: consumedTicket({ lease_id: 'L-texp', token_id: 'T-texp', exp }) });
+    const h = harness(gate);
+    const res = await worker.fetch(upgrade(`${SOCKET_URL}?ticket=jst_withexp`), h.testEnv, h.ctx);
+    expect(res.status).toBe(200);
+    expect(JSON.parse(h.received[0].headers.get(SYNC_AUTH_HEADER) as string)).toEqual({
+      leaseId: 'L-texp', tokenId: 'T-texp', subject: 'sub-marcus',
+      scope: 'stream', flow: 'exchange', principal: 'julian', exp,
+    });
+  });
+
+  // Tolerance, so deploy order never matters: a gate that has not yet learned
+  // to send `exp` still opens sockets, and the handoff simply omits the key
+  // rather than carrying a null the DO would have to defend against.
+  test('a consume answer without exp omits the key entirely', async () => {
+    const gate = fakeGate({ consume: consumedTicket({ lease_id: 'L-noexp', token_id: 'T-noexp' }) });
+    const h = harness(gate);
+    const res = await worker.fetch(upgrade(`${SOCKET_URL}?ticket=jst_noexp`), h.testEnv, h.ctx);
+    expect(res.status).toBe(200);
+    expect(JSON.parse(h.received[0].headers.get(SYNC_AUTH_HEADER) as string))
+      .not.toHaveProperty('exp');
+  });
+
   test('the upgrade headers survive the rebuild', async () => {
     const gate = fakeGate({ consume: consumedTicket() });
     const h = harness(gate);
@@ -509,15 +539,43 @@ describe('router: /internal/* is reserved', () => {
   // and the gate is never even asked. The full read-road contract —
   // secret-first ordering, storePathFor addressing, the DO verbs — lives in
   // internal-read.test.ts.
-  test('an internal read path refuses ahead of any authentication', async () => {
+  //
+  // BOTH tests deliberately name a TWO-segment path. `/internal/read/recent`
+  // is three segments and `parsePath` rejects it on its own, so a test driven
+  // at that shape passes with the reservation deleted and proves nothing.
+  // `/internal/read` is a path `parsePath` would happily accept as the store
+  // `internal`, context `read` — so only the reservation stands between a
+  // bearer and the store router, and deleting it turns both answers below
+  // into something else.
+  test('a two-segment internal path refuses ahead of any authentication', async () => {
     const gate = fakeGate({ introspect: activeLease() });
     const h = harness(gate);
     const res = await worker.fetch(
-      new Request('https://sync.test/internal/read/recent', {
+      new Request('https://sync.test/internal/read', {
         method: 'POST', headers: { Authorization: 'Bearer jla_internal1' }, body: '{}',
       }),
       h.testEnv, h.ctx);
     expect(res.status).toBe(403);
+    // Load-bearing: without the reservation this request reaches the bearer
+    // classification and the gate IS asked.
+    expect(gate.introspects).toHaveLength(0);
+    expect(h.received).toHaveLength(0);
+  });
+
+  test('past the read secret, a two-segment internal path is a 404, never a store', async () => {
+    const gate = fakeGate({ introspect: activeLease() });
+    const h = harness(gate);
+    const secretEnv = Object.assign(Object.create(null), h.testEnv, {
+      SYNC_READ_SECRET: 'test-read-secret',
+    }) as Env;
+    const res = await worker.fetch(
+      new Request('https://sync.test/internal/read', {
+        method: 'POST',
+        headers: { [SYNC_READ_SECRET_HEADER]: 'test-read-secret' },
+        body: '{"principal":"julian"}',
+      }),
+      secretEnv, h.ctx);
+    expect(res.status).toBe(404);
     expect(gate.introspects).toHaveLength(0);
     expect(h.received).toHaveLength(0);
   });
@@ -569,6 +627,19 @@ describe('auth: consumeTicket is a dedicated, uncached call', () => {
   test('a definitive {ok:false} carries the error class through', async () => {
     const gate = fakeGate({ consume: () => json({ ok: false, error: 'reused' }) });
     expect(await consumeTicket('jst_unit5', gate, 'test-secret')).toEqual({ ok: false, error: 'reused' });
+  });
+
+  test('an active answer carries exp through the wire→domain mapping', async () => {
+    const gate = fakeGate({
+      consume: () => json({
+        ok: true, lease_id: 'L-cuexp', token_id: 'T-cuexp', subject: 's', scope: 'stream',
+        flow: 'exchange', principal: 'julian', exp: 1893456000,
+      }),
+    });
+    expect(await consumeTicket('jst_unitexp', gate, 'test-secret')).toEqual({
+      ok: true, leaseId: 'L-cuexp', tokenId: 'T-cuexp', subject: 's', scope: 'stream',
+      flow: 'exchange', principal: 'julian', exp: 1893456000,
+    });
   });
 });
 
