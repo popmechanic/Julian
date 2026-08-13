@@ -503,7 +503,13 @@ describe('router: the allowed pen', () => {
 // ---------------------------------------------------------------------------
 
 describe('router: /internal/* is reserved', () => {
-  test('an internal read path 404s ahead of any authentication', async () => {
+  // The prefix is now the read road's, and it answers on its own secret
+  // (403, bodiless) rather than on the parser's 404. What this test still
+  // owns is the §12 property: a lease bearer buys nothing under /internal/,
+  // and the gate is never even asked. The full read-road contract —
+  // secret-first ordering, storePathFor addressing, the DO verbs — lives in
+  // internal-read.test.ts.
+  test('an internal read path refuses ahead of any authentication', async () => {
     const gate = fakeGate({ introspect: activeLease() });
     const h = harness(gate);
     const res = await worker.fetch(
@@ -511,8 +517,9 @@ describe('router: /internal/* is reserved', () => {
         method: 'POST', headers: { Authorization: 'Bearer jla_internal1' }, body: '{}',
       }),
       h.testEnv, h.ctx);
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(403);
     expect(gate.introspects).toHaveLength(0);
+    expect(h.received).toHaveLength(0);
   });
 });
 

@@ -6,9 +6,14 @@ import { createMiddleware, getHash } from 'tinybase';
 import type { Middleware, Cell, Changes } from 'tinybase';
 import type { MergeableStore } from 'tinybase/mergeable-store';
 import { createStreamStore } from 'julian-shared/schema';
-import { SYNC_AUTH_HEADER, type SyncAuthPayload } from 'julian-shared/gate-contract';
+import {
+  SYNC_AUTH_HEADER,
+  type InternalReadRequest,
+  type SyncAuthPayload,
+} from 'julian-shared/gate-contract';
 import { SOCKET_REQUIRED_MSG, SOCKET_SCOPES } from 'julian-shared/scopes';
 import { introspectByHandle, type Env, type LeaseIntrospection } from './auth';
+import { readRecent, readSearch, readSession, type ReadResult } from './reads';
 
 /**
  * What an accepted socket carries across hibernation: identity by HANDLE, and
@@ -169,6 +174,11 @@ const DROPPED_MARKER = '[dropped: cell exceeded 64 KiB]';
 const ENCODER = new TextEncoder();
 const cellJsonBytes = (cell: Cell): number => ENCODER.encode(JSON.stringify(cell ?? '')).length;
 
+// The DO-side path the router rewrites an internal read onto. Deliberately
+// not the public prefix: by the time a request reaches here the `/internal/`
+// reservation has done its work, and the DO's own namespace is flat.
+const READ_PREFIX = '/read/';
+
 export interface ExportedContent {
   mergeableContent: unknown;
   contentHash: number;
@@ -306,6 +316,14 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
     if (request.method === 'GET' && url.pathname === '/export') {
       return Response.json(this.exportContent());
     }
+    // The internal read road's DO end. Only the router reaches this path, and
+    // only after the read secret matched — the DO does no authentication of
+    // its own here, exactly as it does none on the socket handoff. What it
+    // does own is the store: the read verbs are pure functions over it
+    // (src/reads.ts), and the DO is simply the place the store lives.
+    if (url.pathname.startsWith(READ_PREFIX)) {
+      return this.readVerb(request, url.pathname.slice(READ_PREFIX.length));
+    }
     // WebSocket sync path — WsServerDurableObject implements fetch at runtime,
     // but types it as the optional DurableObject.fetch, so guard the call.
     //
@@ -339,6 +357,37 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
       }
     }
     return response;
+  }
+
+  /**
+   * `POST /read/{recent|session|search}` — Task 13's pure verbs over this
+   * store, in the `InternalReadResponse` shape the broker reads.
+   *
+   * A read never mutates and never throws a partial answer: an empty store is
+   * `{ok:true, rows:[], truncated:false}`, which the caller renders as "the
+   * stream is quiet" rather than as a failure.
+   */
+  async readVerb(request: Request, kind: string): Promise<Response> {
+    if (request.method !== 'POST') {
+      return new Response('reads are POST', { status: 405 });
+    }
+    let body: InternalReadRequest;
+    try {
+      body = await request.json() as InternalReadRequest;
+    } catch {
+      return new Response('unreadable body', { status: 400 });
+    }
+    let result: ReadResult;
+    if (kind === 'recent') {
+      result = readRecent(this.store, body?.limit);
+    } else if (kind === 'session') {
+      result = readSession(this.store, body?.sessionId ?? '', { from: body?.from, to: body?.to });
+    } else if (kind === 'search') {
+      result = readSearch(this.store, body?.query ?? '', body?.limit);
+    } else {
+      return new Response('no such read verb', { status: 404 });
+    }
+    return Response.json({ ok: true, rows: result.rows, truncated: result.truncated });
   }
 
   async #armAlarm(): Promise<void> {

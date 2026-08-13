@@ -1,11 +1,16 @@
 import {
   ALLOWED_PATH,
+  INTERNAL_READ_PREFIX,
   INTROSPECT_SECRET_HEADER,
   REFUSALS_PATH,
   SYNC_AUTH_HEADER,
+  SYNC_READ_SECRET_HEADER,
+  type InternalReadRequest,
   type SyncAuthPayload,
 } from 'julian-shared/gate-contract';
 import { EXPORT_SCOPES, SOCKET_REQUIRED_MSG, SOCKET_SCOPES } from 'julian-shared/scopes';
+import { storePathFor } from 'julian-shared/schema';
+import { timingSafeEqual } from 'julian-shared/auth';
 import { consumeTicket, introspectLease, type Env } from './auth';
 export { JulianSyncDO } from './do';
 
@@ -26,8 +31,23 @@ const INDEFINITE_MSG = 'introspection unavailable';
 // Everything under /internal/ belongs to the broker-only read road, which
 // authenticates on a different secret entirely. The whole prefix is reserved
 // here — a reserved path must never fall through to store routing, not even
-// while it is still empty.
+// on a shape the read road itself does not serve.
+//
+// The reservation is total and cannot collide with a real store, because
+// `storePathFor` refuses the `internal` principal outright (shared/schema.ts):
+// no principal can ever own a store whose first segment is `internal`, so
+// swallowing this prefix takes nothing from anyone.
 const INTERNAL_PREFIX = '/internal/';
+
+// The three read verbs. Server-side allowlist: an unrecognized verb is a 404
+// after the secret, never a path handed onward to the DO.
+const READ_KINDS = new Set(['recent', 'session', 'search']);
+
+// The read road's refusals. The secret's own refusal is deliberately bodiless
+// (an unauthenticated caller learns nothing about the shape of the road); every
+// refusal past the guard says what died and what to do.
+const BAD_PRINCIPAL_MSG = (principal: string): string =>
+  `no store is addressable for principal \`${principal}\` — name a principal that owns a stream`;
 
 /** What the router learned about a request before it forwards anything. */
 interface Admitted {
@@ -115,6 +135,67 @@ function forwardToDo(
   return stub.fetch(new Request(req, { headers }));
 }
 
+/**
+ * The guarded road into the store: `POST /internal/read/{recent|session|search}`,
+ * reached by the broker through its `SYNC` service binding.
+ *
+ * The shared secret is the WHOLE enforcement, and it is checked in the first
+ * statement — before the method, before the path's tail, before the body is
+ * touched. The binding is only the road: Cloudflare gives a service binding no
+ * cryptographic identity a worker can verify, so no structural guard is
+ * claimed here and none is relied on. An unset `SYNC_READ_SECRET` compares
+ * against `''`, which `timingSafeEqual` refuses by construction (a zero-length
+ * secret is never equal to anything) — so a mis-deployed worker refuses
+ * everyone rather than admitting everyone.
+ *
+ * The refusal is bodiless on purpose: an unauthenticated caller learns nothing
+ * from it, not even whether the verb it named exists.
+ */
+async function internalRead(req: Request, env: Env, url: URL): Promise<Response> {
+  if (!timingSafeEqual(req.headers.get(SYNC_READ_SECRET_HEADER) ?? '', env.SYNC_READ_SECRET ?? '')) {
+    return new Response(null, { status: 403 });
+  }
+  if (!url.pathname.startsWith(INTERNAL_READ_PREFIX)) {
+    return new Response('Not found', { status: 404 });
+  }
+  if (req.method !== 'POST') {
+    return new Response('reads are POST — resend as POST with a JSON body', { status: 405 });
+  }
+  const kind = url.pathname.slice(INTERNAL_READ_PREFIX.length);
+  if (!READ_KINDS.has(kind)) {
+    return new Response(
+      `no read verb \`${kind}\` — the stream reads as recent, session, or search`, { status: 404 });
+  }
+
+  // Read the body once as text and forward that exact text, so the DO sees
+  // what the caller sent rather than a re-serialization of it.
+  const raw = await req.text();
+  let body: InternalReadRequest;
+  try {
+    body = JSON.parse(raw) as InternalReadRequest;
+  } catch {
+    return new Response('unreadable body — send JSON like {"principal":"julian"}', { status: 400 });
+  }
+
+  // The principal names the store, and `storePathFor` is the only thing that
+  // turns one into the other: it refuses the reserved `internal` principal and
+  // anything outside the segment charset, so a body can neither address the
+  // reserved prefix nor smuggle a path separator into the DO's name.
+  const principal = typeof (body as { principal?: unknown })?.principal === 'string'
+    ? body.principal : '';
+  const storePath = storePathFor(principal);
+  if (storePath === null) {
+    return new Response(BAD_PRINCIPAL_MSG(principal), { status: 403 });
+  }
+
+  const stub = env.JULIAN_SYNC.get(env.JULIAN_SYNC.idFromName(storePath));
+  return forwardToDo(stub, new Request(`https://do/read/${kind}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: raw,
+  }));
+}
+
 function ticketRefusal(error: string | undefined): string {
   if (error === 'expired') return 'ticket expired — mint another';
   if (error === 'reused') return 'ticket already used — mint another; this reuse is on the ledger';
@@ -126,8 +207,11 @@ export default {
     const req = stripInternalHandoff(rawReq);
     const url = new URL(req.url);
 
+    // Matched AHEAD of parsePath, which would answer these paths 404 without
+    // ever reaching the guard. The read road authenticates on its own secret,
+    // so no lease, ticket, or JWT below buys anything here.
     if (url.pathname === '/internal' || url.pathname.startsWith(INTERNAL_PREFIX)) {
-      return new Response('Not found', { status: 404 });
+      return internalRead(req, env, url);
     }
 
     const parsed = parsePath(url.pathname);

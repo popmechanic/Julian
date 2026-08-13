@@ -17,6 +17,14 @@ export interface Env {
   JULIAN_SYNC: DurableObjectNamespace;
   GATE: GateFetcher;
   INTROSPECT_SECRET: string;
+  // The broker-only read road's own secret (`X-Sync-Read-Secret`), installed
+  // as a worker secret at deploy step 0 — never a var, never in wrangler.toml.
+  // It is deliberately NOT the introspection secret: /internal/read/* is a
+  // different privilege (read the stream) from /introspect (ask about a
+  // credential), and one leaked secret must not buy the other. Typed as
+  // `string` but read defensively at the guard, because an unset secret
+  // arrives as undefined at runtime and must refuse everyone.
+  SYNC_READ_SECRET: string;
 }
 
 // --- Gate-mediated credential checks ---------------------------------------
