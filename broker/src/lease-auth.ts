@@ -9,6 +9,7 @@ import { keySetFor, verifyWithKeySet } from './auth';
 import type { Env } from './env';
 import type { GovernorDO, LeaseIdentity, LeaseReserveResult } from './governor';
 import { policyFor } from './policy';
+import { SCOPE_VERBS } from 'julian-shared/scopes';
 
 export const ACCESS_PREFIX = 'jla_';
 export const LEGACY_LEASE_ID = 'legacy-window';
@@ -35,23 +36,14 @@ export function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-/** What each scope may ask for. Unknown scopes buy nothing.
- *  reading-room = the public identity package only (attribution, not confidentiality).
- *  stream-read  = package + the private live record, read-only.
- *  full-house   = everything, incl. mail verbs — held by home doors, not MCP leases. */
-const PACKAGE_VERBS = ['package.list', 'package.read'] as const;
-const STREAM_VERBS = ['stream.recent', 'stream.session', 'stream.search'] as const;
-const MAIL_VERBS = ['mail.send', 'mail.list', 'mail.read', 'mail.health'] as const;
-
-const SCOPE_VERBS: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  'reading-room': Object.freeze([...PACKAGE_VERBS]),
-  'stream-read': Object.freeze([...PACKAGE_VERBS, ...STREAM_VERBS]),
-  'full-house': Object.freeze([...PACKAGE_VERBS, ...STREAM_VERBS, ...MAIL_VERBS]),
-});
-
+// What each scope may ask for lives in julian-shared/scopes (spec §5's
+// table) — reading-room = the public identity package only (attribution,
+// not confidentiality); stream-read/stream = package + the private live
+// record, read-only (and, for stream, the socket); full-house = everything,
+// incl. mail verbs — held by home doors, not MCP leases.
 export function scopeAllows(scope: string, service: string, verb: string): boolean {
   if (!Object.hasOwn(SCOPE_VERBS, scope)) return false;
-  return SCOPE_VERBS[scope].includes(`${service}.${verb}`);
+  return (SCOPE_VERBS as Readonly<Record<string, readonly string[]>>)[scope].includes(`${service}.${verb}`);
 }
 
 /**

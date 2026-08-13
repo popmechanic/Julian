@@ -11,6 +11,10 @@
 // carries a `sub` and lives a day; the login flow carries its own state, nonce
 // and PKCE verifier and lives ten minutes.
 
+import { timingSafeEqual } from 'julian-shared/auth';
+
+export { timingSafeEqual };
+
 export const SESSION_COOKIE = 'gate_session';
 export const FLOW_COOKIE = 'gate_flow';
 
@@ -42,18 +46,6 @@ function fromBase64Url(value: string): string | null {
 /** 256 bits of fresh randomness, base64url — state, nonce, and the PKCE verifier. */
 export function randomValue(): string {
   return toBase64Url(crypto.getRandomValues(new Uint8Array(RANDOM_BYTES)));
-}
-
-/**
- * Compares without leaking where two strings first differ. Both sides here are
- * base64url of a fixed-width digest, so length alone tells an attacker nothing
- * he did not already know.
- */
-export function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length || a.length === 0) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
 }
 
 async function hmac(secret: string, data: string): Promise<string> {
