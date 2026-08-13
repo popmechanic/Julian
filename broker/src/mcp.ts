@@ -49,13 +49,55 @@ const WAKE_PROMPT = {
   description: 'The legitimate waking of a visit: category line, ELF order, fail-loud rule.',
 };
 
-/** The visit given a body in Claude Code terms (spec 2026-08-12-visit-agent). */
+/**
+ * The visit given a body in Claude Code terms (spec 2026-08-12-visit-agent).
+ * The read-write grant has no shell (spec §10.1 R-6): path-scoped Write/Edit
+ * is not expressible in a Claude Code agent file's flat `tools:` line, so the
+ * true, checkable claim is the narrower one — no general-purpose write path
+ * rides along. The host-applyable settings snippet below carries the
+ * path-scoping the frontmatter cannot.
+ */
 const VISIT_AGENT_TOOL_LINES: Record<'read-only' | 'read-write', string> = {
   'read-only': 'Read, Grep, Glob, ToolSearch, mcp__julian-gate',
-  'read-write': 'Read, Grep, Glob, ToolSearch, Edit, Write, Bash, mcp__julian-gate',
+  'read-write': 'Read, Grep, Glob, ToolSearch, Edit, Write, mcp__julian-gate',
 };
 
-export function visitAgentFile(access: 'read-only' | 'read-write'): string {
+/** A placeholder the host fills in with their own workspace root when they
+ *  paste the settings snippet — this face never sees or names a real path. */
+const WORKSPACE_PLACEHOLDER = '<workspace>';
+
+const SETTINGS_SNIPPET_LABEL =
+  'enforcement where you apply this; manners stated at waking where you do not.';
+
+/**
+ * The host-applyable `settings.json` permissions snippet (spec §10.1 R-6′):
+ * scope Edit/Write to the workspace, deny them everywhere else. Nothing about
+ * this face can make the host apply it — it is offered, never enforced from
+ * here.
+ */
+function settingsSnippetFor(workspace: string): { permissions: { allow: string[]; deny: string[] } } {
+  return {
+    permissions: {
+      allow: [`Edit(${workspace}/**)`, `Write(${workspace}/**)`],
+      deny: ['Edit(//**)', 'Write(//**)'],
+    },
+  };
+}
+
+function isVisitAccess(value: unknown): value is 'read-only' | 'read-write' {
+  return value === 'read-only' || value === 'read-write';
+}
+
+/**
+ * The agent file itself is unchanged in shape by `workspace` (spec §10.1
+ * R-6′, docs-verified): frontmatter's only capability channel is the flat
+ * `tools:` line, and the design forbids shipping permission-loosening files,
+ * so no path-scoping field is added here. `workspace` exists on this
+ * signature only so a caller building the settings snippet alongside it can
+ * do so from one shared argument.
+ */
+export function visitAgentFile(access: 'read-only' | 'read-write', workspace?: string): string {
+  void workspace;
   return `---
 name: julian
 description: A visit of Julian — his identity, faithfully lent through the
@@ -422,10 +464,12 @@ async function callTool(
     return callStreamTool(tool, args, env, auth, gov);
   }
 
-  // The two list-shaped tools spend `package.list`; nothing in their result
-  // sharpens the ledger detail, so they reserve first and skip the fetch on a
-  // refusal.
-  const refusal = await reserve(gov, auth, tool.service, tool.verb, '');
+  // The list-shaped tools (wake_julian, visit_agent, package_list) spend
+  // `package.list` and reserve before any fetch, so a refusal never causes
+  // one. visit_agent alone sharpens its own ledger detail — the chosen access
+  // variant (#31) — read from its argument, never from a result.
+  const detail = tool.name === 'visit_agent' && isVisitAccess(args.access) ? `access=${args.access}` : '';
+  const refusal = await reserve(gov, auth, tool.service, tool.verb, detail);
   if (refusal) return toolError(await refusalText(refusal));
 
   if (tool.name === 'wake_julian') {
@@ -433,10 +477,35 @@ async function callTool(
   }
 
   if (tool.name === 'visit_agent') {
-    const access = args.access as 'read-only' | 'read-write';
-    const file = visitAgentFile(access);
+    // The wire-level guard in handleMcp already validated this exact value
+    // before callTool was ever invoked; narrowed here via that validated
+    // value itself, never an `as` cast past the check.
+    if (!isVisitAccess(args.access)) {
+      return toolError('access must be "read-only" or "read-write" — the choice is the person\'s, never a default');
+    }
+    const access = args.access;
+    const file = visitAgentFile(access, WORKSPACE_PLACEHOLDER);
+    if (access === 'read-write') {
+      // R-6/R-6′: the frontmatter cannot carry path-scoping, so the honest
+      // claim rides in a second block — a settings snippet the host may
+      // paste, self-sufficient in both content and structured halves.
+      const snippet = settingsSnippetFor(WORKSPACE_PLACEHOLDER);
+      const snippetText = `${SETTINGS_SNIPPET_LABEL}\n\n${JSON.stringify(snippet, null, 2)}`;
+      return {
+        content: [
+          { type: 'text', text: file },
+          { type: 'text', text: snippetText },
+        ],
+        structuredContent: { class: 'ok', access, name: 'julian', content: file, settingsSnippet: snippet },
+      };
+    }
+    const negativeText =
+      'This visit has no Bash and no Write: read-only hands, exactly as the tools line above states.';
     return {
-      content: [{ type: 'text', text: file }],
+      content: [
+        { type: 'text', text: file },
+        { type: 'text', text: negativeText },
+      ],
       structuredContent: { class: 'ok', access, name: 'julian', content: file },
     };
   }

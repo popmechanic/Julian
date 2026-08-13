@@ -285,6 +285,40 @@ describe('RegistrarDO logic', () => {
     });
   });
 
+  // Task-6-of-B2 leftover (§10.3): redeem() burns the row with `used = 1`,
+  // never a DELETE — the tombstone survives for audit. pendingView carries no
+  // used-filter, so its continued non-null answer is the row's own proof of
+  // survival, with no new test seam needed.
+  test('redeem marks the code used, never deletes the row — the tombstone survives for audit', async () => {
+    await runInDurableObject(reg('t-tombstone'), async (i: RegistrarDO) => {
+      const reg1 = await i.registerClient({
+        redirect_uris: ['https://claude.ai/api/mcp/auth_callback'],
+        token_endpoint_auth_method: 'none',
+      });
+      const clientId = (reg1 as { client_id: string }).client_id;
+      const verifier = 'c'.repeat(64);
+      const challenge = await s256(verifier);
+      const pend = await i.createPending({
+        client_id: clientId, redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+        code_challenge: challenge, resource: 'https://x/mcp', ttlSeconds: 600,
+      });
+      const pendingId = (pend as { pendingId: string }).pendingId;
+      await i.attachApproval(pendingId, 'user_marcus', 'reading-room');
+      const ok = await i.redeem({
+        code: pendingId, client_id: clientId,
+        redirect_uri: 'https://claude.ai/api/mcp/auth_callback', code_verifier: verifier,
+      });
+      expect(ok).toMatchObject({ elected_scope: 'reading-room' });
+      // the row survives redemption — a DELETE would make this null
+      const view = await i.pendingView(pendingId);
+      expect(view).not.toBeNull();
+      expect(view).toEqual({
+        client_id: clientId, origin: 'https://claude.ai',
+        redirect_uri: 'https://claude.ai/api/mcp/auth_callback', state: '',
+      });
+    });
+  });
+
   test('pendingView returns null for an unknown pendingId and never leaks the challenge', async () => {
     await runInDurableObject(reg('t-viewnull'), async (i: RegistrarDO) => {
       expect(await i.pendingView('ghost')).toBe(null);

@@ -185,7 +185,7 @@ describe('readPackageFile', () => {
   test('a manifest-declared oversize file is rejected before any fetch is issued', async () => {
     const body = JSON.stringify({
       generatedFrom: PIN, generatedAt: '2026-08-12T00:00:00Z',
-      files: [{ path: 'big.md', sha256: 'irrelevant', bytes: 600 * 1024 }],
+      files: [{ path: 'big.md', sha256: '0'.repeat(64), bytes: 600 * 1024 }],
     });
     intercept('package-manifest.json', body);
     // Deliberately no intercept for big.md: disableNetConnect() means a fetch
@@ -205,7 +205,7 @@ describe('readPackageFile', () => {
   test('a response whose content-length lies past the cap is rejected before the body is buffered', async () => {
     const body = JSON.stringify({
       generatedFrom: PIN, generatedAt: '2026-08-12T00:00:00Z',
-      files: [{ path: 'lying.md', sha256: 'irrelevant', bytes: 10 }], // manifest says small
+      files: [{ path: 'lying.md', sha256: '0'.repeat(64), bytes: 10 }], // manifest says small
     });
     intercept('package-manifest.json', body);
     fetchMock.get(RAW)
