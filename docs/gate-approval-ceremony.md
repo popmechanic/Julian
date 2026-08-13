@@ -38,14 +38,19 @@ and that door renews itself until you revoke it.
    convention: `door:<machine>-<role>` shape names like `mac-home`,
    `julian-new-web`, `stream-export`.
 
-6. Press **Open** (or **Refuse**). Done — the door picks up its tokens on its
-   next poll, within seconds. The confirmation page reminds you where to
-   revoke.
+6. **Elect the scope** (added 2026-08-13, closing #40). Three radios:
+   - `full-house` — pre-selected; the historical device default. Machines
+     that act as Julian (VM webs, the Mac) hold this.
+   - `stream-read` — package + stream reads only. **Elect this for
+     `stream-export`** and anything else that only reads.
+   - `reading-room` — package reads only.
 
-> **Caveat (issue #40, open):** today the device flow always mints a
-> **full-house** lease — the page has no scope choice. Until that's fixed, do
-> not approve a knock from anything that should be read-only (like
-> `stream-export`); the fix adds a scope election to this page.
+   Narrow whenever the door's purpose says "read": a door should hold the
+   smallest key that opens what it needs.
+
+7. Press **Open** (or **Refuse**). Done — the door picks up its tokens on its
+   next poll, within seconds. The confirmation page names the granted scope
+   and reminds you where to revoke.
 
 ## The visit consent (an MCP client knocking) — the narrow case
 

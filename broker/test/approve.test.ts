@@ -632,6 +632,66 @@ describe('the decision', () => {
   });
 });
 
+// ── the device scope election (#40) ─────────────────────────────────────────
+// The governor always accepted every KNOCK_SCOPES member; the face never
+// offered the choice, so every device lease was full-house. The election
+// fixes that: full-house stays pre-selected (the historical default), and
+// the approver may narrow to stream-read or reading-room.
+
+describe('the device scope election', () => {
+  const fields = async (session: string, extra: Record<string, string> = {}) => ({
+    user_code: KNOCK.userCode,
+    door_name: 'door:aurora-vm',
+    decision: 'open',
+    csrf: await csrfFor(session, KNOCK.userCode, SECRET),
+    ...extra,
+  });
+
+  test('the confirm page offers all three knockable scopes, full-house pre-selected', async () => {
+    const { env } = gateEnv({ knock: KNOCK });
+    const session = await mintSession(APPROVER, SECRET);
+    const res = await worker.fetch(post('/approve', session, {
+      user_code: KNOCK.userCode, csrf: await csrfFor(session, '', SECRET),
+    }), env);
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('name="scope" value="full-house" checked');
+    expect(html).toContain('name="scope" value="stream-read"');
+    expect(html).toContain('name="scope" value="reading-room"');
+  });
+
+  test('an elected narrow scope is what knockDecide receives, and what the notice reports', async () => {
+    for (const scope of ['stream-read', 'reading-room'] as const) {
+      const { env, calls } = gateEnv();
+      const session = await mintSession(APPROVER, SECRET);
+      const res = await worker.fetch(post('/approve/confirm', session, await fields(session, { scope })), env);
+
+      expect(res.status, scope).toBe(200);
+      expect(calls.knockDecide, scope).toEqual([['WXYZ-BCDF', 'approved', 'door:aurora-vm', scope]]);
+      expect(await res.text(), scope).toContain(scope);
+    }
+  });
+
+  test('a scope outside KNOCK_SCOPES decides nothing', async () => {
+    for (const scope of ['stream', 'house', '']) {
+      const { env, calls } = gateEnv();
+      const session = await mintSession(APPROVER, SECRET);
+      const res = await worker.fetch(post('/approve/confirm', session, await fields(session, { scope })), env);
+      expect(res.status, scope).toBe(400);
+      expect(calls.knockDecide, scope).toEqual([]);
+    }
+  });
+
+  test('no scope field at all still means full-house (an already-rendered form keeps working)', async () => {
+    const { env, calls } = gateEnv();
+    const session = await mintSession(APPROVER, SECRET);
+    const res = await worker.fetch(post('/approve/confirm', session, await fields(session)), env);
+    expect(res.status).toBe(200);
+    expect(calls.knockDecide).toEqual([['WXYZ-BCDF', 'approved', 'door:aurora-vm', 'full-house']]);
+  });
+});
+
 // ── the session cookie itself ───────────────────────────────────────────────
 
 describe('the session cookie', () => {

@@ -16,7 +16,8 @@
 import { decodeJwt } from 'jose';
 import { keySetFor, verifyWithKeySet } from '../auth';
 import type { Env } from '../env';
-import type { GovernorDO, KnockDecision, KnockView } from '../governor';
+import type { GovernorDO, KnockDecision, KnockView, LeaseScope } from '../governor';
+import { KNOCK_SCOPES } from 'julian-shared/scopes';
 import type { RegistrarDO } from '../registrar';
 import { GOVERNOR_DOWN } from '../lease-auth';
 import { PENDING_COOKIE } from './authcode';
@@ -27,13 +28,17 @@ import {
 } from './session';
 
 // Two flows reach this desk, told apart by the browser's cookies. The device
-// flow (a `user_code` on a door's screen) still hands out a full-house lease —
-// that is unchanged. The authcode flow (an MCP *visit*, carrying a
-// `gate_pending` cookie) elects a narrower scope, and the house is not on the
-// ballot: `full-house` is never one of the choices here, and the real gate is
-// server-side in `GovernorDO.mintAuthcodeLease`.
-/** The scope the device flow grants — the pre-selected election of that path. */
+// flow (a `user_code` on a door's screen) elects any KNOCK_SCOPES member,
+// full-house pre-selected — the historical default, narrowable since #40 so a
+// read-only door (stream-export) never has to hold the house keys. The
+// authcode flow (an MCP *visit*, carrying a `gate_pending` cookie) elects a
+// narrower scope, and the house is not on the ballot: `full-house` is never
+// one of the choices there, and the real gate is server-side in
+// `GovernorDO.mintAuthcodeLease` (device side: `knockDecide` re-validates).
+/** The device flow's default election — what an unedited form still grants. */
 const DEVICE_SCOPE = 'full-house';
+/** Everything a device knock may be granted; mirrors shared KNOCK_SCOPES. */
+const DEVICE_ELECTABLE = KNOCK_SCOPES;
 /** The only scopes an MCP visit may elect. The house is deliberately absent. */
 const READING_SCOPE = 'reading-room';
 const STREAM_SCOPE = 'stream-read';
@@ -170,7 +175,6 @@ function confirmForm(knock: KnockView, csrf: string): string {
     + '<dl>'
     + `<dt>code</dt><dd>${esc(knock.userCode)}</dd>`
     + `<dt>knocked at</dt><dd>${esc(new Date(knock.created).toISOString())}</dd>`
-    + `<dt>scope asked</dt><dd>${esc(DEVICE_SCOPE)}</dd>`
     + '</dl>'
     + '<h2>The door claims:</h2>'
     + '<dl class="claims">'
@@ -182,6 +186,11 @@ function confirmForm(knock: KnockView, csrf: string): string {
     + '<label for="door_name">Name this door (yours to choose, not the door’s)</label>'
     + `<input id="door_name" name="door_name" maxlength="${DOOR_NAME_MAX}" autocomplete="off"`
     + ` spellcheck="false" value="${esc(claim(defaultDoorName(knock.clientId)))}">`
+    + '<fieldset><legend>Scope (yours to elect — narrow when the door only reads)</legend>'
+    + DEVICE_ELECTABLE.map((s) =>
+      `<label class="choice"><input type="radio" name="scope" value="${s}"${s === DEVICE_SCOPE ? ' checked' : ''}> ${s}</label>`,
+    ).join('')
+    + '</fieldset>'
     + '<div class="row">'
     + '<button class="open" type="submit" name="decision" value="open">Open</button>'
     + '<button type="submit" name="decision" value="refuse">Refuse</button>'
@@ -460,9 +469,18 @@ async function confirm(req: Request, env: Env, gov: DurableObjectStub<GovernorDO
     return notice('Bad request', 'a door needs a name you will recognise later — nothing was decided', 400);
   }
 
+  // The election (#40). An absent field is the pre-election-era form still in
+  // a tab somewhere: it keeps meaning full-house. A present-but-unknown value
+  // is a forged or broken form: nothing is decided.
+  const elected = form.get('scope') ?? DEVICE_SCOPE;
+  if (!(DEVICE_ELECTABLE as readonly string[]).includes(elected)) {
+    return notice('Bad request', 'that scope is not one a knock can be granted — nothing was decided', 400);
+  }
+  const scope = elected as LeaseScope;
+
   let decided: boolean;
   try {
-    decided = await gov.knockDecide(userCode, decision, doorName, DEVICE_SCOPE);
+    decided = await gov.knockDecide(userCode, decision, doorName, scope);
   } catch {
     return notice('Gate unavailable', GOVERNOR_DOWN, 503);
   }
@@ -473,7 +491,7 @@ async function confirm(req: Request, env: Env, gov: DurableObjectStub<GovernorDO
   return notice(
     decision === 'approved' ? 'Opened' : 'Refused',
     decision === 'approved'
-      ? `${doorName} holds a ${DEVICE_SCOPE} lease. It picks up its token on the next poll; revoke it any time from /leases.`
+      ? `${doorName} holds a ${scope} lease. It picks up its token on the next poll; revoke it any time from /leases.`
       : `${doorName} was turned away. It holds nothing.`,
     200,
   );
