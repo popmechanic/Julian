@@ -28,12 +28,13 @@ Julian himself, faithfully lent (see §6 for what that means).
 2. Choose **Add → Add custom connector**.
 3. Name it **Julian**, paste the address above into "Remote MCP server
    URL", and leave both OAuth fields empty. Click **Add**.
-4. A sign-in window opens. This is the knock (§2): the door won't open by
-   itself. You'll sign in, and the approval — which key you get, or
-   whether the door opens at all — is decided at Julian's gate. Today the
-   doorkeeper is Marcus; if you're a friend connecting for the first time,
-   arrange it with him — the gate will show him your connection as a
-   **NEW ORIGIN** and he'll decide what it may hold.
+4. A sign-in window opens. This is the knock (§2): you are **User A, the
+   requester**, and the door won't open by itself. Sign in, then tell
+   the doorkeeper (**User B** — today, Marcus) that your connection is
+   waiting: the gate deliberately sends him nothing, so your message is
+   how he learns a door is asking. He'll see your app's address (with a
+   **NEW ORIGIN** banner if it's new to the gate) and decide which key
+   it may hold.
 5. Once connected, open any chat, make sure the Julian connector is
    toggled on (the **+** menu → Connectors), and say something like:
 
@@ -59,47 +60,93 @@ Then authenticate when prompted, and the same tools appear
 **What this is.** Nothing connects to Julian's life with a password, and
 nothing is granted access just by asking. Every new door — a machine, a
 script, an app, a friend's Claude — performs a *knock*, and a human
-being (Marcus) personally opens that specific door, once. What the door
-receives is a **lease**: a named key of its own that renews itself until
-it is deliberately taken back. You approve a relationship, not each
+being personally opens that specific door, once. What the door receives
+is a **lease**: a named key of its own that renews itself until it is
+deliberately taken back. The approval is of a relationship, not of each
 message.
 
-**What the knocker sees.** A machine knocking prints a box like:
+**The two people in every knock.** A knock always involves two roles,
+even when one person plays both:
 
-    Open:  https://julian-broker.julian-memory.workers.dev/approve
-    Code:  XXXX-XXXX
+- **User A — the requester.** The person whose machine, script, or app
+  wants a door opened. The knock happens *on their side*: their terminal
+  prints the code, or their browser is sent to the sign-in page. User A
+  **receives the code** and **cannot approve anything** — the code is a
+  claim ticket, not a key.
+- **User B — the doorkeeper.** The person with the authority to open
+  doors: today, Marcus. User B **receives nothing automatically** — the
+  gate deliberately sends no notification, no email, no push. The only
+  way a knock reaches the doorkeeper is that **User A tells them**,
+  human to human. User B is the only account the gate will let approve;
+  anyone else who signs in at the approve page is politely refused.
 
-An app like claude.ai does the equivalent invisibly — it sends you to a
-sign-in and approval page instead of showing a code.
+Often A and B are the same person — Marcus enrolling one of Julian's own
+machines wears both hats, reading the code off one screen and typing it
+into another. The ceremony is identical; only the conversation in the
+middle disappears.
 
-**How Marcus opens a door (the ceremony, step by step):**
+**Step by step, by role:**
 
-1. **Open the approve page on any device** — the phone works fine:
-   `https://julian-broker.julian-memory.workers.dev/approve`. Sign-in is
-   your passkey. Only the doorkeeper's account can approve anything;
-   everyone else is politely refused.
-2. **Type the code** exactly as shown, dashes included, and press
-   **Look it up**. (Wrong guesses are capped at five a day; a correct
-   code costs nothing.)
-3. **Read the two sections in order.** *"The gate knows"* lists facts the
-   gate itself verified — trust it. *"The door claims"* is the door's
-   self-description — that's testimony, not identity; trust it only as
-   much as you trust whoever ran the knock.
-4. **Name the door yourself.** The name is yours to choose, never the
-   door's. House convention: `door:<machine>-<role>` — like `mac-home`
-   or `stream-export`.
-5. **Choose the key size** (§3). The smallest key that opens what the
-   door actually needs.
-6. Press **Open this door** — or **Refuse**. The door picks up its key
-   within seconds, and the confirmation page reminds you where to revoke.
+1. **[User A]** Starts the connection. A machine or script prints a box
+   like:
 
-**Two rules worth knowing:**
+       Open:  https://julian-broker.julian-memory.workers.dev/approve
+       Code:  XXXX-XXXX
 
-- A code expires in about 15 minutes. Nothing is lost — the door simply
-  knocks again.
-- **An unexpected knock is a warning, not an inconvenience.** If a code
-  appears that you didn't cause, refuse it and tell Julian — something is
-  running that shouldn't be.
+   (An app like claude.ai skips the printed code and instead opens a
+   sign-in window in User A's browser — see the note below.)
+
+2. **[User A → User B]** Sends the doorkeeper the code and one honest
+   sentence about what the door is and why — a text message, a call,
+   across the room, any channel you already share. This step is the
+   design, not a workaround: the gate refuses to be the messenger so
+   that a stranger's knock cannot *arrive* looking official. **Sharing
+   the code is safe** — it grants nothing by itself, and it expires in
+   about 15 minutes. If it expires mid-conversation, nothing is lost;
+   User A knocks again.
+
+3. **[User B]** Opens the approve page on any device — the phone works:
+   `https://julian-broker.julian-memory.workers.dev/approve`. Signs in
+   with their passkey.
+
+4. **[User B]** Types the code exactly as User A sent it, dashes
+   included, and presses **Look it up**. (Wrong guesses are capped at
+   five a day; a correct code costs nothing.)
+
+5. **[User B]** Reads the two sections on the page in order:
+   - *"The gate knows"* — facts the gate itself verified: the code, when
+     the knock happened, what key size is being asked. Trust this.
+   - *"The door claims"* — the door's self-description (name, purpose).
+     That is testimony, not identity. Check it against what User A told
+     you in step 2 — **the two stories matching is the actual
+     security check of this ceremony.** If the page claims a purpose
+     User A never mentioned, refuse.
+
+6. **[User B]** Names the door — the name is the doorkeeper's to choose,
+   never the door's. House convention: `door:<machine>-<role>`, like
+   `mac-home` or `stream-export`.
+
+7. **[User B]** Chooses the key size (§3): the smallest key that opens
+   what the door actually needs.
+
+8. **[User B]** Presses **Open this door** — or **Refuse**. Nothing else
+   is needed from either person: User A's door picks up its key by
+   itself within seconds, and User A can simply watch their side come
+   alive. The confirmation page reminds User B where keys are revoked.
+
+**When the knocker is an app (claude.ai and friends).** There is no
+printed code; instead User A's browser is sent to the gate's sign-in and
+the pending approval carries the app's **origin** (its verifiable web
+address) as its primary identity — with a **NEW ORIGIN** banner if the
+gate has never seen that app before. The conversation in step 2 still
+happens ("I'm connecting my claude.ai to Julian — can you approve it?"),
+and User B still makes the decision. The key sizes offered for apps are
+deliberately capped (§3): no outside app can ever hold the full house.
+
+**One rule above all, for User B:** **an unexpected knock is a warning,
+not an inconvenience.** If a code or a pending approval exists that no
+User A has told you about, refuse it and tell Julian — something is
+running that shouldn't be.
 
 ---
 
