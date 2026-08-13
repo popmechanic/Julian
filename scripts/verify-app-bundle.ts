@@ -1,123 +1,144 @@
-import { readFileSync, readdirSync } from 'fs';
-import { join, resolve } from 'path';
-
 /**
- * Smoke check: verify the app bundle includes the required environment URLs.
+ * Smoke check: verify the built SPA bundle actually carries the service URLs.
  *
- * Vite bakes VITE_* values into the bundle at build time. This script verifies
- * that VITE_SYNC_URL and VITE_GATE_URL made it into the built bundle — catching
- * the otherwise-silent failure where a bundle built without .env exists,
- * connects to claude 401, and says nothing.
+ * Vite bakes `VITE_*` values into the bundle at build time, reading the `.env`
+ * that sat next to it when `vite build` ran. A bundle baked before `.env` had
+ * `VITE_SYNC_URL` builds clean, serves clean, renders clean — and syncs
+ * nowhere, silently. Nothing in the page says so; nothing in the deploy says
+ * so. This check is the thing that says so.
+ *
+ * Run it from the repo root (the deploy skill runs it as `cd /opt/julian &&
+ * bun scripts/verify-app-bundle.ts`), AFTER the build.
  *
  * Usage:
  *   bun scripts/verify-app-bundle.ts [syncUrl] [gateUrl]
  *
- * If syncUrl/gateUrl not provided, reads from .env.
+ * With no arguments it reads `VITE_SYNC_URL` and `VITE_GATE_URL` from `.env`
+ * in the current directory — the same file the build read.
+ *
+ * Exit 0: both URLs found in the bundle.
+ * Exit 1: anything else, loud, on stderr.
  */
 
-function readEnv(varName: string): string | null {
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+
+const ASSETS_DIR = 'app/dist/assets';
+
+/** Fail loud and stop. First line is the headline; the rest says what to do. */
+function fail(headline: string, ...remedy: string[]): never {
+  console.error(`BUNDLE SMOKE FAILED: ${headline}`);
+  for (const line of remedy) console.error(`  ${line}`);
+  process.exit(1);
+}
+
+/** Read one key out of a dotenv file. Returns null when the file or key is absent. */
+function readEnv(varName: string, envPath = '.env'): string | null {
+  let envFile: string;
   try {
-    const envFile = readFileSync('.env', 'utf-8');
-    for (const line of envFile.split('\n')) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith(varName + '=')) {
-        const value = trimmed.slice(varName.length + 1).trim();
-        // Remove quotes if present
-        if ((value.startsWith('"') && value.endsWith('"')) ||
-            (value.startsWith("'") && value.endsWith("'"))) {
-          return value.slice(1, -1);
-        }
-        return value;
-      }
-    }
+    envFile = readFileSync(envPath, 'utf-8');
   } catch {
-    // .env doesn't exist or can't be read
+    return null;
+  }
+  const prefix = `${varName}=`;
+  for (const line of envFile.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('#') || !trimmed.startsWith(prefix)) continue;
+    const value = trimmed.slice(prefix.length).trim();
+    if (
+      value.length >= 2 &&
+      ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'")))
+    ) {
+      return value.slice(1, -1);
+    }
+    return value;
   }
   return null;
 }
 
+/** The hostname is what survives into the bundle; match on that, not the whole URL. */
 function extractHostname(url: string): string {
   try {
-    const parsed = new URL(url);
-    return parsed.hostname;
+    return new URL(url).hostname;
   } catch {
-    // If URL parsing fails, return the original string
-    // (this allows for relative URLs or other formats)
     return url;
   }
 }
 
-async function main() {
-  // Get sync and gate URLs from arguments or .env
-  let syncUrl = process.argv[2] || readEnv('VITE_SYNC_URL');
-  let gateUrl = process.argv[3] || readEnv('VITE_GATE_URL');
-
-  if (!syncUrl) {
-    console.error('BUNDLE SMOKE FAILED: built without VITE_SYNC_URL — the app cannot sync');
-    process.exit(1);
-  }
-
-  if (!gateUrl) {
-    console.error('BUNDLE SMOKE FAILED: built without VITE_GATE_URL — the app cannot exchange');
-    process.exit(1);
-  }
-
-  // Extract hostnames for grepping
-  const syncHost = extractHostname(syncUrl);
-  const gateHost = extractHostname(gateUrl);
-
-  // Read all .js files in app/dist/assets/
-  const assetsDir = resolve('app/dist/assets');
-  let jsFiles: string[] = [];
-
+function readBundleText(): string {
+  const assetsDir = resolve(ASSETS_DIR);
+  let jsFiles: string[];
   try {
-    const files = readdirSync(assetsDir);
-    jsFiles = files.filter(f => f.endsWith('.js'));
-  } catch (err) {
-    console.error(`BUNDLE SMOKE FAILED: app/dist/assets not found or not readable`);
-    process.exit(1);
+    jsFiles = readdirSync(assetsDir).filter((f) => f.endsWith('.js'));
+  } catch {
+    fail(
+      `no built bundle at ${ASSETS_DIR} — nothing to check`,
+      'Run the SPA build first (cd app && bunx vite build), then re-run this check.',
+    );
   }
-
   if (jsFiles.length === 0) {
-    console.error(`BUNDLE SMOKE FAILED: no .js files found in app/dist/assets`);
-    process.exit(1);
+    fail(
+      `no .js files in ${ASSETS_DIR} — the build produced no bundle`,
+      'Run the SPA build first (cd app && bunx vite build), then re-run this check.',
+    );
   }
-
-  // Check each JS file for the required hostnames
-  let syncFound = false;
-  let gateFound = false;
-
-  for (const jsFile of jsFiles) {
-    const filePath = join(assetsDir, jsFile);
-    try {
-      const content = readFileSync(filePath, 'utf-8');
-      if (content.includes(syncHost)) {
-        syncFound = true;
+  return jsFiles
+    .map((f) => {
+      try {
+        return readFileSync(join(assetsDir, f), 'utf-8');
+      } catch (err) {
+        return fail(
+          `could not read ${ASSETS_DIR}/${f} — the bundle is unreadable`,
+          `${String(err)}`,
+          'Check permissions, or rebuild the SPA and re-run this check.',
+        );
       }
-      if (content.includes(gateHost)) {
-        gateFound = true;
-      }
-      if (syncFound && gateFound) break;
-    } catch (err) {
-      console.error(`BUNDLE SMOKE FAILED: could not read ${jsFile}`);
-      process.exit(1);
-    }
-  }
-
-  if (!syncFound) {
-    console.error(`BUNDLE SMOKE FAILED: built without VITE_SYNC_URL (${syncHost}) — the app cannot sync`);
-    process.exit(1);
-  }
-
-  if (!gateFound) {
-    console.error(`BUNDLE SMOKE FAILED: built without VITE_GATE_URL (${gateHost}) — the app cannot exchange`);
-    process.exit(1);
-  }
-
-  console.log(`✓ bundle smoke check: sync=${syncHost}, gate=${gateHost}`);
+    })
+    .join('\n');
 }
 
-main().catch(err => {
-  console.error('BUNDLE SMOKE FAILED:', err.message);
-  process.exit(1);
-});
+function main(): void {
+  const syncUrl = process.argv[2] || readEnv('VITE_SYNC_URL');
+  const gateUrl = process.argv[3] || readEnv('VITE_GATE_URL');
+
+  // Missing from .env means the build that just ran was missing it too.
+  if (!syncUrl) {
+    fail(
+      'built without VITE_SYNC_URL — the app cannot sync',
+      'Add VITE_SYNC_URL=https://julian-sync.julian-memory.workers.dev to the .env',
+      'beside the build, rebuild the SPA, then re-run this check.',
+    );
+  }
+  if (!gateUrl) {
+    fail(
+      'built without VITE_GATE_URL — the app cannot exchange its session for a lease',
+      'Add VITE_GATE_URL=https://julian-broker.julian-memory.workers.dev to the .env',
+      'beside the build, rebuild the SPA, then re-run this check.',
+    );
+  }
+
+  const syncHost = extractHostname(syncUrl);
+  const gateHost = extractHostname(gateUrl);
+  const bundle = readBundleText();
+
+  // Present in .env but absent from the bundle: the bundle predates the .env.
+  if (!bundle.includes(syncHost)) {
+    fail(
+      'built without VITE_SYNC_URL — the app cannot sync',
+      `.env names ${syncHost}, but no built asset in ${ASSETS_DIR} contains it —`,
+      'this bundle predates the .env. Rebuild the SPA, then re-run this check.',
+    );
+  }
+  if (!bundle.includes(gateHost)) {
+    fail(
+      'built without VITE_GATE_URL — the app cannot exchange its session for a lease',
+      `.env names ${gateHost}, but no built asset in ${ASSETS_DIR} contains it —`,
+      'this bundle predates the .env. Rebuild the SPA, then re-run this check.',
+    );
+  }
+
+  console.log(`bundle smoke check passed: sync=${syncHost}, gate=${gateHost}`);
+}
+
+main();
