@@ -8,7 +8,7 @@ import type { MergeableStore } from 'tinybase/mergeable-store';
 import { createStreamStore } from 'julian-shared/schema';
 import { SYNC_AUTH_HEADER, type SyncAuthPayload } from 'julian-shared/gate-contract';
 import { SOCKET_REQUIRED_MSG, SOCKET_SCOPES } from 'julian-shared/scopes';
-import { introspectByHandle, type Env } from './auth';
+import { introspectByHandle, type Env, type LeaseIntrospection } from './auth';
 
 /**
  * What an accepted socket carries across hibernation: identity by HANDLE, and
@@ -56,6 +56,20 @@ const CLOSE_TOKEN_EXPIRED = 4004;
 const REVOKED_MSG = 'lease revoked';
 const INDEFINITE_MSG = 'introspection unavailable';
 const TOKEN_EXPIRED_MSG = 'access token expired — re-exchange';
+
+// The alarm sweep is the wall-clock backstop for a socket that never sends
+// traffic: the traffic-driven re-auth above only fires on an inbound
+// message, so a silent receiver could otherwise sit past a governor kill
+// indefinitely. The sweep re-checks every attached socket on this fixed
+// interval, cache bypassed, regardless of how recently (or never) it last
+// spoke — the third of the honest SLA's three numbers (spec §6.2).
+const SWEEP_INTERVAL_MS = 300_000;
+
+// A single gate blip must not mass-close the fleet into a synchronized
+// ticket-mint storm against a recovering gate: an indefinite answer is
+// tolerated for this many CONSECUTIVE sweeps before the socket is closed.
+const SWEEP_INDEFINITE_STRIKES = 3;
+const SWEEP_INDEFINITE_MSG = 'introspection unavailable across 3 sweeps';
 
 /**
  * The router's handoff, turned into a fresh attachment. The DO trusts this
@@ -316,9 +330,22 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
     const response = (await super.fetch?.(request)) ?? new Response('Expected WebSocket', { status: 426 });
     if (clientId) {
       const [ws] = this.ctx.getWebSockets(clientId);
-      ws?.serializeAttachment(attachment);
+      if (ws) {
+        ws.serializeAttachment(attachment);
+        // Arm the sweep on this, the first successful attach that finds no
+        // alarm already pending — idempotent, so a second connection never
+        // pushes a live sweep further out.
+        await this.#armAlarm();
+      }
     }
     return response;
+  }
+
+  async #armAlarm(): Promise<void> {
+    const existing = await this.ctx.storage.getAlarm();
+    if (existing === null) {
+      await this.ctx.storage.setAlarm(Date.now() + SWEEP_INTERVAL_MS);
+    }
   }
 
   // Re-auth on traffic, not on a timer: a socket that has gone quiet for >5
@@ -408,6 +435,144 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
     // WsServerDurableObject implements webSocketMessage at runtime, but types
     // it as the optional DurableObject.webSocketMessage, so guard the call.
     return super.webSocketMessage?.(ws, message);
+  }
+
+  // WsServerDurableObject's own webSocketClose does the TinyBase client
+  // bookkeeping (onClientId/onPathId — what keeps getPathId/getClientIds
+  // correct for the next accept or sweep) — call it first, unconditionally,
+  // before this override decides anything about the alarm. `ws` is filtered
+  // out of the "any sockets left?" check explicitly rather than trusting
+  // ctx.getWebSockets() to have already dropped it by the time this runs.
+  async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): Promise<void> {
+    await super.webSocketClose?.(ws, code, reason, wasClean);
+    const remaining = this.ctx.getWebSockets().filter((socket) => socket !== ws);
+    if (remaining.length === 0) {
+      await this.ctx.storage.deleteAlarm();
+    }
+  }
+
+  // The alarm sweep: the wall-clock backstop above (SEC NEW-5, OPS N-7,
+  // COLD M-10). Every attached socket is validated unconditionally, every
+  // sweep — sweeping only stale-verifiedAt sockets would lose the bound,
+  // since a chatty socket re-stamps verifiedAt from the (still-cached)
+  // message-driven path without ever proving itself against a bypassed one.
+  async alarm(): Promise<void> {
+    // Snapshot BEFORE closing anything: getPathId() reads the tags of
+    // whichever socket happens to be first in ctx.getWebSockets() right
+    // now (see the base implementation) — closing sockets in a loop can
+    // empty or reorder that list mid-sweep and mislabel a survivor's
+    // ownership check.
+    const pathId = this.getPathId();
+    const ownerAvailable = pathId !== undefined && pathId !== '';
+    const owner = ownerAvailable ? pathId.split('/')[0] : '';
+
+    const entries: { ws: WebSocket; attachment: SocketAttachment }[] = [];
+    for (const ws of this.ctx.getWebSockets()) {
+      const attachment = ws.deserializeAttachment() as SocketAttachment | null;
+      if (attachment) entries.push({ ws, attachment });
+    }
+
+    // One introspection per distinct identity per sweep, not one per
+    // socket: the GovernorDO is a singleton serving every other verb, and a
+    // fleet of sockets sharing one lease must not turn into a fleet of
+    // requests every 5 minutes.
+    const groups = new Map<string, { ws: WebSocket; attachment: SocketAttachment }[]>();
+    for (const entry of entries) {
+      const key = `${entry.attachment.leaseId}:${entry.attachment.tokenId ?? entry.attachment.subject ?? ''}`;
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(entry);
+      else groups.set(key, [entry]);
+    }
+
+    const now = Date.now();
+
+    // A gate blip (or an attachment the DO can never form a question for —
+    // see handleForm) must not read as revocation: it leaves every socket
+    // in the group attached, counting strikes, and only closes once three
+    // consecutive sweeps have failed to get a definitive answer.
+    const closeIndefinite = (group: { ws: WebSocket; attachment: SocketAttachment }[]): void => {
+      for (const { ws, attachment } of group) {
+        const strikes = attachment.indefiniteSweeps + 1;
+        if (strikes >= SWEEP_INDEFINITE_STRIKES) {
+          ws.close(CLOSE_INDEFINITE, SWEEP_INDEFINITE_MSG);
+        } else {
+          ws.serializeAttachment({ ...attachment, indefiniteSweeps: strikes } satisfies SocketAttachment);
+        }
+      }
+    };
+
+    for (const group of groups.values()) {
+      const sample = group[0].attachment;
+      const form = handleForm(sample);
+      if (form === null) {
+        closeIndefinite(group);
+        continue;
+      }
+      let introspection: LeaseIntrospection;
+      try {
+        // Bypasses the 60s cache on purpose — the sweep's whole job is to
+        // distrust a warm answer.
+        introspection = await introspectByHandle(
+          form, this.env.GATE, this.env.INTROSPECT_SECRET, { bypassCache: true },
+        );
+      } catch {
+        closeIndefinite(group);
+        continue;
+      }
+
+      if (!introspection.active) {
+        for (const { ws, attachment } of group) {
+          const { code, message } = inactiveClose(attachment, introspection.reason, now);
+          ws.close(code, message);
+        }
+        continue;
+      }
+
+      // Active: defense in depth, same as the message-driven path — a
+      // scope downgrade or an ownership change independently closes the
+      // socket rather than leaving it trusted until it next speaks.
+      const scopeOk = SOCKET_SCOPES.has(introspection.scope ?? '');
+      const ownerOk = ownerAvailable && (introspection.principal ?? '') === owner;
+      if (!scopeOk || !ownerOk) {
+        const detail = !scopeOk
+          ? `refused: scope ${introspection.scope} may not hold a socket`
+          : !ownerAvailable
+          ? 'refused: store identity unavailable for socket re-auth'
+          : `refused: principal ${introspection.principal} does not own ${owner}`;
+        const reason = !scopeOk
+          ? SOCKET_REQUIRED_MSG
+          : !ownerAvailable
+          ? 'store identity unavailable'
+          : 'lease does not own this store';
+        for (const { ws, attachment } of group) {
+          void this.env.GATE.fetch('https://gate/refusals', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Introspect-Secret': this.env.INTROSPECT_SECRET },
+            body: JSON.stringify({
+              lease_id: introspection.leaseId ?? attachment.leaseId,
+              door_name: introspection.doorName ?? '',
+              service: 'stream', verb: 'socket', detail,
+            }),
+          }).catch(() => undefined);
+          ws.close(CLOSE_SCOPE_LOST, reason);
+        }
+        continue;
+      }
+
+      // Healthy: the sweep's own verdict re-stamps the clock and clears
+      // the strike count, same as a successful message-driven re-auth.
+      for (const { ws, attachment } of group) {
+        ws.serializeAttachment({ ...attachment, verifiedAt: now, indefiniteSweeps: 0 } satisfies SocketAttachment);
+      }
+    }
+
+    // Re-arm while any socket remains — including ones that were just
+    // reset above — and stay silent (no re-arm) once the sweep has closed
+    // the last of them; webSocketClose is the other place this alarm gets
+    // cancelled, for the ordinary path of a socket leaving on its own.
+    if (this.ctx.getWebSockets().length > 0) {
+      await this.ctx.storage.setAlarm(now + SWEEP_INTERVAL_MS);
+    }
   }
 
   exportContent(): ExportedContent {
