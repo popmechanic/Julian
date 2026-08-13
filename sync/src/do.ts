@@ -6,12 +6,30 @@ import { createMiddleware, getHash } from 'tinybase';
 import type { Middleware, Cell, Changes } from 'tinybase';
 import type { MergeableStore } from 'tinybase/mergeable-store';
 import { createStreamStore } from 'julian-shared/schema';
-import { introspectLease, type Env } from './auth';
+import { SYNC_AUTH_HEADER, type SyncAuthPayload } from 'julian-shared/gate-contract';
+import { SOCKET_REQUIRED_MSG, SOCKET_SCOPES } from 'julian-shared/scopes';
+import { introspectByHandle, type Env } from './auth';
 
-// A lease-token socket's serialized attachment (survives hibernation).
-interface LeaseAttachment {
-  leaseToken: string;
+/**
+ * What an accepted socket carries across hibernation: identity by HANDLE, and
+ * nothing that could be replayed. A raw bearer is never serialized into an
+ * attachment on any socket class — a durable object's attachment outlives the
+ * request that made it, so a token stored there is a credential lying around
+ * for as long as the socket lives.
+ *
+ * The handles are enough to re-ask the gate (`introspectByHandle`), which is
+ * the only thing the DO ever needed the token for.
+ */
+export interface SocketAttachment {
+  leaseId: string;
+  tokenId?: string;
+  subject?: string;
+  exp?: number;
+  flow: string;
   verifiedAt: number;
+  // Consecutive indefinite answers seen by the alarm sweep; reset to 0 by any
+  // successful re-auth. Three in a row closes the socket 4002.
+  indefiniteSweeps: number;
 }
 
 // Traffic-driven re-auth: an idle socket can't act, so bounding the
@@ -21,15 +39,108 @@ const REAUTH_INTERVAL_MS = 300_000;
 
 // A socket is a write surface: TinyBase sync is bidirectional (a socket
 // client can push ContentDiff / ContentHashes and answer diff requests, and
-// the DO relays client↔client), so only `full-house` holds one — defense in
-// depth alongside the router's upgrade-time check (sync/src/index.ts), since
-// the router is no longer the only guard once multiple scopes share the
-// register.
+// the DO relays client↔client), so only a socket-capable scope holds one —
+// defense in depth alongside the router's upgrade-time check
+// (sync/src/index.ts), since the router is no longer the only guard once
+// multiple scopes share the register. The set and the sentence both come from
+// the shared vocabulary; sync owns no private copy of the table.
 
-function extractLeaseToken(request: Request): string | null {
-  const bearer = request.headers.get('Authorization');
-  const token = bearer?.startsWith('Bearer ') ? bearer.slice(7) : null;
-  return token?.startsWith('jla_') ? token : null;
+// Close codes. 4004 is deliberately distinct from 4001: a browser whose
+// exchange lease is alive but whose access token aged out should re-exchange
+// and come back, while a revoked lease is terminal and the app must stop.
+const CLOSE_REVOKED = 4001;
+const CLOSE_INDEFINITE = 4002;
+const CLOSE_SCOPE_LOST = 4003;
+const CLOSE_TOKEN_EXPIRED = 4004;
+
+const REVOKED_MSG = 'lease revoked';
+const INDEFINITE_MSG = 'introspection unavailable';
+const TOKEN_EXPIRED_MSG = 'access token expired — re-exchange';
+
+/**
+ * The router's handoff, turned into a fresh attachment. The DO trusts this
+ * header because the router strips every inbound copy of it as its first act
+ * and writes its own only after the gate has vouched for the credential.
+ *
+ * Returns null for a missing or unusable handoff — the caller refuses rather
+ * than accepting a socket it could never re-auth.
+ */
+function readSyncAuth(request: Request): SocketAttachment | null {
+  const raw = request.headers.get(SYNC_AUTH_HEADER);
+  if (raw === null) return null;
+  let payload: SyncAuthPayload;
+  try {
+    payload = JSON.parse(raw) as SyncAuthPayload;
+  } catch {
+    return null;
+  }
+  if (typeof payload?.leaseId !== 'string' || typeof payload?.flow !== 'string') return null;
+  return {
+    leaseId: payload.leaseId,
+    ...(typeof payload.tokenId === 'string' ? { tokenId: payload.tokenId } : {}),
+    ...(typeof payload.subject === 'string' ? { subject: payload.subject } : {}),
+    ...(typeof payload.exp === 'number' ? { exp: payload.exp } : {}),
+    flow: payload.flow,
+    verifiedAt: Date.now(),
+    indefiniteSweeps: 0,
+  };
+}
+
+/**
+ * The by-handle question this attachment can ask the gate — the legacy window
+ * asks by `sub`+`exp`, everything else by `lease_id`(+`token_id`).
+ *
+ * Null means the attachment cannot form a question at all. That is an
+ * *unanswerable* socket, not a refused one: the caller closes 4002, never
+ * 4001, because "I couldn't ask" must never be reported as "the gate said no".
+ */
+function handleForm(attachment: SocketAttachment): Record<string, string> | null {
+  if (attachment.flow === 'legacy') {
+    return attachment.subject && attachment.exp !== undefined
+      ? { sub: attachment.subject, exp: String(attachment.exp), kind: 'legacy' }
+      : null;
+  }
+  return attachment.leaseId
+    ? {
+        lease_id: attachment.leaseId,
+        ...(attachment.tokenId !== undefined ? { token_id: attachment.tokenId } : {}),
+      }
+    : null;
+}
+
+/**
+ * Which close an inactive by-handle answer earns: 4001 (terminal — the lease
+ * itself is gone) or 4004 (recoverable — the minting access token merely aged
+ * out). Two signals decide it, in this order.
+ *
+ * The gate's `reason:'token-expired'` is authoritative wherever it appears: it
+ * is the register's own reading of its own rows, on any flow.
+ *
+ * Absent it, an `exchange` attachment can still answer the question by itself.
+ * It carries `exp`, the expiry of the very access token that minted the socket,
+ * as the gate stated it at upgrade time (seconds since the epoch, JWT
+ * convention). An inactive answer arriving after that moment is an aged token,
+ * not a revocation — and telling a live Pocket ID session it was revoked is a
+ * terminal lie that stops the app. Getting it wrong the other way costs
+ * nothing: 4004 grants no access, it only sends the browser back to
+ * `POST /exchange`, which is the authority and answers a genuinely revoked
+ * session with its own terminal `class:"revoked"`.
+ *
+ * No other flow infers it. "Re-exchange" is the browser's recovery and only the
+ * browser's; a device door refreshes, and for it the gate must be the one to
+ * speak.
+ */
+function inactiveClose(
+  attachment: SocketAttachment, reason: string | undefined, now: number,
+): { code: number; message: string } {
+  const expired =
+    reason === 'token-expired' ||
+    (attachment.flow === 'exchange' &&
+      attachment.exp !== undefined &&
+      attachment.exp * 1000 <= now);
+  return expired
+    ? { code: CLOSE_TOKEN_EXPIRED, message: TOKEN_EXPIRED_MSG }
+    : { code: CLOSE_REVOKED, message: REVOKED_MSG };
 }
 
 // Cloudflare's WS message cap is ~1 MiB; every synchronizer sets an explicit fragment size.
@@ -185,45 +296,70 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
     // but types it as the optional DurableObject.fetch, so guard the call.
     //
     // The router (index.ts) has already verified this request is authorized
-    // (lease introspected active, or a valid legacy JWT) before forwarding
-    // it here — this DO trusts that and only extracts the lease token (if
-    // any) to attach to the accepted socket for later traffic-driven re-auth.
+    // (the gate vouched for a lease, a spent ticket, or — until the sunset —
+    // a legacy session) and states the result in `X-Sync-Auth`. The DO trusts
+    // that header and stores only the handles from it.
     const isUpgrade = request.headers.get('Upgrade')?.toLowerCase() === 'websocket';
-    const leaseToken = isUpgrade ? extractLeaseToken(request) : null;
-    const clientId = isUpgrade ? request.headers.get('sec-websocket-key') : null;
+    if (!isUpgrade) {
+      return (await super.fetch?.(request)) ?? new Response('Expected WebSocket', { status: 426 });
+    }
+
+    // Fail closed on the way in. An upgrade with no usable handoff is a socket
+    // the DO could never re-auth — it would hold the store open forever on the
+    // strength of a check nobody can repeat. Refusing before super.fetch()
+    // means no socket is accepted at all, rather than one accepted and then
+    // left un-introspectable.
+    const attachment = readSyncAuth(request);
+    if (attachment === null) return new Response('Unauthorized', { status: 401 });
+
+    const clientId = request.headers.get('sec-websocket-key');
     const response = (await super.fetch?.(request)) ?? new Response('Expected WebSocket', { status: 426 });
-    if (leaseToken && clientId) {
+    if (clientId) {
       const [ws] = this.ctx.getWebSockets(clientId);
-      ws?.serializeAttachment({ leaseToken, verifiedAt: Date.now() } satisfies LeaseAttachment);
+      ws?.serializeAttachment(attachment);
     }
     return response;
   }
 
-  // Re-auth on traffic, not on a timer: a lease-token socket that has gone
-  // quiet for >5 minutes of activity gets re-introspected before its next
-  // message is processed. A definitive `active:false` (revoked) closes 4001;
-  // any non-definitive introspection failure — gate unreachable, a 401
-  // (config error), or a 5xx — throws (see introspectLease) and fails closed
-  // here as 4002, never 4001: a governor blip must never read as revocation.
-  // Same failure shape as a brand-new connection being refused when the gate
-  // can't be reached.
+  // Re-auth on traffic, not on a timer: a socket that has gone quiet for >5
+  // minutes of activity gets re-introspected before its next message is
+  // processed — and by handle, since the attachment holds no bearer to
+  // present. The gate's answer maps to exactly one verdict:
+  //
+  //   throw (unreachable, 401 config error, 5xx)  -> 4002, never 4001: a
+  //       governor blip must never read as revocation. Same failure shape as
+  //       a brand-new connection refused when the gate can't be reached.
+  //   active:false                                -> 4001, terminal — unless
+  //       `inactiveClose` reads it as an aged token (see there).
+  //   active:false + reason 'token-expired', or an exchange attachment whose
+  //       own access-token `exp` has passed        -> 4004: the lease lives,
+  //       the minting access token aged out. The browser re-exchanges its
+  //       Pocket ID session and comes back; nothing was revoked.
+  //   active, but scope or ownership lost         -> 4003.
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    const attachment = ws.deserializeAttachment() as LeaseAttachment | null;
+    const attachment = ws.deserializeAttachment() as SocketAttachment | null;
     if (attachment && Date.now() - attachment.verifiedAt > REAUTH_INTERVAL_MS) {
+      const form = handleForm(attachment);
+      if (form === null) {
+        // Unanswerable, not refused — see handleForm.
+        ws.close(CLOSE_INDEFINITE, INDEFINITE_MSG);
+        return;
+      }
       let introspection;
       try {
         // Through the GATE service binding, never a public URL (issue #28).
-        introspection = await introspectLease(attachment.leaseToken, this.env.GATE, this.env.INTROSPECT_SECRET);
+        introspection = await introspectByHandle(form, this.env.GATE, this.env.INTROSPECT_SECRET);
       } catch {
-        ws.close(4002, 'introspection unavailable');
+        ws.close(CLOSE_INDEFINITE, INDEFINITE_MSG);
         return;
       }
       if (!introspection.active) {
-        ws.close(4001, 'lease revoked');
+        const { code, message } = inactiveClose(attachment, introspection.reason, Date.now());
+        ws.close(code, message);
         return;
       }
       // Defense in depth: even though the router already refused a
-      // non-full-house scope (and a non-owning principal) at upgrade time,
+      // non-socket-capable scope (and a non-owning principal) at upgrade time,
       // re-check both here on every traffic-driven re-auth so a socket that
       // predates a scope downgrade or an ownership change (or any router
       // bug) is independently closed rather than trusted indefinitely. A
@@ -237,7 +373,7 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
       const pathId = this.getPathId();
       const ownerAvailable = pathId !== undefined && pathId !== '';
       const owner = ownerAvailable ? pathId.split('/')[0] : '';
-      const scopeOk = introspection.scope === 'full-house';
+      const scopeOk = SOCKET_SCOPES.has(introspection.scope ?? '');
       const ownerOk = ownerAvailable && (introspection.principal ?? '') === owner;
       if (!scopeOk || !ownerOk) {
         const detail = !scopeOk
@@ -246,7 +382,7 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
           ? 'refused: store identity unavailable for socket re-auth'
           : `refused: principal ${introspection.principal} does not own ${owner}`;
         const reason = !scopeOk
-          ? 'a sync socket requires full-house'
+          ? SOCKET_REQUIRED_MSG
           : !ownerAvailable
           ? 'store identity unavailable'
           : 'lease does not own this store';
@@ -254,14 +390,20 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Introspect-Secret': this.env.INTROSPECT_SECRET },
           body: JSON.stringify({
-            lease_id: introspection.leaseId ?? '', door_name: introspection.doorName ?? '',
+            lease_id: introspection.leaseId ?? attachment.leaseId,
+            door_name: introspection.doorName ?? '',
             service: 'stream', verb: 'socket', detail,
           }),
         }).catch(() => undefined);
-        ws.close(4003, reason);
+        ws.close(CLOSE_SCOPE_LOST, reason);
         return;
       }
-      ws.serializeAttachment({ ...attachment, verifiedAt: Date.now() } satisfies LeaseAttachment);
+      // A fresh verdict re-stamps the clock and clears the sweep's patience:
+      // the socket has just proven itself, so the alarm sweep starts counting
+      // indefinite answers again from zero.
+      ws.serializeAttachment({
+        ...attachment, verifiedAt: Date.now(), indefiniteSweeps: 0,
+      } satisfies SocketAttachment);
     }
     // WsServerDurableObject implements webSocketMessage at runtime, but types
     // it as the optional DurableObject.webSocketMessage, so guard the call.
