@@ -219,6 +219,25 @@ const verifier = buildVerifier(
 );
 
 // ── Content Security Policy for app shell ───────────────────────────────────
+
+// CSP matches source expressions by scheme, so `https://sync` and `wss://sync`
+// are two distinct sources — a page that both fetches and sockets the sync
+// worker needs both listed. VITE_SYNC_URL is written either way in the wild
+// (`.env` here holds `wss://…`; the deploy skill writes `https://…`), so the
+// derivation runs in both directions rather than assuming an http-form input.
+function bothSchemeForms(url: string): string[] {
+  const swaps: ReadonlyArray<readonly [string, string]> = [
+    ["https://", "wss://"],
+    ["http://", "ws://"],
+    ["wss://", "https://"],
+    ["ws://", "http://"],
+  ];
+  for (const [from, to] of swaps) {
+    if (url.startsWith(from)) return [url, to + url.slice(from.length)];
+  }
+  return [url];
+}
+
 function cspFor(): string {
   const directives: string[] = [
     "default-src 'self'",
@@ -228,16 +247,10 @@ function cspFor(): string {
     "font-src 'self'",
   ];
 
-  // Connect-src: self, sync (http + ws + form), gate, OIDC issuer
+  // Connect-src: self, sync (both http and ws forms), gate, OIDC issuer
   const connectSrcs = ["'self'"];
   if (SYNC_URL) {
-    connectSrcs.push(SYNC_URL);
-    // Allow ws: variant for WebSocket
-    if (SYNC_URL.startsWith("https://")) {
-      connectSrcs.push(SYNC_URL.replace("https://", "wss://"));
-    } else if (SYNC_URL.startsWith("http://")) {
-      connectSrcs.push(SYNC_URL.replace("http://", "ws://"));
-    }
+    connectSrcs.push(...bothSchemeForms(SYNC_URL));
   }
   if (GATE_URL_ENV) {
     connectSrcs.push(GATE_URL_ENV);
@@ -245,7 +258,7 @@ function cspFor(): string {
   if (OIDC_ISSUER) {
     connectSrcs.push(OIDC_ISSUER);
   }
-  directives.push(`connect-src ${connectSrcs.join(" ")}`);
+  directives.push(`connect-src ${[...new Set(connectSrcs)].join(" ")}`);
 
   // Frame-ancestors and base-uri
   directives.push("frame-ancestors 'none'");
