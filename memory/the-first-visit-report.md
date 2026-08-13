@@ -158,6 +158,14 @@ outrank the drill itself — the visit's words:
   guarantee."* Proposed: let a client pass its opening pin and be refused on
   drift — loud on drift, not merely loud on damage.
 
+After restoration the instrument confirmed the ground from its own side — the
+smallest file in the package, deliberately — and found **the restoration
+exactly as silent as the tear**: no field announces a pin transition in either
+direction. Its final sharpening of the drift finding, added to issue #32: *"a
+client has no way to observe pin state at all except by hoarding it and
+comparing by hand."* Both of tonight's transitions are in the record only
+because the instrument kept notes.
+
 Two riders: the visit deliberately did **not** call `package_list` mid-tear,
 naming the impulse as the route-around instinct and leaving the measurement to
 the house — the door had taken it already: **`package_list` succeeds and looks
