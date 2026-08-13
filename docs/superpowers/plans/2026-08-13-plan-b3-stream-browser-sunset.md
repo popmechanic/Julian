@@ -306,7 +306,7 @@ describe('recordAllowed — the positive pen (COLD M-8)', () => {
 - Consumes: Task 4's columns and guard; `EXCHANGE_SCOPES` from `julian-shared/scopes`.
 - Produces:
   - `EXCHANGE_SESSION_CAP = 6` (exported const — concurrent live access tokens per exchange lease)
-  - `async mintExchangeAccess(sub: string, principal: string): Promise<{ status: 'ok'; accessToken: string; tokenId: string; expiresIn: number } | { status: 'revoked' } | { status: 'session-cap' }>`
+  - `async mintExchangeAccess(sub: string, principal: string): Promise<{ status: 'ok'; leaseId: string; accessToken: string; tokenId: string; expiresIn: number } | { status: 'revoked' } | { status: 'session-cap' }>` — `leaseId` rides the ok-shape because Task 8's success ledgering needs it
   - `reinstate(doorNameOrId: string, by: string, reason: string): { ok: true } | { error: 'not-found' | 'not-revoked' | 'not-exchange' }`
   - `LeaseIdentity` grows: `{ …existing; subject: string | null; flow: string; tokenId: string | null; sittingPin: string | null; latched: { pin: string; path: string } | null }` — `validateAccess`'s SELECT joins the new columns; **still non-ledgering**
   - `validateByHandle(leaseId: string, tokenId: string): LeaseIdentity | null` — access row exists with that `token_id`, `kind='access'`, unexpired, lease living
@@ -324,7 +324,8 @@ describe('mintExchangeAccess', () => {
     const id = await g.validateAccess(m.accessToken);
     expect(id).toMatchObject({ doorName: 'browser:sub-marcus', scope: 'stream', flow: 'exchange', subject: 'sub-marcus', tokenId: m.tokenId, principal: 'julian' });
     const dump = g.leaseExport();
-    expect((dump.tokens as Array<{kind: string}>).filter((t) => t.kind !== 'access')).toHaveLength(0 + PRE_EXISTING_NON_ACCESS); // no refresh minted for the exchange lease
+    const mine = (dump.tokens as Array<{ lease_id: string; kind: string }>).filter((t) => t.lease_id === m.leaseId);
+    expect(mine.every((t) => t.kind === 'access')).toBe(true); // no refresh row minted for the exchange lease
   });
   test('two mints for one sub = one lease row, two simultaneously-valid tokens', async () => {
     const a = await g.mintExchangeAccess('s', 'julian');
