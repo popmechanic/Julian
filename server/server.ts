@@ -206,6 +206,8 @@ function loadSculptorCredentials(): { access_token: string; expires_at_unix_ms: 
 
 // ── OIDC bearer verification (Pocket ID) ───────────────────────────────────
 const OIDC_ISSUER = process.env.OIDC_ISSUER || process.env.VITE_OIDC_ISSUER || "";
+const SYNC_URL = process.env.VITE_SYNC_URL || "";
+const GATE_URL_ENV = process.env.VITE_GATE_URL || "";
 const verifier = buildVerifier(
   OIDC_ISSUER
     ? {
@@ -215,6 +217,62 @@ const verifier = buildVerifier(
       }
     : null,
 );
+
+// ── Content Security Policy for app shell ───────────────────────────────────
+
+// CSP matches source expressions by scheme, so `https://sync` and `wss://sync`
+// are two distinct sources — a page that both fetches and sockets the sync
+// worker needs both listed. VITE_SYNC_URL is written either way in the wild
+// (`.env` here holds `wss://…`; the deploy skill writes `https://…`), so the
+// derivation runs in both directions rather than assuming an http-form input.
+function bothSchemeForms(url: string): string[] {
+  const swaps: ReadonlyArray<readonly [string, string]> = [
+    ["https://", "wss://"],
+    ["http://", "ws://"],
+    ["wss://", "https://"],
+    ["ws://", "http://"],
+  ];
+  for (const [from, to] of swaps) {
+    if (url.startsWith(from)) return [url, to + url.slice(from.length)];
+  }
+  return [url];
+}
+
+function cspFor(): string {
+  const directives: string[] = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self'",
+  ];
+
+  // Connect-src: self, sync (both http and ws forms), gate, OIDC issuer
+  const connectSrcs = ["'self'"];
+  if (SYNC_URL) {
+    connectSrcs.push(...bothSchemeForms(SYNC_URL));
+  }
+  if (GATE_URL_ENV) {
+    connectSrcs.push(GATE_URL_ENV);
+  }
+  if (OIDC_ISSUER) {
+    connectSrcs.push(OIDC_ISSUER);
+  }
+  directives.push(`connect-src ${[...new Set(connectSrcs)].join(" ")}`);
+
+  // Frame-ancestors and base-uri
+  directives.push("frame-ancestors 'none'");
+  directives.push("base-uri 'self'");
+
+  // Form-action: self + OIDC issuer
+  const formActions = ["'self'"];
+  if (OIDC_ISSUER) {
+    formActions.push(OIDC_ISSUER);
+  }
+  directives.push(`form-action ${formActions.join(" ")}`);
+
+  return directives.join("; ");
+}
 
 async function verifyToken(req: Request): Promise<boolean> {
   if (!OIDC_ISSUER) return true; // No issuer configured = skip auth (local dev)
@@ -1938,7 +1996,9 @@ const server = Bun.serve({
     if (requestedPath !== "/" && appCandidate.startsWith(appDist + "/")) {
       const appAsset = Bun.file(appCandidate);
       if (await appAsset.exists()) {
-        const headers: Record<string, string> = {};
+        const headers: Record<string, string> = {
+          "Content-Security-Policy": cspFor(),
+        };
         // Service worker must not be cached
         if (requestedPath === "/sw.js") {
           headers["Cache-Control"] = "no-cache";
@@ -1947,6 +2007,11 @@ const server = Bun.serve({
       }
     }
 
+    // Memory letters and other static files from WORKING_DIR
+    // DELIBERATELY UNPROTECTED BY CSP: the rendered markdown letters carry inline scripts
+    // (letter-template.css, client-side rendering) that a strict policy would break.
+    // This residual same-origin exposure is the accepted risk recorded in spec §15
+    // (app-DOM boundary, contained to .memory/ prefix).
     const safePath = resolve(WORKING_DIR, requestedPath.slice(1)); // strip leading /
     if (safePath.startsWith(resolve(WORKING_DIR) + "/")) {
       const file = Bun.file(safePath);
@@ -1963,7 +2028,11 @@ const server = Bun.serve({
     // SPA fallback — serve the built app shell for client-side routes
     const indexFile = Bun.file(join(appDist, "index.html"));
     if (await indexFile.exists()) {
-      return new Response(indexFile);
+      return new Response(indexFile, {
+        headers: {
+          "Content-Security-Policy": cspFor(),
+        },
+      });
     }
 
     return new Response("Not Found", { status: 404 });
