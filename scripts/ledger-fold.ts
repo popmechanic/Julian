@@ -72,8 +72,11 @@ export async function appendToLedgerFile(
     // No file yet — this run opens the month.
   }
 
+  // Every run — including the one that opens the month — is marked with its
+  // own timestamp. The first run has no prior text to separate from, so it
+  // skips the horizontal rule; every run after it gets one.
   const marker = `*Appended run — ${runAt.toISOString()}*`;
-  const addition = existing ? `\n\n---\n\n${marker}\n\n${content}` : content;
+  const addition = existing ? `\n\n---\n\n${marker}\n\n${content}` : `${marker}\n\n${content}`;
 
   await fs.writeFile(path, existing + addition, 'utf8');
 }
