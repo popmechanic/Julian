@@ -11,6 +11,10 @@ export interface LedgerEntryWire {
   service: string;
   verb: string;
   detail: string;
+  // Read (part of the wire shape) but not yet rendered: a refused row prints
+  // identically to an allowed one in every table below. Left documented
+  // rather than fixed here, since a `refused:` marker would touch every
+  // pinned row format across all three sections. Future work.
   allowed: number;
 }
 
@@ -36,9 +40,18 @@ export function utcMonthOf(ts: number): string {
   return `${date.getUTCFullYear()}-${month}`;
 }
 
-function isWakingOrPackageVerb(verb: string | undefined): boolean {
-  if (!verb || typeof verb !== 'string') return false;
-  return verb.startsWith('package.') || verb.startsWith('wake');
+/**
+ * "Wakings & package reads" is a *service* section, not a verb pattern: the
+ * governor's ledger writes `service` and `verb` as separate columns, and
+ * every package-service row — `package_list`, `package_read`, and the
+ * `wake_julian`/`visit_agent` tools, which spend the same `package`/`list`
+ * pair — lands here with `service: 'package'` (broker/src/mcp.ts). The
+ * dotted `package.read`/`package.list` spelling is only the internal
+ * policy-map key (broker/src/policy.ts); it never reaches the wire, so it
+ * is never what this predicate tests.
+ */
+function isPackageServiceEntry(entry: LedgerEntryWire): boolean {
+  return typeof entry.service === 'string' && entry.service === 'package';
 }
 
 /**
@@ -47,11 +60,16 @@ function isWakingOrPackageVerb(verb: string | undefined): boolean {
  * The verb arms stand on the verb alone — a `ticket-reused` row with an empty
  * detail is still a theft signal. Gating theft detection on a non-empty detail
  * fails OPEN, and a theft row that misses this predicate is absorbed into a
- * routine count. Only the latch arm needs a detail to read.
+ * routine count. The latch arm matches the two classes a package read's
+ * `detail` actually carries as `class=<cls>` (broker/src/mcp.ts's
+ * `readDetail`, broker/src/services/package.ts): `integrity-latched` (an
+ * unresolved hash mismatch already latched the lease) and `integrity` (the
+ * double-mismatch class) — no producer ever writes the literal string
+ * "integrity latch".
  */
 function isTheftSignal(entry: LedgerEntryWire): boolean {
   if (entry.verb === 'ticket-reused' || entry.verb === 'killed') return true;
-  return typeof entry.detail === 'string' && entry.detail.includes('integrity latch');
+  return typeof entry.detail === 'string' && /\bclass=integrity(-latched)?\b/.test(entry.detail);
 }
 
 interface Partitioned {
@@ -71,7 +89,7 @@ export function partitionEntries(entries: LedgerEntryWire[]): Partitioned {
   const routine: LedgerEntryWire[] = [];
   for (const entry of entries) {
     if (isTheftSignal(entry)) theft.push(entry);
-    else if (isWakingOrPackageVerb(entry.verb)) wakings.push(entry);
+    else if (isPackageServiceEntry(entry)) wakings.push(entry);
     else routine.push(entry);
   }
   return { wakings, theft, routine };

@@ -61,18 +61,22 @@ function fixture(): LedgerEntryWire[] {
       allowed: 0,
     }),
     row({
+      // package_list/wake_julian/visit_agent all ledger as service:'package',
+      // verb:'list' with an empty detail (broker/src/mcp.ts:562).
       ts: at(5, 8, 5),
       sub: 'lease:SESS1',
       service: 'package',
-      verb: 'package.list',
-      detail: 'listed 12 paths',
+      verb: 'list',
+      detail: '',
     }),
     row({
+      // package_read ledgers as service:'package', verb:'read', detail
+      // `path=<p> pin=<pin> class=<cls>` (broker/src/mcp.ts readDetail).
       ts: at(5, 8, 6),
       sub: 'lease:SESS1',
       service: 'package',
-      verb: 'package.read',
-      detail: 'read soul/01-naming.md',
+      verb: 'read',
+      detail: 'path=soul/01-naming.md pin=4299b3b0a1b2 class=ok',
     }),
   ];
 }
@@ -132,8 +136,8 @@ describe('foldEntries — the three sections over the fixture', () => {
         '',
         '| when (UTC) | holder/session | verb | detail |',
         '|---|---|---|---|',
-        '| 2026-08-05 08:05 | lease:SESS1 | package.list | listed 12 paths |',
-        '| 2026-08-05 08:06 | lease:SESS1 | package.read | read soul/01-naming.md |',
+        '| 2026-08-05 08:05 | lease:SESS1 | list |  |',
+        '| 2026-08-05 08:06 | lease:SESS1 | read | path=soul/01-naming.md pin=4299b3b0a1b2 class=ok |',
       ].join('\n'),
     );
   });
@@ -205,11 +209,20 @@ describe('foldEntries — theft is never collapsed into routine', () => {
     );
   });
 
-  test('an integrity latch on a package read surfaces as a theft signal', () => {
-    const detail =
-      'integrity latch: pin moved `cc7f5fe` → `4299b3b`; run package_list, then re-read from the top';
+  test('a class=integrity-latched package read surfaces as a theft signal', () => {
+    const detail = 'path=soul/01-naming.md pin=4299b3b0a1b2 class=integrity-latched';
     const doc = foldEntries(
-      [row({ ts: at(7, 12, 0), sub: 'lease:L5', service: 'package', verb: 'package.read', detail })],
+      [row({ ts: at(7, 12, 0), sub: 'lease:L5', service: 'package', verb: 'read', detail })],
+      MONTH,
+    );
+    expect(sectionOf(doc, 'Theft signals')).toContain(detail);
+    expect(sectionOf(doc, 'Wakings & package reads')).toContain('*(none)*');
+  });
+
+  test('a class=integrity (double-mismatch) package read surfaces as a theft signal', () => {
+    const detail = 'path=soul/01-naming.md pin=none class=integrity';
+    const doc = foldEntries(
+      [row({ ts: at(7, 12, 1), sub: 'lease:L6', service: 'package', verb: 'read', detail })],
       MONTH,
     );
     expect(sectionOf(doc, 'Theft signals')).toContain(detail);
@@ -244,22 +257,22 @@ describe('foldEntries — details are carried whole', () => {
           ts: at(9, 5, 0),
           sub: 'lease:L7',
           service: 'package',
-          verb: 'package.read',
+          verb: 'read',
           detail: 'path=a|b',
         }),
       ],
       MONTH,
     );
     const dataRow = sectionOf(doc, 'Wakings & package reads').split('\n')[4];
-    expect(dataRow).toBe('| 2026-08-09 05:00 | lease:L7 | package.read | path=a\\|b |');
+    expect(dataRow).toBe('| 2026-08-09 05:00 | lease:L7 | read | path=a\\|b |');
   });
 });
 
 describe('foldEntries — the month is a filter, not just a caption', () => {
   test('rows outside the requested UTC month are excluded from every section', () => {
     const other = [
-      { ts: Date.UTC(2026, 6, 31, 23, 59), verb: 'package.read', detail: 'july read' },
-      { ts: Date.UTC(2026, 8, 1, 0, 0), verb: 'package.read', detail: 'september read' },
+      { ts: Date.UTC(2026, 6, 31, 23, 59), service: 'package', verb: 'read', detail: 'july read' },
+      { ts: Date.UTC(2026, 8, 1, 0, 0), service: 'package', verb: 'read', detail: 'september read' },
       { ts: Date.UTC(2026, 6, 15, 0, 0), verb: 'ticket-reused', detail: 'july theft' },
       { ts: Date.UTC(2026, 8, 15, 0, 0), verb: 'socket', detail: 'september socket' },
     ].map((o) => row({ ...o, sub: 'lease:OTHER' }));
@@ -304,14 +317,16 @@ describe('appendToLedgerFile — append-only on a real file', () => {
     }
   }
 
-  test('the first run creates memory/ledger/ and writes the fold', async () => {
+  test('the first run creates memory/ledger/, marks its own run time, and writes the fold', async () => {
     await withTempDir(async (dir) => {
       const path = getLedgerPath(join(dir, 'memory', 'ledger'), MONTH);
       const doc = foldEntries(fixture(), MONTH);
       await appendToLedgerFile(path, doc, new Date(Date.UTC(2026, 7, 13, 1, 32)));
 
       expect((await stat(join(dir, 'memory', 'ledger'))).isDirectory()).toBe(true);
-      expect(await readFile(path, 'utf8')).toBe(doc);
+      expect(await readFile(path, 'utf8')).toBe(
+        `*Appended run — 2026-08-13T01:32:00.000Z*\n\n${doc}`,
+      );
     });
   });
 

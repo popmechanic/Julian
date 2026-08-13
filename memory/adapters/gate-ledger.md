@@ -21,7 +21,12 @@ collapsed to a count:
 
 - `ticket-reused`: a socket ticket used twice
 - `killed`: a token generation rotated, cutting off prior tokens
-- Rows whose detail marks an integrity latch (pin moved, path changed)
+- A `package.read`-shaped row (`service:'package', verb:'read'`) whose
+  detail carries `class=integrity-latched` (an unresolved hash mismatch has
+  already latched the lease) or `class=integrity` (the double-mismatch
+  class) — these are the two real latch classes a read's `path=<p>
+  pin=<pin> class=<cls>` detail ever carries; no producer writes the
+  literal string "integrity latch"
 
 Every such row appears at its timestamp with its `token_id`, and its detail is
 carried whole — never abbreviated, never elided. The detail *is* the evidence;
@@ -42,7 +47,14 @@ Two consequences of that priority are worth knowing before reading a fold:
 The dated files in `memory/ledger/` are append-only. A month's file, once
 written, is only ever added to: each later run lands after a horizontal rule
 and a dated `*Appended run — …*` marker, leaving every byte already on disk
-exactly where it was. Nothing in the fold rewrites or prunes.
+exactly where it was. The run that opens the month gets the same marker,
+just without a rule to separate it from — there is no prior text yet.
+Nothing in the fold rewrites or prunes.
+
+A known gap: the ledger's `allowed` field is read off the wire but not yet
+rendered, so a refused row prints identically to an allowed one in every
+table. Left documented rather than fixed, since a `refused:` marker would
+touch the pinned row format of all three sections. Future work.
 
 The offload to distributed archive (R2) is future work; for now the month files
 are the local record.
