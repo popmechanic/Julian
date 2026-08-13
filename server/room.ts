@@ -48,8 +48,8 @@ const TOOLS = [
 ];
 
 const SERVICES = [
-  { name: 'julian-sync', purpose: 'TinyBase MergeableStore sync (Durable Object); the shared record all doors converge into.', endpoint: 'https://julian-sync.julian-memory.workers.dev', auth: 'Pocket ID OIDC (souls.exe.xyz)' },
-  { name: 'julian-broker', purpose: 'Credential broker — doors get verbs, never keys. Mail verbs (send/list/read/health) for julian-marcus@agentmail.to with daily caps and an audit ledger (`bun scripts/mail-broker.ts --agent-doc`). Send gate applies: draft, show the human, wait. — the gate: doors authenticate with per-door leases (knock: `bun scripts/door-knock.ts`)', endpoint: 'https://julian-broker.julian-memory.workers.dev', auth: 'Door lease (device-flow knock, Marcus approves; see door-knock.ts). Legacy Pocket ID bearers accepted only during the migration window. Service keys held by the gate, never by agent or harness' },
+  { name: 'julian-sync', purpose: 'TinyBase MergeableStore sync (Durable Object); the shared record all doors converge into.', endpoint: 'https://julian-sync.julian-memory.workers.dev', auth: 'Delegated session lease via the gate\'s /exchange (browser tabs; 60s single-use socket tickets), door leases for /export (stream-read+); legacy Pocket ID JWTs only until the sunset ceremony.' },
+  { name: 'julian-broker', purpose: 'Credential broker — doors get verbs, never keys. Mail verbs (send/list/read/health) for julian-marcus@agentmail.to with daily caps and an audit ledger (`bun scripts/mail-broker.ts --agent-doc`). Send gate applies: draft, show the human, wait. — the gate: doors authenticate with per-door leases (knock: `bun scripts/door-knock.ts`)', endpoint: 'https://julian-broker.julian-memory.workers.dev', auth: 'Door lease (device-flow knock, Marcus approves; see door-knock.ts). Legacy Pocket ID bearers accepted only during the migration window. Service keys held by the gate, never by agent or harness; browser sessions trade a Pocket ID login for scoped stream standing at /exchange' },
 ];
 
 export function buildRoomDoc(): string {
