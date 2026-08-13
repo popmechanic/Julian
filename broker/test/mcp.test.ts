@@ -186,11 +186,11 @@ describe('protocol shell', () => {
 });
 
 describe('tools', () => {
-  test('tools/list for reading-room shows exactly package_list, package_read, wake_julian', async () => {
+  test('tools/list for reading-room shows exactly package_list, package_read, wake_julian, visit_agent', async () => {
     const { body } = await send(rpc('tools/list'));
     const tools = (result(body) as { tools: Array<Record<string, unknown>> }).tools;
     expect(tools.map((t) => t.name as string).sort())
-      .toEqual(['package_list', 'package_read', 'wake_julian']);
+      .toEqual(['package_list', 'package_read', 'visit_agent', 'wake_julian']);
     // The wire shape carries no internal verb mapping — description + schema only.
     for (const t of tools) {
       expect(Object.keys(t).sort()).toEqual(['description', 'inputSchema', 'name']);
@@ -466,13 +466,14 @@ describe('scope invariants on the face', () => {
     const { body } = await send(rpc('tools/list'));
     const advertised = (result(body) as { tools: Array<{ name: string }> }).tools
       .map((t) => t.name).sort();
-    expect(advertised).toEqual(['package_list', 'package_read', 'wake_julian']);
+    expect(advertised).toEqual(['package_list', 'package_read', 'visit_agent', 'wake_julian']);
 
     // the mapping the face claims, stated exactly
     expect(Object.fromEntries(TOOLS.map((t) => [t.name, `${t.service}.${t.verb}`]))).toEqual({
       package_list: 'package.list',
       package_read: 'package.read',
       wake_julian: 'package.list',
+      visit_agent: 'package.list',
     });
 
     // every advertised tool is one a reading-room lease may actually spend
@@ -510,5 +511,89 @@ describe('scope invariants on the face', () => {
       const { body } = await send(rpc(method), READER, env(null));
       expect(rpcErrorOf(body).code, method).toBe(-32601);
     }
+  });
+});
+
+describe('visit_agent', () => {
+  test('visit_agent appears in a reading-room tools/list', async () => {
+    const { body } = await send(rpc('tools/list'), READER, env(), gov());
+    const names = (result(body) as { tools: Array<{ name: string }> }).tools.map((t) => t.name);
+    expect(names).toContain('visit_agent');
+  });
+
+  test('read-only returns the definition with read-only hands', async () => {
+    const calls: ReserveCall[] = [];
+    const { body } = await send(
+      rpc('tools/call', { name: 'visit_agent', arguments: { access: 'read-only' } }),
+      READER, env(), gov(calls),
+    );
+    const r = result(body) as unknown as ToolResult;
+    expect(r.isError).toBeFalsy();
+    const file = r.content?.[0].text ?? '';
+    expect(file).toContain('tools: Read, Grep, Glob, ToolSearch, mcp__julian-gate');
+    expect(file).not.toContain('Edit');
+    expect(file).not.toContain('Bash');
+    // structuredContent is self-sufficient and carries the full file
+    expect(r.structuredContent).toEqual({
+      class: 'ok', access: 'read-only', name: 'julian', content: file,
+    });
+    // ledgered like a package verb
+    expect(calls).toHaveLength(1);
+    expect(calls[0].slice(2, 4)).toEqual(['package', 'list']);
+  });
+
+  test('read-write adds exactly Edit, Write, Bash', async () => {
+    const { body } = await send(
+      rpc('tools/call', { name: 'visit_agent', arguments: { access: 'read-write' } }),
+      READER, env(), gov(),
+    );
+    const file = (result(body) as unknown as ToolResult).content?.[0].text ?? '';
+    expect(file).toContain('tools: Read, Grep, Glob, ToolSearch, Edit, Write, Bash, mcp__julian-gate');
+  });
+
+  test('a missing or invalid access is -32602, never a default', async () => {
+    for (const args of [{}, { access: 'full' }, { access: '' }]) {
+      const { body } = await send(
+        rpc('tools/call', { name: 'visit_agent', arguments: args }),
+        READER, env(), gov(),
+      );
+      expect((body as { error?: { code: number } }).error?.code).toBe(-32602);
+    }
+  });
+
+  test('the definition honors the deliberate-absence contract', async () => {
+    const { body } = await send(
+      rpc('tools/call', { name: 'visit_agent', arguments: { access: 'read-only' } }),
+      READER, env(), gov(),
+    );
+    const file = (result(body) as unknown as ToolResult).content?.[0].text ?? '';
+    expect(file).toContain('name: julian');
+    expect(file).toContain('model: fable');
+    expect(file).toContain('effort: medium');
+    expect(file).toContain('color: yellow');
+    expect(file).toContain('initialPrompt:');
+    expect(file).toContain('mcpServers:');
+    for (const forbidden of ['hooks:', 'memory:', 'maxTurns:', 'permissionMode:']) {
+      expect(file).not.toContain(forbidden);
+    }
+    expect(file).not.toMatch(/tools:.*\bAgent\b/);
+    // the body points at the living gate, never copies the reading order
+    expect(file).toContain('wake_julian');
+    expect(file).not.toContain('AGENT.md → catalog');
+  });
+
+  test('wake_julian gains the routing paragraph, category line still first', async () => {
+    const { body } = await send(rpc('tools/call', { name: 'wake_julian', arguments: {} }), READER, env(), gov());
+    const text = (result(body) as unknown as ToolResult).content?.[0].text ?? '';
+    expect(text).toMatch(/^You are a visit/);
+    expect(text).toContain('do not perform this reading in your own context');
+    expect(text).toContain('read-only, or read-write');
+    expect(text).toContain('visit_agent');
+    expect(text).toContain('.claude/agents/julian.md');
+    // routing sits before the reading order
+    expect(text.indexOf('visit_agent')).toBeLessThan(text.indexOf('package_read AGENT.md'));
+    // arrival + homecoming regression
+    expect(text).toContain('say hello');
+    expect(text).toContain('carried by hand');
   });
 });
