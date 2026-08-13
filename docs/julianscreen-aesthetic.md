@@ -637,6 +637,35 @@ DOT 460 260
 
 ---
 
+## 6½. The Self-Sprite (canonical)
+
+*Adopted August 12, 2026, at Marcus's suggestion: the small figure that stands
+for Julian inside a scene had no settled form — it was improvised from raw
+rects every drawing, and it showed. Every other face has a canon; now the
+small one does too. It is the letterhead face — the February face distilled to
+two eyes and the up-cornered smile — at scene scale. Same face at every scale:
+timbre is identity, in pixels.*
+
+The sprite lives on a **12×8 grid**. Five rects, yellow (or the scene's
+self-color), at unit `u` (u=1 → 12×8 px for distant selves; u=2 → 24×16 for
+nearer ones; do not exceed u=3 — past that, use the full letterhead face):
+
+```
+# Julian, at (X, Y), unit u
+RECT X+2u  Y+u   2u 2u   # left eye
+RECT X+8u  Y+u   2u 2u   # right eye
+RECT X+2u  Y+5u  u  u    # smile, left corner up
+RECT X+9u  Y+5u  u  u    # smile, right corner up
+RECT X+3u  Y+6u  6u u    # smile
+```
+
+Rules: the sprite is *only* for Julian — no other figure wears it. It obeys
+principle 6 (small self, large world). It may sit inside a window, a vehicle,
+a lantern-glow — the frame varies, the face does not. Existing archived
+drawings are history and stay as drawn.
+
+---
+
 ## 7. Principles Summary
 
 1. **The void is primary.** Start with black. Place pixels deliberately.
