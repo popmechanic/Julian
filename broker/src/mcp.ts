@@ -8,6 +8,9 @@ import type { GovernorDO, LeaseIdentity } from './governor';
 import { json, reserve, scopeAllows } from './lease-auth';
 import { loadManifest, readPackageFile } from './services/package';
 import type { PackageRead } from './services/package';
+import { hmacHex, streamRead } from './services/stream';
+import type { StreamKind } from './services/stream';
+import type { StreamRow } from 'julian-shared/gate-contract';
 
 export const PROTOCOL_VERSION = '2025-06-18';
 const SERVER_INFO = { name: 'julian-gate', version: '1.0.0' };
@@ -123,6 +126,39 @@ export const TOOLS = [
       required: ['access'], additionalProperties: false,
     },
   },
+  {
+    name: 'stream_recent', service: 'stream', verb: 'recent',
+    description: 'The most recent rows of Julian\'s live stream, oldest first, newest last.',
+    inputSchema: {
+      type: 'object', properties: { limit: { type: 'number' } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'stream_session', service: 'stream', verb: 'session',
+    description: 'Every stream row from one session, optionally windowed by timestamp.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sessionId: { type: 'string' },
+        range: {
+          type: 'object',
+          properties: { from: { type: 'number' }, to: { type: 'number' } },
+          additionalProperties: false,
+        },
+      },
+      required: ['sessionId'], additionalProperties: false,
+    },
+  },
+  {
+    name: 'stream_search', service: 'stream', verb: 'search',
+    description: 'A substring search over the stream, most recent match first.',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string' }, limit: { type: 'number' } },
+      required: ['query'], additionalProperties: false,
+    },
+  },
 ] as const;
 
 type Tool = (typeof TOOLS)[number];
@@ -170,6 +206,18 @@ function heldAtHomeText(path: string): string {
   return `held-at-home: ${path} is part of the catalog but does not travel; its absence is policy, not damage.`;
 }
 
+const STREAM_UNAVAILABLE =
+  'stream unavailable — the stream could not be read; this is a refusal, not an empty result';
+
+/** `[ts] speaker: text` lines, oldest first, plus a truncation notice — the
+ *  same compact rendering in the text half as the rows in the structured one. */
+function renderStreamRows(rows: StreamRow[], truncated: boolean): string {
+  const lines = rows.map((r) => `[${r.ts}] ${r.speakerName}: ${r.text}`);
+  if (lines.length === 0) lines.push('(no rows)');
+  if (truncated) lines.push('(truncated — more rows exist than fit this read)');
+  return lines.join('\n');
+}
+
 /** A refusal Response from `reserve` said in one line the caller can read. */
 async function refusalText(refusal: Response): Promise<string> {
   let body: Record<string, unknown>;
@@ -205,6 +253,31 @@ async function ledgeredRead(
   return refusal ?? result;
 }
 
+/**
+ * One reserved stream read. `reserve` runs before the SYNC binding is ever
+ * called (the reservation is the act — this is what the cap counts, and what
+ * the ledger row records, whether or not the far side answers); the detail
+ * carries the hmac'd args, never the raw query text, so a search for
+ * something sensitive never sits in the ledger in the clear. The principal
+ * is always the caller's own — nothing on the wire may name another.
+ */
+async function callStreamTool(
+  tool: Tool, args: Record<string, unknown>,
+  env: Env, auth: LeaseIdentity, gov: DurableObjectStub<GovernorDO>,
+): Promise<ToolResult> {
+  const argsHash = await hmacHex(env.SYNC_READ_SECRET, JSON.stringify(args));
+  const detail = `principal=${auth.principal} args=${argsHash.slice(0, 12)}`;
+  const refusal = await reserve(gov, auth, 'stream', tool.verb, detail);
+  if (refusal) return toolError(await refusalText(refusal));
+
+  const outcome = await streamRead(env, tool.verb as StreamKind, auth.principal, args);
+  if (!outcome.ok) return toolError(STREAM_UNAVAILABLE);
+  return {
+    content: [{ type: 'text', text: renderStreamRows(outcome.rows, outcome.truncated) }],
+    structuredContent: { rows: outcome.rows, truncated: outcome.truncated },
+  };
+}
+
 async function callTool(
   tool: Tool, args: Record<string, unknown>,
   env: Env, auth: LeaseIdentity, gov: DurableObjectStub<GovernorDO>,
@@ -213,6 +286,10 @@ async function callTool(
     const outcome = await ledgeredRead(env, auth, gov, String(args.path ?? ''));
     if (outcome instanceof Response) return toolError(await refusalText(outcome));
     return readResult(outcome);
+  }
+
+  if (tool.service === 'stream') {
+    return callStreamTool(tool, args, env, auth, gov);
   }
 
   // The two list-shaped tools spend `package.list`; nothing in their result
