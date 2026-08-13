@@ -1999,8 +1999,9 @@ const server = Bun.serve({
         const headers: Record<string, string> = {
           "Content-Security-Policy": cspFor(),
         };
-        // Service worker must not be cached
-        if (requestedPath === "/sw.js") {
+        // Service worker and the app shell must not be cached — a cached
+        // shell strands browsers on a stale bundle across deploys.
+        if (requestedPath === "/sw.js" || requestedPath === "/index.html") {
           headers["Cache-Control"] = "no-cache";
         }
         return new Response(appAsset, { headers });
@@ -2031,6 +2032,8 @@ const server = Bun.serve({
       return new Response(indexFile, {
         headers: {
           "Content-Security-Policy": cspFor(),
+          // Never let the shell cache: a stale shell pins a stale bundle.
+          "Cache-Control": "no-cache",
         },
       });
     }

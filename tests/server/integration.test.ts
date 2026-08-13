@@ -161,3 +161,20 @@ describe("HTTP integration tests", () => {
     expect(resp.status).toBe(409);
   });
 });
+
+describe("app shell caching", () => {
+  // The B3 deploy stranded browsers on a heuristically-cached index.html for
+  // most of an hour (2026-08-13): the shell shipped with no Cache-Control at
+  // all. Hashed assets may cache; the shell itself must always revalidate.
+  test("GET / (SPA shell) is served with Cache-Control: no-cache", async () => {
+    const resp = await fetch(`${BASE_URL}/`);
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("cache-control")).toBe("no-cache");
+  });
+
+  test("GET /index.html is served with Cache-Control: no-cache", async () => {
+    const resp = await fetch(`${BASE_URL}/index.html`);
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("cache-control")).toBe("no-cache");
+  });
+});

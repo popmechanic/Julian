@@ -211,3 +211,14 @@ describe('createTicketUrlProvider — the total ticket URL provider (R2-D1)', ()
     expect(url).not.toMatch(/token=/);
   });
 });
+
+describe('onSyncPhase — subscription races (the lying pill, 2026-08-13)', () => {
+  // A subscriber that attaches after boot-time transitions must not display a
+  // stale phase forever: subscribing delivers the current phase immediately.
+  test('a late subscriber is called with the current phase at subscribe time', () => {
+    const seen: string[] = [];
+    const unsub = onSyncPhase((p) => seen.push(p));
+    expect(seen).toEqual([syncPhase()]);
+    unsub();
+  });
+});

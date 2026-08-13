@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>full-app bisection harness</title>
+    <script type="module">
+      // Runs BEFORE the app entry: spy console, plant user, stub /api/health.
+      window.__bootlog = [];
+      const log = (m) => { window.__bootlog.push(m); console.log('[harness]', m); };
+      window.addEventListener('unhandledrejection', (e) =>
+        log(`UNHANDLED REJECTION: ${e.reason?.stack?.slice(0, 500) ?? String(e.reason)}`));
+      window.addEventListener('error', (e) => log(`ERROR: ${e.message} @ ${e.filename}:${e.lineno}`));
+
+      const issuer = 'https://souls.exe.xyz';
+      const clientId = '0143f667-3c75-4779-b16c-e2709ffdc049';
+      localStorage.setItem(`oidc.user:${issuer}:${clientId}`, JSON.stringify({
+        id_token: 'fake.id.token', session_state: 'fake-session',
+        access_token: 'fake.access.token', refresh_token: 'fake-refresh',
+        token_type: 'Bearer', scope: 'openid profile',
+        profile: { sub: 'harness-sub', iss: issuer, aud: clientId, exp: 9999999999, iat: 0 },
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+      }));
+      log('planted synthetic user');
+
+      const origFetch = window.fetch.bind(window);
+      window.fetch = (...args) => {
+        const url = String(args[0]);
+        log(`fetch → ${url.slice(0, 90)}`);
+        if (url.includes('/api/health')) {
+          log('stubbing /api/health as needsSetup:false');
+          return Promise.resolve(new Response(JSON.stringify({
+            status: 'ok', sessionActive: false, sessionId: null,
+            needsSetup: false, authMethod: 'oauth', version: 'harness',
+          }), { status: 200, headers: { 'content-type': 'application/json' } }));
+        }
+        return origFetch(...args);
+      };
+      const OrigWS = window.WebSocket;
+      window.WebSocket = function (url, protocols) {
+        log(`WebSocket → ${String(url).slice(0, 90)}`);
+        return new OrigWS(url, protocols);
+      };
+      window.WebSocket.prototype = OrigWS.prototype;
+      Object.assign(window.WebSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
+      log('spies armed; importing real app entry');
+      import('/src/main.ts');
+    </script>
+  </head>
+  <body><div id="app"></div></body>
+</html>

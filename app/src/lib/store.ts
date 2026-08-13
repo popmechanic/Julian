@@ -47,6 +47,10 @@ export function syncPhase(): SyncPhase {
 }
 export function onSyncPhase(fn: (p: SyncPhase) => void): () => void {
   phaseListeners.add(fn);
+  // Deliver the current phase at subscribe time: transitions that happened
+  // before a subscriber attached (boot races the UI) must not leave it
+  // showing a stale phase forever.
+  fn(phase);
   return () => phaseListeners.delete(fn);
 }
 
