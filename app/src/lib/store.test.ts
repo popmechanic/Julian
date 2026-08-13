@@ -103,7 +103,9 @@ describe('createTicketUrlProvider — the total ticket URL provider (R2-D1)', ()
     expect(url).toBe('wss://sync.example/julian/chat?ticket=jst_xyz');
   });
 
-  test('an induced mint failure (throws twice, then succeeds) does not stop the loop', async () => {
+  // The retry arm: ExchangeClient absorbs fetch rejections into {kind:'retry'},
+  // so a dead network drives the `'after' in t` sleep, never the catch belt.
+  test('an induced fetch failure (client returns retry twice, then succeeds) does not stop the loop', async () => {
     vi.useFakeTimers();
     try {
       const fetchImpl = vi
@@ -120,6 +122,39 @@ describe('createTicketUrlProvider — the total ticket URL provider (R2-D1)', ()
       const url = await pending;
       expect(url).toBe('wss://sync.example/julian/chat?ticket=jst_ok');
       expect(fetchImpl).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The catch belt: a client whose ticket() REJECTS (in production, `access()`
+  // awaits getJwt() outside any try, so a rejecting getJwt makes ticket()
+  // reject for real). If that escaped the provider, RWS's _connectLock would
+  // be held forever and the socket would never reconnect — R2-D1.
+  test('an induced mint failure (client throws twice, then succeeds) does not stop the loop', async () => {
+    vi.useFakeTimers();
+    try {
+      const ticket = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('getJwt exploded'))
+        .mockRejectedValueOnce(new Error('getJwt exploded'))
+        .mockResolvedValueOnce({ ticket: 'jst_ok' });
+      const client = { ticket, terminalCount: () => 0 } as unknown as ExchangeClient;
+      const provideUrl = createTicketUrlProvider(client, 'wss://sync.example', () => {});
+
+      // Attach the handler synchronously: totality is the claim, so a
+      // rejection must be observed as a failed assertion, not as an
+      // unhandled-rejection crash somewhere else in the run.
+      let rejection: unknown = null;
+      const settled = provideUrl().catch((e: unknown) => {
+        rejection = e;
+        return '<the provider rejected>';
+      });
+      await vi.runAllTimersAsync();
+      const url = await settled;
+      expect(rejection).toBeNull();
+      expect(url).toBe('wss://sync.example/julian/chat?ticket=jst_ok');
+      expect(ticket).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
     }
