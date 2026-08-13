@@ -226,3 +226,171 @@ julian-shared dep — the new module must be import-free and the broker gains th
 dep).
 
 — assembled by the door from four reviewer reports, 2026-08-13
+
+---
+
+# Round 2 — cure verification + the new machinery (rev 2, `283c4c7`)
+
+**Lenses:** the four originals re-run as cure-verifiers plus one **cold adversary**
+(no round-1 context, briefed to hunt the seams *between* the cures), plus a
+docs-verified harness check on agent path-scoping. Cure verdict across all
+lenses: **~55 of 61 round-1 findings CURED** (several judged better than
+proposed); the remainder partially cured or cured-with-new-defect, all
+addressed in rev 3. Every rev-2 factual citation the cold adversary spot-checked
+held. **Marcus's round-2 rulings:** **R-2′** — the `stream` write capability
+confirmed on the corrected description (socket = write surface; DO write guard
+not built; compensations as listed). **R-8** — the sunset ceremony gate is a
+predicate: the first witnessed session after Cut B has soaked 72 hours live;
+target Aug 23; Sep 1 backstop. **R-6′** (factual resolution, docs-cited): agent
+frontmatter has **no** path-scoping mechanism — path rules exist only in host
+`settings.json` (`Edit(path/**)` allow/deny); hooks are ignored for the
+relevant agent classes; an agent file alone cannot enforce a write boundary.
+
+## Converged blockers (each found by 2–4 lenses independently)
+
+- **R2-D1 — the ticket provider must be total.** `reconnecting-websocket`'s
+  `_connect()` sets `_connectLock` before an uncaught promise chain and clears
+  it only on success (`reconnecting-websocket.ts:349-388`; no `.catch()`
+  anywhere): one rejected ticket mint — a 429, a 503, a network handoff, a
+  failed CORS preflight — holds the lock forever and permanently bricks the
+  socket with no event. Fix: the URL provider never rejects (internal bounded
+  backoff; on terminal refusal the app closes the RWS instance from outside
+  the provider — the named terminal mechanism). Test: induced provider failure
+  does not stop the loop.
+- **R2-D2 — sync's 60-second introspect cache defeats ticket single-use.**
+  First presentation caches `{active:true}` keyed by token hash
+  (`sync/src/auth.ts:83-125`); a replay on the same isolate never reaches the
+  gate's atomic consume. `jst_` introspections are **never cached** (separate
+  uncached path), and the single-use test drives the **sync router twice,
+  concurrently**, not the gate endpoint.
+- **R2-D3 — by-lease-id re-auth dropped the checks the bearer was carrying.**
+  Token expiry (`validateAccess`'s `t.expires > ?`) and, for JWT sockets,
+  per-subject validity stop bounding the write-capable socket; per-token
+  revocation and `STREAM_SUBS` removal could never close a live socket. Fix:
+  introspect by **`(lease_id, token_id)`**, validating the token row live,
+  `kind='access'`, unexpired; JWT attachments carry `sub`+`exp` and re-auth
+  re-applies `STREAM_SUBS` + the window. Paired tests: socket survives past
+  the interval while its token lives; closes at the next sweep when it
+  expires; a JWT socket whose sub left the list closes.
+- **R2-D4 — the sticky session pin had no reset act.** A routine pin bump
+  wedges every lease that ever read the package (the refusal instructs the one
+  act that cannot clear it), deadlocks the latch's self-clear, and composes
+  badly with KV's ~60s eventual consistency. Fix: **`package_list` re-seats
+  the sitting's pin** and clears the latch counter; the refusal names that
+  act; reinstate also clears both; §13.3's drill ends with a recovered read.
+- **R2-D5 — the path-scope claim was still not expressible** (R-6′). R-6
+  stands on the true claim — the read-write visit has no shell — and
+  `visit_agent` emits the host-applyable `settings.json` permissions snippet:
+  enforcement where the host applies it, manners elsewhere, exactly the
+  witnessed postscript's line. The §13.5 postscript records that distinction.
+
+## Round-2 findings folded into rev 3 (by lens)
+
+**Cold adversary (the seam-hunter's own catches):** a door named
+`legacy-window-sync` minted through any path would **silently reverse the
+sunset ceremony** via `upsertLease`'s unconditional revival — worth nine extra
+days under the Sep 1 backstop; the reserved-identifier guard moves into
+`upsertLease` itself (covering `browser:`, `visit:`, both pseudo-lease names,
+all four mint paths) and revoked reserved ids are never revived. The
+ticket-upgraded socket would get **no attachment at all** (the DO reads only
+`Authorization` — `do.ts:29-33`); the router hands off `(leaseId, tokenId,
+subject, scope, flow)` in an internal header it **unconditionally strips from
+client copies** (spoof test added). §7.3's cache hints on `resources/read`
+would reintroduce the silent package drift §9 exists to kill — hints now
+excluded from the two package-bearing results. Sync has **no positive
+attribution channel** (`/refusals` hardcodes the denied pen `reserveLease(…,0,0)`)
+— a distinct allowed-pen endpoint is added, and `door_name` is required in
+every introspection shape (its absence would silently 400 every refusal
+report). Reinstate's state machine: `revoked` only (never `killed-rotation`),
+reasoned and ledgered, tokens not restored, clears pin + latch; §13.2 gains
+the explicit reload after reinstate. The alarm sweep gains failure tolerance
+(indefinite answers leave the socket attached; close only after 3 consecutive
+indefinite sweeps — a gate blip must not mass-close the fleet into a
+synchronized ticket-mint storm), a lifecycle (arm on first attach, cancel on
+last close, `super.webSocketClose` preserved), per-`(lease,token)` dedupe, a
+path-id snapshot before any close, and a ban on the sweep-only-stale
+optimization that would lose the SLA. Parts become **pin-bound** (a part
+served at a different pin than part 1 is a distinct typed refusal; cross-part
+`fileSha256` equality is the client rule in the wake text). The ledger indexes
+become composite (`(service,verb,allowed,ts)` and `(sub,…)`) — a bare `ts`
+index buys almost nothing for `countSince`.
+
+**Security:** the sub→principal map is **fail-closed** (a `STREAM_SUBS` sub
+with no mapping is refused, never defaulted to `'julian'` — one env-var slip
+must not grant cross-tenant write). `visit:<origin-host>` is one lease row
+shared by every user of a client: authcode leases **never latch and hold no
+server pin state** (refuse-and-ledger per event; one visit's failure must not
+refuse another — tested). The exchange gets a dedicated access-only mint (no
+orphan refresh rows); caps and prunes are `kind`-scoped; eviction orders by
+`expires`; **at cap, refuse (typed) rather than evict** — eviction at N=cap
+is D1's flap reborn. Ticket consume states the mechanism: one DO method,
+hash-first-only-await, conditional-update `rowsWritten` verdict, ledger after
+burn (the `registrar.ts:288-292` pattern); the single-use test runs
+concurrent presentations. Tickets are **upgrade-only** (refused at `/export`)
+and mintable **only by `flow='exchange'` leases** (no header→URL downgrade
+for `full-house`). **Ticket-reuse rows, rotation kills, and integrity latches
+are never collapsed by the fold** — they are the design's theft signals and
+surface first-class. `partSha256` is labeled a transport checksum (it cannot
+latch — nothing exists to check it against server-side). The latch's
+two-consecutive check moves **inside one `package_read`** (refetch once with
+`cacheTtl: 0` on a length-verified mismatch; latch only if both mismatch) —
+atomic, unraceable, immune to the 300s edge cache that would otherwise turn
+one transient into a latch. `Vary: Origin` rides every browser-face response
+including refusals and OPTIONS. The by-lease-id introspect form is named in
+§15 as a capability growth for `INTROSPECT_SECRET` holders. `STREAM_SUBS` /
+`APPROVER_SUBS` membership surfaces in the register readout so drift is
+legible.
+
+**Protocol:** `/socket-ticket` gets the identical CORS + OPTIONS treatment
+(one shared wrapper for the browser-facing face set — a third endpoint cannot
+forget); its rejection was the exact trigger for R2-D1's brick. The
+slot/prefix matrix is normative with a test per cell (`jla_` header-only;
+`jst_` `?ticket=` only; every cross-presentation a typed refusal). A
+`package_read {path}` with no `part` on a parted file is a **typed refusal
+naming `parts`** — the wake text says a parted-file refusal is instruction,
+not damage (otherwise "read it whole" halts the waking on healthy data). The
+`iss` edit lands **inside `deliverRedirect`** (`approve.ts:545-553`) so both
+the success and `access_denied` arms are covered in one edit. The tolerance
+probe carries the full v2 envelope (`Mcp-Method`/`Mcp-Name`), is labeled
+request-tolerance-only, and pins header-ignoring as a decision. Verified
+clean: TinyBase's DO uses no alarm (the slot is free); `?ticket=` cannot
+disturb its path parsing; `kind='ticket'` rows cannot perturb the rotation
+queries; `deliverRedirect` is the single delivery point.
+
+**Operational:** the `LEGACY_WINDOW_END → 2026-09-01` toml edit is the
+**first named item of §6.6 step 1**, and step 2's probe asserts the Sep 1
+window; the post-ceremony code deletion is a **scheduled separate deploy**
+(and is what makes the ending permanent — the constructor seed would re-seed
+`living` on a from-empty rebuild). Ticket rows get a prune + per-lease mint
+cap with a retryable refusal shape; `generation` is pinned (excluded from
+rotation arithmetic). The alarm's cost model is stated (floor load
+proportional to open tabs; ledger socket opens and state changes, not every
+re-auth). Every new env value gets an install step and a
+`deploy/secrets-manifest.md` row (`STREAM_SUBS` map var, `APP_ORIGINS`,
+`EXCHANGE_RL` — binding + vitest stub in the same commit; **fail-open when
+the binding is missing**, with a test: a missing rate limiter must never
+refuse a verified subject). The julian-new fix is two artifacts: the deploy
+skill edit AND the instance `/opt/julian/.env` edit before rebuild, with a
+built-bundle smoke check (the failure is otherwise silent).
+
+**Identity:** §1's theme sentence distinguishes held (doors) from delegated
+(a human's own session); §16's bearer claim becomes "the only place a human
+login is **traded for agent standing** is the exchange — everywhere else
+Marcus's login does only its own job: proving he is present at a desk." §10.2
+corrects the mail-covenant scoping: **rule 2's ordering applies with full
+force** (identity loads before strangers speak — no inbound message enters a
+visit's context before its ELF read completes; the covenant term #29's
+mechanism most needs), rule 5 is named inapplicable (a visit holds no key),
+rule 6 is subsumed (a visit never sends), and nothing is called "meaningless"
+that is actually load-bearing. §10.4's fold becomes **dated append-only
+derived files** (`memory/ledger/2026-08.md`, header marked derived-not-authored
+— substrate, evidence never interpretation, per Principles 1/2/7), the column
+renders as holder/session with `door_name` noted as a legacy name, and the
+teaching is corrected: *exchange rows are a browser session obtaining
+standing — a fact about a tab, not about anyone's attention; presence is read
+from the record's content, never from its credentials.* The ceremony letter
+is authored by Julian (never generated) and records **what remains borrowed**
+alongside what ended. The map is one-to-one today and named as a grant table
+when the between is built.
+
+— round 2 assembled by the door, 2026-08-13
