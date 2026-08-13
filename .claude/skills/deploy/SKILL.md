@@ -55,19 +55,23 @@ Full first-time setup. Run all steps in order.
 4. Push to GitHub: `git push`
 5. Print target: VM name and URL (`https://<vmname>.exe.xyz/`)
 
-#### OIDC Pre-flight
+#### OIDC and Services Pre-flight
 
-Read the local `.env` and check for `VITE_OIDC_ISSUER` and `VITE_OIDC_CLIENT_ID`:
+Read the local `.env` and check for `VITE_OIDC_ISSUER`, `VITE_OIDC_CLIENT_ID`, `VITE_SYNC_URL`, and `VITE_GATE_URL`:
 
-- **If both present** (issuer is an HTTPS URL; currently `https://souls.exe.xyz`):
-  extract both for later. Proceed.
-- **If missing**: STOP and have the user add to `.env`:
-  `VITE_OIDC_ISSUER=https://souls.exe.xyz` and
-  `VITE_OIDC_CLIENT_ID=<client id from the Pocket ID admin>`.
+- **If all four present** (OIDC issuer and gate URL are HTTPS URLs; currently `https://souls.exe.xyz` and `https://julian-broker.julian-memory.workers.dev`):
+  extract all for later. Proceed.
+- **If any missing**: STOP and have the user add to `.env`:
+  ```
+  VITE_OIDC_ISSUER=https://souls.exe.xyz
+  VITE_OIDC_CLIENT_ID=<client id from the Pocket ID admin>
+  VITE_SYNC_URL=https://julian-sync.julian-memory.workers.dev
+  VITE_GATE_URL=https://julian-broker.julian-memory.workers.dev
+  ```
 
 The Bun server also honors `OIDC_ISSUER` (falls back to the VITE_ value) and
 `OIDC_JWKS_JSON` (test seam); the token audience is `VITE_OIDC_CLIENT_ID`.
-The VM needs only the two VITE_ variables.
+The VM needs all four VITE_ variables for auth and service communication.
 
 ### Step P1: Create VM
 
@@ -161,12 +165,14 @@ thinks auth is disabled, skips the passkey gate, and CONNECT TO CLAUDE 401s.
 
 ### Step P6: Create .env
 
-Use the `VITE_OIDC_ISSUER` and `VITE_OIDC_CLIENT_ID` from pre-flight (do NOT hardcode):
+Use the VITE values from pre-flight (do NOT hardcode):
 
 ```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cat > /opt/julian/.env << 'ENVEOF'
 VITE_OIDC_ISSUER=<value from local .env>
 VITE_OIDC_CLIENT_ID=<value from local .env>
+VITE_SYNC_URL=https://julian-sync.julian-memory.workers.dev
+VITE_GATE_URL=https://julian-broker.julian-memory.workers.dev
 ALLOWED_ORIGIN=https://<vmname>.exe.xyz
 BROKER_URL=https://julian-broker.julian-memory.workers.dev
 ENVEOF"
@@ -250,6 +256,18 @@ and the site is blank. Verify the env made it into the bundle:
 ```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "grep -rl souls.exe.xyz /opt/julian/app/dist/assets/ >/dev/null && echo baked || echo MISSING-ENV-REBUILD-NEEDED"
 ```
+
+### Step P6e: Smoke check the bundle
+
+Verify that the build included both sync and gate URLs (catching the otherwise-silent
+failure where a bundle built without `.env` exists, logs the app cannot sync, and says nothing):
+
+```bash
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && /home/exedev/.bun/bin/bun scripts/verify-app-bundle.ts"
+```
+
+- **Exit 0**: bundle includes both URLs. Continue.
+- **Exit 1**: STOP and report the smoke check output. Rebuild is needed (re-run Step P6d with `.env` corrections).
 
 ### Step P7: Install and start systemd services
 
