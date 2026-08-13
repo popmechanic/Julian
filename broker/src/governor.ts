@@ -926,6 +926,36 @@ export class GovernorDO extends DurableObject {
     };
   }
 
+  // ── package state: sitting pin and integrity latch ────────────────────────
+  //
+  // Three deliberately dumb writes. The *policy* — who may seat a pin, when a
+  // latch may be cleared — lives in Task 16's read path, where the reviewer
+  // can see it whole; this file only ever does what it is told. All three are
+  // silent no-ops on an unknown lease id: an `UPDATE … WHERE lease_id = ?`
+  // that matches no row writes nothing and throws nothing, which is exactly
+  // the shape "no such lease" wants here.
+
+  /**
+   * Seat a door on a new pin. The reset act clears the latch counter with it
+   * (R2-D4): a fresh `package_list` is a fresh sitting, and a latch that
+   * belonged to the pin just left behind has nothing left to be about.
+   */
+  seatSitting(leaseId: string, pin: string): void {
+    this.sql.exec('UPDATE leases SET sitting_pin = ?, latch = NULL WHERE lease_id = ?', pin, leaseId);
+  }
+
+  /** Store the one `(pin, path)` a door is refused on until it clears. */
+  setLatch(leaseId: string, pin: string, path: string): void {
+    this.sql.exec(
+      'UPDATE leases SET latch = ? WHERE lease_id = ?', JSON.stringify({ pin, path }), leaseId,
+    );
+  }
+
+  /** Clear the latch without touching the sitting pin underneath it. */
+  clearLatch(leaseId: string): void {
+    this.sql.exec('UPDATE leases SET latch = NULL WHERE lease_id = ?', leaseId);
+  }
+
   legacyAllowed(): boolean {
     return this.leaseLiving(LEGACY_LEASE_ID);
   }
