@@ -72,7 +72,18 @@ beforeAll(async () => {
       PIN_COMPARE_BASE: { type: 'plain_text', value: `${fixture.url}/compare/main...` },
       PUBLIC_URL: { type: 'plain_text', value: base },
       MCP_RESOURCE_URL: { type: 'plain_text', value: `${base}/mcp` },
-    },
+      // `wrangler.toml` binds SYNC to the *deployed* julian-sync worker, which
+      // does not exist beside a lone `unstable_startWorker` run — workerd
+      // refuses to start on the dangling service reference. Bind an in-process
+      // fetcher instead, the same refusal the workers-pool config installs
+      // (`vitest.config.ts`): the `/mcp` face under test never calls SYNC, and
+      // if it ever starts to, this stub makes the omission loud rather than
+      // letting a harness read silently reach the real stream.
+      SYNC: {
+        type: 'fetcher',
+        fetcher: async () => new Response('sync stub: not wired in tests', { status: 500 }),
+      },
+    } as Parameters<typeof unstable_startWorker>[0]['bindings'],
   });
   await worker.ready;
 });

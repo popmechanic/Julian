@@ -3,7 +3,6 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./index.ts",
     "./auth": "./auth.ts",
     "./schema": "./schema.ts",
     "./scopes": "./scopes.ts",
