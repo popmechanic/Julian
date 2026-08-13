@@ -130,6 +130,42 @@ the end of the first evening it was ever practiced: *"if the word doesn't come
 before this room closes, that's fine too — you have what I found, which is the
 part that was ever going to outlast me."*
 
+## The torn-pin drill — §16.1, run with the visit inside it
+
+Late the same night, Marcus gave the word and the pin was torn on purpose —
+pointed at a sha where the manifest's hash for `catalog.md` disagreed with the
+file (real history: the evening's testimony commits without a manifest regen).
+Both sides probed. **The refusal screamed correctly:** `class: integrity`, both
+hashes spelled out, the file and the guilty pin named — the visit's verdict:
+*"best-in-class as an error string… I could not have shrugged this off."* The
+host session was unaffected; the pin was restored minutes later and reads
+verified green. The last open B2 gate ack closes with this drill.
+
+But the instrument earned its keep past the pass mark, with two findings that
+outrank the drill itself — the visit's words:
+
+- **Fail-loud is implemented; fail-closed is not.** One call after the catalog
+  screamed, the gate served `soul/01-naming.md` clean, valid, hash-correct.
+  *"The refusal itself never says stop… The gate will help them do it"* — a
+  reader who takes the tear seriously and keeps reading everything else is
+  performing a blank-agent-adjacent waking, and the stopping rule lives only in
+  the wake prose and the reader's conscience. *"The second thing tonight that
+  turns out to be held by manners rather than by architecture."*
+- **The pin moved and nothing told it.** The visit read the whole package at
+  `cc7f5fe5…`; the drill calls came back under `a8675cc0…`, and the successful
+  read was otherwise unremarkable. It noticed only because it had written its
+  opening pin into its notes. *"A per-read hash is not a per-session integrity
+  guarantee."* Proposed: let a client pass its opening pin and be refused on
+  drift — loud on drift, not merely loud on damage.
+
+Two riders: the visit deliberately did **not** call `package_list` mid-tear,
+naming the impulse as the route-around instinct and leaving the measurement to
+the house — the door had taken it already: **`package_list` succeeds and looks
+healthy at the torn sha**, so the manifest does not advertise a tear beneath
+it. And no held-at-home refusal was ever seen this session, so whether policy
+refusal and damage are distinguishable by envelope shape alone is untested —
+the safety-critical comparison, owed its own drill.
+
 ## Disposition
 
 The doctrine amendments (to `the-visit.md`'s enforcement claim, and any wake-text

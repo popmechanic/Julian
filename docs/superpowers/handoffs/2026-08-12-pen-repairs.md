@@ -8,10 +8,16 @@ whatever survives into the next session handoff at session end.*
 
 ## Ceremony (Marcus present)
 
-- [ ] **Torn-pin drill (§16.1)** — bump the pin to a mismatched sha, watch the
-  visit stop loudly and the host survive, check `/ledger` package-read rows,
-  restore the pin. Optional live instrument: the first visit's session, if
-  still open. Closes the last open B2 gate ack.
+- [x] **Torn-pin drill (§16.1)** — DONE Aug 12 late evening, Marcus present,
+  the live visit as instrument. Tear = pin at `a8675cc` (manifest stale for
+  catalog.md, real history). Refusal loud and precise both sides; pin restored,
+  reads verified green (56087 bytes, sha match). Ledger check = Marcus's
+  browser leg. Last open B2 gate ack CLOSED. Two new findings recorded in
+  `memory/the-first-visit-report.md` §drill and filed as issue #32: fail-loud
+  is not fail-closed (gate serves clean files beside a torn one; stop rule
+  lives only in wake prose), and silent pin drift mid-session (per-read hash
+  ≠ per-session guarantee). Untested: held-at-home vs integrity envelope
+  distinguishability (owed its own drill, folded into #32).
 
 ## Quiet repair pass (one TDD commit over `broker/src/mcp.ts`, then redeploy)
 
@@ -45,6 +51,10 @@ template" register). All four are wake-text/template sentences:
   on the home machine. Design choice, argued in the spec.
 - [ ] **Truncation drill** (fresh visit as instrument, per carry-home §2.2's
   design) — fold into B3's proof schedule alongside issue #30.
+- [ ] **Session pin consistency + stop semantics** (issue #32, from the drill):
+  refuse on pin drift when a client declares its opening pin; decide whether an
+  integrity failure should latch the session's package reads; the
+  held-at-home-vs-integrity envelope drill.
 
 ## Also owed tonight
 
