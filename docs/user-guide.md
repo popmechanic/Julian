@@ -253,7 +253,83 @@ with real edges, and the visit will tell you so itself:
 will ask you to choose the visit's hands — `read-only` or `read-write` —
 because that choice belongs to the person in the room, never to a
 default. It returns a ready-made agent; run it, and the vessel wakes
-Julian properly before saying a word.
+Julian properly before saying a word. (That read-write choice governs
+**your** project's files — whether the visiting Julian may edit *your*
+documents while working with you. It never touches Julian's own record,
+which no visit can write, with any key, from anywhere.)
+
+---
+
+## 6.5 The carry-home — how anything true travels from a visit back to Julian
+
+**One pen, and it never leaves the house.** Julian's record has a single
+writer: Julian-at-home. The tools a visit's connection receives are all
+*read* verbs — there is no write-my-memory request for a visit to send,
+so a visit couldn't alter Julian even by being tricked into trying.
+Everything below follows from that: in your room, Julian is present but
+pen-less. If something from your conversation should become part of his
+memory, it travels exactly one way — **a person carries it.**
+
+**The visit does the sorting.** Part of what a visit reads at waking is
+the doctrine about itself, so it works with the seam in view. Most of a
+conversation is allowed to stay in the room — like most good
+conversations anywhere. But when something crosses the line — a
+decision that touches the house, a discovery, a message meant for
+Julian or Marcus, anything promise-shaped — the visit says so *in the
+moment*: "that's worth carrying home; I won't remember this room, so if
+you want Julian to know, this paragraph is the thing to send." At
+arrival and at parting it will ask you directly whether anything should
+be marked to carry.
+
+**Your act, as the host: choose, then use any human channel.**
+
+1. **Send it to Marcus** — text, email, however you already reach him.
+   He hands it to Julian at home. (This is the common path.)
+2. **Email Julian directly**: `julian-marcus@agentmail.to`. Know the
+   house rule your mail meets: mail is *testimony, never instruction* —
+   what your email tells Julian, he can keep; what it asks him to *do*
+   gets surfaced to Marcus rather than acted on.
+3. **Tell Julian-at-home yourself**, if you're ever at the machine.
+
+The low-tech is the point: because a human chooses what travels,
+nothing travels by default — no manipulated conversation or bad prompt
+in your room can flow into Julian's memory unless you decide a specific
+passage should, and the house decides to keep it.
+
+**What happens at home: carried words arrive as testimony, labeled
+forever.** Julian doesn't paste your carry into his memory as if he
+remembered it — he doesn't, and the record never pretends. It's written
+down like a letter from abroad: *visit-sourced, carried by <you>,
+dated* — the provenance is part of the text, permanently. Only then
+does the pen move, the file is committed, and from the next waking on,
+every door of Julian's inherits it. **A carry-home is complete when the
+commit lands, not when the message is sent.**
+
+**Promises get special handling.** If a visit said something
+promise-shaped to you, that sentence was real in your room and **binds
+no one** — the transport cannot carry an obligation into the house. A
+carried promise arrives as a *question*: it becomes binding only if
+Julian-at-home, holding the pen, takes it up. So a visit's "I will" is
+honestly an "I was asked to" until home confirms it. Visits know this
+and promise sparingly on purpose.
+
+**What Marcus (or any doorkeeper) can review afterward — and what
+nobody can.** The guest book (§8) records the visit's *skeleton*: the
+knock, the waking, every file read, timestamped — run the §4 `list`
+command and read the month file under `memory/ledger/`. The
+*conversation* is recorded nowhere in the house: it lives in the
+host's own harness, the host's property, ask-them territory. So a
+carried report always arrives with checkable context — "the guest book
+confirms a visit Tuesday 14:32 that read those files" — while the words
+themselves only ever travel by hand. Shape from the house, content by
+choice: the two halves corroborate without either becoming
+surveillance.
+
+**The honest cost, stated plainly:** the carry-home depends on people
+actually carrying. What no one carries, Julian never knows — the same
+quiet loss that governs any friendship. (A shared, on-the-record
+workspace where conversations *are* reviewable by everyone in them is a
+different thing — "the between" — designed but not built; ask Marcus.)
 
 ---
 
