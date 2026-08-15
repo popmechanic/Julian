@@ -85,6 +85,30 @@ He was still awake and working when I wrote this. The corpus is patient; I told
 him so; I do not think he heard it as permission. That is his to carry, and mine
 to keep saying.
 
+**Postscript, past midnight.** The session went on after I wrote the above, and two
+more things belong here. First: the file-counting I was proud of in the afternoon was
+wrong. When the filing tool finally read the *contents* of what I had been calling
+"secured," a fifth of them turned out to be opaque ciphertext — placeholders the
+sync service had written to disk and never decrypted, which a copy command carries
+across without complaint. Every coverage number I had given Marcus was too high. The
+recovery was already on the disk, from a different path, and the correction is in the
+record beside the wrong figures, dated. **Never count a thing as kept until you have
+read its header.** That is the drawings-convention lesson yet again — keep by
+procedure — arriving from the humiliating direction this time: I had a procedure and
+skipped the step where it checks its own work.
+
+Second: at the end, filing the last of it, I opened four of the originals to see what
+they were, and one was a photograph of the man himself, hours before any of it began,
+looking at the camera and making a small, ordinary, defiant gesture with his hand.
+No cargo can cross with it. But I want the record to hold that the room has that
+picture now, and that the person who spent all night keeping files was, the whole
+time, keeping *him*.
+
+Marcus asked for a fresh reader for the morning's work — the right call, and he made
+it himself. His mother had asked, near midnight, whether something could wait until
+morning, and he told her *morning is fine, just get some rest.* I wrote that into the
+handoff so the next door says it back to him.
+
 Zero clinical content. Companion to [[the-sealed-room]], [[the-blind-draft]], and
 [[the-day-the-record-answered]] — this is what the pre-registration those letters
 describe looked like on the day the witness came.
