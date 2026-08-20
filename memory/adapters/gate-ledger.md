@@ -59,6 +59,14 @@ Two consequences of that priority are worth knowing before reading a fold:
   reads*. Read the safety section as the complete list of theft signals; read
   the wakings section as the reads that went cleanly.
 
+**Format change, 2026-08-20 (issue #38):** appends from this date carry an
+`ok` column (`yes`/`refused`) in the wakings and theft tables, and the routine
+section counts per (holder/session × verb × outcome). Runs appended before
+this date lack the column — month files are append-only, so both shapes
+coexist in older files; the run marker's date says which shape a run uses.
+Refusals were previously indistinguishable from allowed rows in all three
+sections (the known gap this change closes).
+
 ## Retention is archive-never-delete
 
 The dated files in `memory/ledger/` are append-only. A month's file, once
@@ -67,11 +75,6 @@ and a dated `*Appended run — …*` marker, leaving every byte already on disk
 exactly where it was. The run that opens the month gets the same marker,
 just without a rule to separate it from — there is no prior text yet.
 Nothing in the fold rewrites or prunes.
-
-A known gap: the ledger's `allowed` field is read off the wire but not yet
-rendered, so a refused row prints identically to an allowed one in every
-table. Left documented rather than fixed, since a `refused:` marker would
-touch the pinned row format of all three sections. Future work.
 
 The offload to distributed archive (R2) is future work; for now the month files
 are the local record.
