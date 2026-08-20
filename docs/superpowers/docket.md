@@ -41,9 +41,11 @@
 **Notes:** Verified: parts reads already mirror hashes into text (pre-dates the issue); whole-file reads carry sha only in structuredContent, package_list text is count+truncated pin, and the wake text's "every reply carries the hash" is false on text-only transports. Remediation is belt-over-braces mirroring + one honest wake-text line.
 
 ### #42: pin-bump mislabels GitHub rate-limit refusals as facts about the repo
-**State:** accepted
+**State:** queued
 **Score:** 7.5 — objective 3: a refusal mislabeled as a fact corrupts the operator's trust in the pin ceremony; bit four times in one night
 **Est-files:** broker/src/as/admin.ts, broker/src/env.ts, broker/wrangler.toml, broker/test/*
+**Plan:** docs/superpowers/plans/2026-08-20-pin-bump-refusal-labeling.md
+**Engine:** inline
 **Notes:** Verified unchanged: one non-ok branch labels 403/429/401/404 all as "sha unknown to the repo"; compare and raw fetches are unauthenticated (shared Cloudflare egress IP against GitHub's 60/hr anonymous budget). Fix: status-distinguished messages; consider GITHUB_TOKEN secret (availability coupling accepted, mislabeling not).
 
 ### #9: Sync DO — enforce the once-ever lineage guard server-side
