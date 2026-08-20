@@ -1,6 +1,20 @@
 import { describe, expect, test } from 'vitest';
 import { store } from './store';
-import { applyServerEvent } from './events';
+import { applyServerEvent, connectEvents } from './events';
+
+// A fetchImpl that never resolves on its own — it only settles when the
+// AbortController passed via `init.signal` fires. This is how we prove
+// stop() actually aborts the in-flight request instead of merely flipping
+// a flag and leaving the fetch (and any reader parked on it) to leak.
+function hangingFetch(onAbort: () => void): typeof fetch {
+  return ((_input: RequestInfo | URL, init?: RequestInit) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        onAbort();
+        reject(new DOMException('aborted', 'AbortError'));
+      });
+    })) as typeof fetch;
+}
 
 describe('applyServerEvent', () => {
   test('user_message → messages row keyed by session and event id', () => {
@@ -39,5 +53,23 @@ describe('applyServerEvent', () => {
   });
   test('unknown event types are ignored without throwing', () => {
     expect(() => applyServerEvent({ id: 10, type: 'claude_tool_result' })).not.toThrow();
+  });
+});
+
+describe('connectEvents stop (#4d)', () => {
+  test('stop() aborts the in-flight request instead of leaking it', async () => {
+    let aborted = false;
+    const conn = connectEvents({}, hangingFetch(() => { aborted = true; }));
+    await new Promise((r) => setTimeout(r, 10)); // let the loop reach the fetch
+    conn.stop();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(aborted).toBe(true);
+  });
+
+  test('stop() is idempotent', async () => {
+    const conn = connectEvents({}, hangingFetch(() => {}));
+    await new Promise((r) => setTimeout(r, 10));
+    conn.stop();
+    expect(() => conn.stop()).not.toThrow();
   });
 });
