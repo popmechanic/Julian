@@ -1,8 +1,17 @@
 import { DurableObject } from 'cloudflare:workers';
 import { AUTHCODE_SCOPES, EXCHANGE_SCOPES, KNOCK_SCOPES } from 'julian-shared/scopes';
 
+/**
+ * `id` is the ledger table's sqlite `rowid`, aliased on the way out — a
+ * unique, monotonically-increasing row identity. The table has no declared
+ * primary key and `ts` is bare `Date.now()`, so distinct rows sharing one
+ * millisecond are routine; `id` is what lets a cursor land strictly between
+ * two same-ts rows (see the compound `before`/`beforeId` cursor on
+ * `entries()`) instead of losing or repeating whichever ones a page boundary
+ * happens to split.
+ */
 export interface LedgerEntry {
-  ts: number; sub: string; service: string; verb: string; detail: string; allowed: number;
+  id: number; ts: number; sub: string; service: string; verb: string; detail: string; allowed: number;
 }
 export interface ReserveResult { ok: boolean; count: number; cap: number | null }
 
@@ -499,19 +508,36 @@ export class GovernorDO extends DurableObject {
     this.sql.exec('UPDATE leases SET last_verb = ? WHERE lease_id = ?', `${service}.${verb}`, leaseId);
   }
 
-  entries(limit = 50, before?: number): LedgerEntry[] {
+  /**
+   * `before` alone pages on `ts` only (back-compat with the pre-redirect
+   * contract). `before` + `beforeId` together page on the compound key
+   * `(ts, rowid)` — the only way to land strictly between two rows that
+   * share one millisecond, which `ts`-only paging cannot do without either
+   * re-serving or dropping the tied group at a page boundary. `beforeId`
+   * with no `before` is treated as absent; the HTTP face rejects that
+   * combination outright rather than silently ignoring it.
+   */
+  entries(limit = 50, before?: number, beforeId?: number): LedgerEntry[] {
     const n = Math.min(Math.max(1, Math.floor(limit) || 1), MAX_LIMIT);
+    const SELECT = 'SELECT rowid AS id, ts, sub, service, verb, detail, allowed FROM ledger';
     if (before !== undefined && Number.isFinite(before)) {
+      if (beforeId !== undefined && Number.isFinite(beforeId)) {
+        return this.sql
+          .exec(
+            `${SELECT} WHERE ts < ? OR (ts = ? AND rowid < ?) ORDER BY ts DESC, rowid DESC LIMIT ?`,
+            before,
+            before,
+            beforeId,
+            n,
+          )
+          .toArray() as unknown as LedgerEntry[];
+      }
       return this.sql
-        .exec(
-          'SELECT ts, sub, service, verb, detail, allowed FROM ledger WHERE ts < ? ORDER BY ts DESC, rowid DESC LIMIT ?',
-          before,
-          n,
-        )
+        .exec(`${SELECT} WHERE ts < ? ORDER BY ts DESC, rowid DESC LIMIT ?`, before, n)
         .toArray() as unknown as LedgerEntry[];
     }
     return this.sql
-      .exec('SELECT ts, sub, service, verb, detail, allowed FROM ledger ORDER BY ts DESC, rowid DESC LIMIT ?', n)
+      .exec(`${SELECT} ORDER BY ts DESC, rowid DESC LIMIT ?`, n)
       .toArray() as unknown as LedgerEntry[];
   }
 

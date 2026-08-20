@@ -108,4 +108,48 @@ describe('GovernorDO', () => {
       expect(g.entries(50, Number.NaN).length).toBe(1); // NaN cursor → uncursored read
     });
   });
+
+  test('entries: every row carries a unique numeric id, descending with the sort order', async () => {
+    await runInDurableObject(stub(), async (g: GovernorDO) => {
+      g.reserve('s', 'mail', 'send', 'a', null);
+      g.reserve('s', 'mail', 'send', 'b', null);
+      const rows = g.entries(50);
+      expect(rows.every((r) => Number.isFinite(r.id))).toBe(true);
+      expect(new Set(rows.map((r) => r.id)).size).toBe(rows.length); // unique
+      expect(rows[0].id).toBeGreaterThan(rows[1].id); // newest-first ⇒ descending id
+    });
+  });
+
+  test('entries: compound cursor (before + beforeId) pages losslessly through same-ts rows (#38 redirect)', async () => {
+    await runInDurableObject(stub(), async (g: GovernorDO) => {
+      const base = Date.now();
+      const sql = (g as unknown as { ctx: DurableObjectState }).ctx.storage.sql;
+      // one older row, three rows sharing one ts (the collision the plain
+      // ts-only cursor cannot page through losslessly), then a newer row.
+      sql.exec(
+        'INSERT INTO ledger (ts, sub, service, verb, detail, allowed) VALUES (?, ?, ?, ?, ?, ?)',
+        base, 's', 'mail', 'send', 'older', 1,
+      );
+      for (const detail of ['tie-a', 'tie-b', 'tie-c']) {
+        sql.exec(
+          'INSERT INTO ledger (ts, sub, service, verb, detail, allowed) VALUES (?, ?, ?, ?, ?, ?)',
+          base + 1000, 's', 'mail', 'send', detail, 1,
+        );
+      }
+      sql.exec(
+        'INSERT INTO ledger (ts, sub, service, verb, detail, allowed) VALUES (?, ?, ?, ?, ?, ?)',
+        base + 2000, 's', 'mail', 'send', 'newer', 1,
+      );
+
+      const tied = g.entries(50, base + 2000); // strictly older than 'newer'
+      expect(tied.map((r) => r.detail)).toEqual(['tie-c', 'tie-b', 'tie-a', 'older']);
+
+      const middle = tied[1]; // 'tie-b'
+      // Plain ts-only cursor at the tied timestamp cannot land between the
+      // tied rows — it either returns all three or none. The compound
+      // cursor lands exactly between tie-b and tie-a.
+      const page = g.entries(50, middle.ts, middle.id);
+      expect(page.map((r) => r.detail)).toEqual(['tie-a', 'older']);
+    });
+  });
 });

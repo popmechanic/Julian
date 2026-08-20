@@ -542,18 +542,38 @@ async function exportLeases(gov: DurableObjectStub<GovernorDO>): Promise<Respons
   return json(dump);
 }
 
+// Bare non-negative integer only — no blanks, no whitespace, no minus sign.
+// `Number('')` and `Number(' ')` both evaluate to 0, which used to sail
+// straight through as a "valid" cursor and silently return an always-empty
+// page: a loss the global constraint (fail toward duplication, never loss)
+// forbids (#38 redirect, adversarial-reviewer-confirmed).
+const UNSIGNED_INT = /^\d+$/;
+
 /** The ledger, same as `/leases*` — a register action, not a lease verb. */
 async function readLedger(req: Request, gov: DurableObjectStub<GovernorDO>): Promise<Response> {
   const params = new URL(req.url).searchParams;
   const limit = parseInt(params.get('limit') ?? '50', 10) || 50;
   const beforeRaw = params.get('before');
+  const beforeIdRaw = params.get('beforeId');
+
+  if (beforeIdRaw !== null && beforeRaw === null) {
+    return json({ error: 'beforeId requires before' }, 400);
+  }
+
   let before: number | undefined;
   if (beforeRaw !== null) {
+    if (!UNSIGNED_INT.test(beforeRaw)) return json({ error: 'before must be a unix-ms timestamp' }, 400);
     before = Number(beforeRaw);
-    if (!Number.isFinite(before)) return json({ error: 'before must be a unix-ms timestamp' }, 400);
   }
+
+  let beforeId: number | undefined;
+  if (beforeIdRaw !== null) {
+    if (!UNSIGNED_INT.test(beforeIdRaw)) return json({ error: 'beforeId must be a non-negative integer' }, 400);
+    beforeId = Number(beforeIdRaw);
+  }
+
   try {
-    return json({ entries: await gov.entries(limit, before) });
+    return json({ entries: await gov.entries(limit, before, beforeId) });
   } catch {
     return json({ error: GOVERNOR_DOWN }, 503);
   }

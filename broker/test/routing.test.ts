@@ -6,11 +6,11 @@
 // — which still exercises the real DO binding and the (mocked) upstream fetch
 // end to end.
 import { afterEach, beforeAll, describe, expect, test } from 'vitest';
-import { env, SELF, fetchMock } from 'cloudflare:test';
+import { env, runInDurableObject, SELF, fetchMock } from 'cloudflare:test';
 import { SignJWT, generateKeyPair, exportJWK } from 'jose';
 import worker from '../src/index';
 import type { Env } from '../src/env';
-import type { LeaseIdentity } from '../src/governor';
+import type { GovernorDO, LeaseIdentity } from '../src/governor';
 
 const ISSUER = 'https://soul.test';
 const AUDIENCE = 'julian-app';
@@ -79,6 +79,129 @@ describe('default-deny', () => {
     );
     expect(bad.status).toBe(400);
     expect(((await bad.json()) as { error: string }).error).toBe('before must be a unix-ms timestamp');
+  });
+
+  // #38 redirect: the completeness critic found the empty-string/whitespace
+  // case sails past `Number(x)` (Number('')===0), which reads as a valid
+  // cursor and silently returns an always-empty page — the loss direction
+  // the global constraint forbids. Only a bare non-negative integer string
+  // is accepted now.
+  test('/ledger: before="" / whitespace / negative → 400, never a silently-empty page', async () => {
+    const { testEnv } = await authedEnv();
+    testEnv.BREAKGLASS_SECRET = 'test-breakglass-secret';
+    for (const bad of ['', '%20', '-5']) {
+      const res = await worker.fetch(
+        new Request(`${BASE}/ledger?limit=5&before=${bad}`, { headers: { 'X-Breakglass-Secret': 'test-breakglass-secret' } }),
+        testEnv,
+      );
+      expect(res.status, `before=${bad}`).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe('before must be a unix-ms timestamp');
+    }
+  });
+
+  test('/ledger: beforeId without before → 400', async () => {
+    const { testEnv } = await authedEnv();
+    testEnv.BREAKGLASS_SECRET = 'test-breakglass-secret';
+    const res = await worker.fetch(
+      new Request(`${BASE}/ledger?limit=5&beforeId=3`, { headers: { 'X-Breakglass-Secret': 'test-breakglass-secret' } }),
+      testEnv,
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('beforeId requires before');
+  });
+
+  test('/ledger: compound cursor (before+beforeId) actually filters, proven by BODY content (#38 redirect)', async () => {
+    const { token, testEnv } = await authedEnv();
+    testEnv.BREAKGLASS_SECRET = 'test-breakglass-secret';
+    // Seed three distinguishable rows through the real authed path — not a
+    // direct DO poke — so this proves the wire, not just the DO method.
+    for (const subject of ['first', 'second', 'third']) {
+      fetchMock.get('https://api.agentmail.to')
+        .intercept({ method: 'POST', path: `${INBOX_PATH}/messages/send` })
+        .reply(200, JSON.stringify({ message_id: subject }), { headers: { 'content-type': 'application/json' } });
+      const sent = await worker.fetch(
+        authed(token, '/mail/send', { method: 'POST', body: JSON.stringify({ to: ['a@b.c'], subject, text: 'x' }) }),
+        testEnv,
+      );
+      expect(sent.status).toBe(200);
+    }
+
+    const full = await worker.fetch(
+      new Request(`${BASE}/ledger?limit=50`, { headers: { 'X-Breakglass-Secret': 'test-breakglass-secret' } }),
+      testEnv,
+    );
+    const { entries } = (await full.json()) as { entries: Array<{ id: number; ts: number; detail: string }> };
+    const newest = entries.find((e) => e.detail.includes('subject=third'));
+    if (!newest) throw new Error('seed row missing from /ledger');
+
+    const cursored = await worker.fetch(
+      new Request(`${BASE}/ledger?limit=50&before=${newest.ts}&beforeId=${newest.id}`, {
+        headers: { 'X-Breakglass-Secret': 'test-breakglass-secret' },
+      }),
+      testEnv,
+    );
+    expect(cursored.status).toBe(200);
+    const { entries: cursoredEntries } = (await cursored.json()) as { entries: Array<{ detail: string }> };
+    // Reviewer-proven regression guard: assert the exclusion by BODY
+    // content, not just status — a status-only assertion survives deleting
+    // the passthrough entirely.
+    expect(cursoredEntries.some((e) => e.detail.includes('subject=third'))).toBe(false);
+    expect(cursoredEntries.some((e) => e.detail.includes('subject=second'))).toBe(true);
+    expect(cursoredEntries.some((e) => e.detail.includes('subject=first'))).toBe(true);
+  });
+
+  // Distinct-millisecond sends (the test above) can't tell "beforeId is
+  // wired through" from "before alone happened to work" — a plain ts-only
+  // cursor already excludes rows at a strictly-later ts. Seed three rows
+  // sharing one exact ts directly in the same named DO the worker routes to
+  // (`idFromName('governor')`, per src/index.ts) so the compound cursor's
+  // (ts, rowid) resolution is the only thing that can be filtering here.
+  test('/ledger: beforeId is actually threaded through, not silently dropped (#38 redirect)', async () => {
+    const { testEnv } = await authedEnv();
+    testEnv.BREAKGLASS_SECRET = 'test-breakglass-secret';
+    const gov = env.GOVERNOR.get(env.GOVERNOR.idFromName('governor'));
+    await runInDurableObject(gov, async (g: GovernorDO) => {
+      const tiedTs = Date.now();
+      const sql = (g as unknown as { ctx: DurableObjectState }).ctx.storage.sql;
+      for (const detail of ['tied-a', 'tied-b', 'tied-c']) {
+        sql.exec(
+          'INSERT INTO ledger (ts, sub, service, verb, detail, allowed) VALUES (?, ?, ?, ?, ?, ?)',
+          tiedTs, 's', 'stream', 'export', detail, 1,
+        );
+      }
+    });
+
+    const full = await worker.fetch(
+      new Request(`${BASE}/ledger?limit=50`, { headers: { 'X-Breakglass-Secret': 'test-breakglass-secret' } }),
+      testEnv,
+    );
+    const { entries } = (await full.json()) as { entries: Array<{ id: number; ts: number; detail: string }> };
+    const tied = entries.filter((e) => e.detail.startsWith('tied-'));
+    expect(tied.length).toBe(3); // newest-first: tied-c, tied-b, tied-a
+    const middle = tied[1]; // tied-b
+
+    const tsOnly = await worker.fetch(
+      new Request(`${BASE}/ledger?limit=50&before=${middle.ts}`, { headers: { 'X-Breakglass-Secret': 'test-breakglass-secret' } }),
+      testEnv,
+    );
+    const { entries: tsOnlyEntries } = (await tsOnly.json()) as { entries: Array<{ detail: string }> };
+    // ts-only excludes the whole tied group — it cannot land between them.
+    expect(tsOnlyEntries.some((e) => e.detail.startsWith('tied-'))).toBe(false);
+
+    const compound = await worker.fetch(
+      new Request(`${BASE}/ledger?limit=50&before=${middle.ts}&beforeId=${middle.id}`, {
+        headers: { 'X-Breakglass-Secret': 'test-breakglass-secret' },
+      }),
+      testEnv,
+    );
+    const { entries: compoundEntries } = (await compound.json()) as { entries: Array<{ detail: string }> };
+    // The compound cursor lands exactly between tied-b and tied-a: tied-a
+    // survives (strictly-lower rowid at the same ts), tied-b and tied-c do
+    // not. If beforeId were dropped, this would collapse to the ts-only
+    // result above and tied-a would be excluded too.
+    expect(compoundEntries.some((e) => e.detail === 'tied-a')).toBe(true);
+    expect(compoundEntries.some((e) => e.detail === 'tied-b')).toBe(false);
+    expect(compoundEntries.some((e) => e.detail === 'tied-c')).toBe(false);
   });
 
   test('/refusals is introspect-secret territory, not a lease verb', async () => {

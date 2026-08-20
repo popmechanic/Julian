@@ -437,6 +437,7 @@ describe('reserveLease caps', () => {
       const refused = g.reserveLease(lease.leaseId, 'door:somebody-else', 'mail', 'send', 'to=a@b.c', null, 1);
       expect(refused.ok).toBe(false);
       expect(g.entries(10)[0]).toEqual({
+        id: expect.any(Number), // #38 redirect: entries() now carries the sqlite rowid as `id`
         ts: clock.t, sub: `lease:${lease.leaseId}`, service: 'mail', verb: 'send',
         detail: `door=${DOOR} to=a@b.c`, allowed: 0,
       });
