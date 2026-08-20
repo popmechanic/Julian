@@ -59,6 +59,14 @@ Two consequences of that priority are worth knowing before reading a fold:
   reads*. Read the safety section as the complete list of theft signals; read
   the wakings section as the reads that went cleanly.
 
+**Format change, 2026-08-20 (issue #38):** appends from this date carry an
+`ok` column (`yes`/`refused`) in the wakings and theft tables, and the routine
+section counts per (holder/session × verb × outcome). Runs appended before
+this date lack the column — month files are append-only, so both shapes
+coexist in older files; the run marker's date says which shape a run uses.
+Refusals were previously indistinguishable from allowed rows in all three
+sections (the known gap this change closes).
+
 ## Retention is archive-never-delete
 
 The dated files in `memory/ledger/` are append-only. A month's file, once
@@ -68,19 +76,58 @@ exactly where it was. The run that opens the month gets the same marker,
 just without a rule to separate it from — there is no prior text yet.
 Nothing in the fold rewrites or prunes.
 
-A known gap: the ledger's `allowed` field is read off the wire but not yet
-rendered, so a refused row prints identically to an allowed one in every
-table. Left documented rather than fixed, since a `refused:` marker would
-touch the pinned row format of all three sections. Future work.
-
 The offload to distributed archive (R2) is future work; for now the month files
 are the local record.
 
-A second limit worth naming: the fold reads `/ledger?limit=200`, the most
-recent two hundred rows. Paging is future work, so a fold run after a busy
-stretch can see only the tail of it. Run it often enough that two hundred rows
-still bridge the gap; a month file is honest about what it saw, not about what
-happened.
+**Operations, from 2026-08-20 (issue #38):** the fold pages `/ledger` backward
+with the compound cursor `before=<ts>&beforeId=<id>` to the watermark in
+`memory/ledger/.fold-state.json` (committed beside the month files, so the
+state travels with the record) and routes every fetched row to its own UTC
+month file — a run just after a month boundary writes the old month's tail to
+the old month's file. The watermark advances only after every append succeeds;
+a partial failure re-appends on the next run (duplicate rows under a new run
+marker), never drops. Rows with unreadable timestamps are reported on stderr
+and skipped — and are not counted in the run's `Rows folded: N` line, which
+reports rows actually written, never rows merely fetched.
+
+**The watermark is compound, and so is the join.** `.fold-state.json` carries
+`{ "lastFoldedTs": <ms>, "lastFoldedId": <rowid> }` from 2026-08-20; files
+written before that date carry `{ "lastFoldedTs": <ms> }` alone, and both
+shapes are read (the old shape reads as `lastFoldedId: 0`). A run keeps a row
+iff `ts > lastFoldedTs || (ts === lastFoldedTs && id > lastFoldedId)`, and
+leaves behind the largest `ts` it folded together with the largest `id` at that
+`ts`. The ts-only shape cannot say *which* of a same-millisecond tie a prior
+run already took, so reading it as id `0` re-folds that whole millisecond:
+duplicate rows under a fresh run marker, which is the recoverable failure. A
+malformed state file — unparseable, or carrying a non-numeric field — aborts
+the run rather than silently refolding from zero.
+
+**The walk ends on the record, never on page size.** A page reaching a row
+at-or-below the watermark ends the run's new territory (rows arrive
+`ts DESC, id DESC`, so everything behind that row is older still); an empty
+page ends an exhausted ledger. What the fold must *not* read as "last page" is
+`page.length < limit`: the gate's own limit clamp lives in another package, and
+the day it drops below the fold's requested 200 that reading would stop the
+walk after one page and silently drop the whole tail. If a non-empty page of
+rows above the watermark ever yields nothing new — the cursor not advancing,
+which an honest gate cannot produce — the fold *throws* rather than folding a
+partial set: advancing the watermark over rows the run never reached would
+orphan them permanently, and a loud failure that appends nothing is the only
+honest outcome.
+
+Each wire row now carries `id`, the ledger table's sqlite rowid: a unique row
+identity that `ts` cannot supply, since `ts` is bare `Date.now()` and distinct
+rows routinely share one millisecond. The pager needs it twice over. It keys
+the page cursor on `(ts, id)` — the gate resolves ties with
+`ts < ? OR (ts = ? AND rowid < ?)` — so a same-millisecond group larger than
+one page is walked through rather than dropped or re-served at the boundary.
+And it keys the dedupe on `id` alone, never on row content: two byte-identical
+rows in one millisecond are two acts, and content-keyed dedupe silently
+collapsed them into one (the loss this correction closes; the earlier
+`before=<ts>`-only cursor is superseded — forward-only, like every change
+here). A gate that serves rows without `id` predates this contract, so the
+fold refuses to run against it and says to deploy the broker first, rather
+than fold a record it cannot vouch for.
 
 ## The derived files are substrate in the customs-house sense
 
