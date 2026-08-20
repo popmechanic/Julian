@@ -25,7 +25,7 @@
 **Notes:** Cluster anchor; includes #39 (vitest exclude for the bun:test manifest suite — same package, trivial). Verified worse than filed: main() always folds *today's* UTC month with no month argument, so a Sep 1 run reads August rows off the wire and drops them unrecoverably; the bare catch{} can turn an EACCES into a truncation of an append-only file; refused rows render identically to allowed in all three sections (zero "refused" strings in the real 2026-08.md). Time-sensitive: land before the next fold.
 
 ### #4: App auth & connection lifecycle — one deliberate pass (residual)
-**State:** queued
+**State:** executed
 **Score:** 8.5 — objectives 2+3: after Saturday's sunset the exchange path is the only door, and today logout leaves it syncing
 **Est-files:** app/src/lib/auth.ts, app/src/lib/exchange.ts, app/src/lib/store.ts, app/src/lib/events.ts, app/src/App.svelte, app/src/lib/*.test.ts
 **Plan:** docs/superpowers/plans/2026-08-20-auth-connection-lifecycle.md
