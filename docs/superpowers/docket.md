@@ -25,9 +25,11 @@
 **Notes:** Cluster anchor; includes #39 (vitest exclude for the bun:test manifest suite — same package, trivial). Verified worse than filed: main() always folds *today's* UTC month with no month argument, so a Sep 1 run reads August rows off the wire and drops them unrecoverably; the bare catch{} can turn an EACCES into a truncation of an append-only file; refused rows render identically to allowed in all three sections (zero "refused" strings in the real 2026-08.md). Time-sensitive: land before the next fold.
 
 ### #4: App auth & connection lifecycle — one deliberate pass (residual)
-**State:** accepted
+**State:** queued
 **Score:** 8.5 — objectives 2+3: after Saturday's sunset the exchange path is the only door, and today logout leaves it syncing
 **Est-files:** app/src/lib/auth.ts, app/src/lib/exchange.ts, app/src/lib/store.ts, app/src/lib/events.ts, app/src/App.svelte, app/src/lib/*.test.ts
+**Plan:** docs/superpowers/plans/2026-08-20-auth-connection-lifecycle.md
+**Engine:** ultrapowers
 **Notes:** Cluster anchor; includes #5 residual (persister/Synchronizer/SSE-reader teardown, mount-test infra), #34 (terminal counter inflates on latched-revoked), #43 (deterministic throws loop at 'connecting' forever — the class that cost a forensic hour on drills night). Sharpest finding: signOut() only removes the user; the ExchangeClient caches the access token and keeps minting valid tickets post-logout for the token's remaining hour-scale lifetime. offline_access still missing so session expiry = full-page re-login. Auth surface — risk-override candidate at engine choice.
 
 ### #41: MCP face — text-only clients cannot verify whole-file reads or the manifest
