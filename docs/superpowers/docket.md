@@ -33,7 +33,7 @@
 **Notes:** Cluster anchor; includes #5 residual (persister/Synchronizer/SSE-reader teardown, mount-test infra), #34 (terminal counter inflates on latched-revoked), #43 (deterministic throws loop at 'connecting' forever — the class that cost a forensic hour on drills night). Sharpest finding: signOut() only removes the user; the ExchangeClient caches the access token and keeps minting valid tickets post-logout for the token's remaining hour-scale lifetime. offline_access still missing so session expiry = full-page re-login. Auth surface — risk-override candidate at engine choice.
 
 ### #41: MCP face — text-only clients cannot verify whole-file reads or the manifest
-**State:** queued
+**State:** executed
 **Score:** 8 — objective 3: "table stakes for text-only vending channels" (drills handoff); claude.ai is a live, enrolled text-only client today
 **Est-files:** broker/src/mcp.ts, broker/test/mcp.test.ts, broker/test-mcp-client/harness.test.ts
 **Plan:** docs/superpowers/plans/2026-08-20-text-only-verifiability.md
