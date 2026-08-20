@@ -11,6 +11,7 @@
 <script lang="ts">
   import { initAuth, getToken, signOut, authEnabled } from './lib/auth';
   import { startConnection, stopConnection, clearLocalRecord } from './lib/connection';
+  import { setPhase } from './lib/store';
   import { type ServerEvent } from './lib/events';
   import { startSession, endSession, fetchHealth, fetchArtifactTree, type ArtifactEntry } from './lib/api';
   import { sfx } from './lib/sfx';
@@ -84,11 +85,21 @@
 
   // Authed connections start only after SetupScreen clears (signed in + no setup
   // needed) — polling before then just 401s against the auth-gated server.
+  // A connection that never comes up must SAY so. startConnection releases and
+  // rethrows on a failed leg, so an uncaught promise here would be an unhandled
+  // rejection and a room that sits silently at 'connecting' forever — the exact
+  // #43 failure. Catch both call sites and put it on the pill the user is
+  // already watching ('stale': terminal, reload gets the fix).
+  const connectionFailed = (where: string) => (e: unknown) => {
+    console.error(`[connection] ${where} failed:`, e);
+    setPhase('stale');
+  };
+
   $effect(() => {
     if (!ready) return;
-    void startConnection(getToken, { onEphemeral: handleEphemeral });
+    startConnection(getToken, { onEphemeral: handleEphemeral }).catch(connectionFailed('start'));
     fetchHealth().then((h) => (sessionActive = h.sessionActive));
-    return () => { void stopConnection(); };
+    return () => { stopConnection().catch(connectionFailed('stop')); };
   });
 
   // The artifact tree feeds both BROWSER and FILES; refresh whenever either
@@ -149,15 +160,25 @@
           <button
             class="logout"
             onclick={async () => {
-              await stopConnection();      // close socket, kill ticket minting, stop reader, stop persister
+              // Every leg is guarded on its own: a failure in one must neither
+              // skip the legs after it nor strand the user on a signed-in-looking
+              // page whose connection is already torn down and whose local record
+              // is already deleted. Say what broke, then finish the logout.
+              try {
+                await stopConnection();    // close socket, kill ticket minting, stop reader, stop persister
+              } catch (e) {
+                console.error('[logout] stopping the connection failed:', e);
+              }
               try {
                 await clearLocalRecord();  // delete the OPFS cache
               } catch (e) {
-                // A cache we could not delete must never trap the user in a
-                // signed-in session — say so, then finish the logout anyway.
                 console.error('[logout] clearing the local record failed:', e);
               }
-              await signOut();             // drop the OIDC user
+              try {
+                await signOut();           // drop the OIDC user
+              } catch (e) {
+                console.error('[logout] signing out failed:', e);
+              }
               window.location.replace('/'); // the in-memory store dies with the page — never syncs a wipe
             }}
           >LOGOUT</button>
