@@ -39,6 +39,14 @@ export async function initAuth(): Promise<void> {
   um.events.addUserUnloaded(() => {
     user = null;
   });
+  // automaticSilentRenew fails quietly by default, and no silent_redirect_uri
+  // is configured — so a renewal cycle can fail every time with no symptom
+  // but a session that expires for no visible reason. getToken()'s explicit
+  // signinSilent still covers the user-facing path; this makes the background
+  // half audible instead of swallowed.
+  um.events.addSilentRenewError((e: Error) => {
+    console.warn('[auth] silent renew failed:', e);
+  });
 
   if (window.location.pathname === '/auth/callback') {
     try {

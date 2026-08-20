@@ -8,16 +8,44 @@ const syncHandle = {
 };
 const events = { stop: vi.fn() };
 
-vi.mock('./store', () => ({
-  startPersistence: vi.fn(async () => persister),
-  startSync: vi.fn(async () => syncHandle),
-}));
+vi.mock('./store', async (importOriginal) => {
+  // OPFS_RECORD_FILE is threaded through from the REAL module on purpose: a
+  // literal here would let store.ts and connection.ts name different files
+  // with this test still green — exactly the silent divergence the shared
+  // constant exists to prevent.
+  const actual = await importOriginal<typeof import('./store')>();
+  return {
+    OPFS_RECORD_FILE: actual.OPFS_RECORD_FILE,
+    startPersistence: vi.fn(async () => persister),
+    startSync: vi.fn(async () => syncHandle),
+  };
+});
 vi.mock('./events', () => ({ connectEvents: vi.fn(() => events) }));
 
-import { startPersistence, startSync } from './store';
+import { OPFS_RECORD_FILE, startPersistence, startSync } from './store';
 import { clearLocalRecord, startConnection, stopConnection } from './connection';
 
 beforeEach(() => vi.clearAllMocks());
+
+/**
+ * Park the sync leg so a start can be superseded mid-flight. `at` resolves
+ * when startConnection has reached the sync await; `release` lets it finish.
+ */
+function parkSync(): { at: Promise<void>; release: () => void } {
+  let arrived!: () => void;
+  const at = new Promise<void>((r) => {
+    arrived = r;
+  });
+  let release!: () => void;
+  const held = new Promise((r) => {
+    release = () => r(syncHandle);
+  });
+  vi.mocked(startSync).mockImplementationOnce(() => {
+    arrived();
+    return held as never;
+  });
+  return { at, release };
+}
 
 describe('connection lifecycle (#4)', () => {
   test('stop releases every acquired resource', async () => {
@@ -88,7 +116,10 @@ describe('connection lifecycle (#4)', () => {
   test('clearLocalRecord deletes the OPFS cache file and tolerates absence', async () => {
     const dir = { removeEntry: vi.fn(async () => {}) } as unknown as FileSystemDirectoryHandle;
     await clearLocalRecord(dir);
-    expect(dir.removeEntry).toHaveBeenCalledWith('julian-chat.json');
+    // Asserted through the constant, and the constant comes from store.ts:
+    // logout clears the very file startPersistence created.
+    expect(OPFS_RECORD_FILE).toBe('julian-chat.json');
+    expect(dir.removeEntry).toHaveBeenCalledWith(OPFS_RECORD_FILE);
     const missing = {
       removeEntry: vi.fn(async () => { throw new DOMException('nope', 'NotFoundError'); }),
     } as unknown as FileSystemDirectoryHandle;
@@ -101,6 +132,56 @@ describe('connection lifecycle (#4)', () => {
       removeEntry: vi.fn(async () => { throw denied; }),
     } as unknown as FileSystemDirectoryHandle;
     await expect(clearLocalRecord(dir)).rejects.toBe(denied);
+  });
+
+  // A start is a sequence of awaits. Anything that lands between them —
+  // a logout, a remount — must not leave the losing start's socket, reader
+  // and persister running with no handle able to stop them.
+  test('stopConnection during startup: the in-flight start releases and installs nothing', async () => {
+    const parked = parkSync();
+    const starting = startConnection(async () => null);
+    await parked.at; // startConnection is now parked on its sync leg…
+    await stopConnection(); // …and superseded before it can install itself
+    parked.release();
+    const handle = await starting;
+
+    // Every leg it acquired is released.
+    expect(events.stop).toHaveBeenCalledTimes(1);
+    expect(persister.destroy).toHaveBeenCalledTimes(1);
+    expect(syncHandle.sync.destroy).toHaveBeenCalledTimes(1);
+    expect(syncHandle.ws.close).toHaveBeenCalledTimes(1);
+    expect(syncHandle.client.reset).toHaveBeenCalledTimes(1);
+
+    // And it installed nothing: its handle is inert and no current connection
+    // is left for a later stop to find.
+    await expect(handle.stop()).resolves.toBeUndefined();
+    await stopConnection();
+    expect(events.stop).toHaveBeenCalledTimes(1);
+    expect(persister.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  test('two overlapping starts: exactly one installs, the earlier self-releases', async () => {
+    const parked = parkSync();
+    const first = startConnection(async () => null);
+    await parked.at;
+    const second = await startConnection(async () => null); // supersedes the parked one
+    parked.release();
+    await first;
+
+    // The superseded start released its own legs, exactly once.
+    expect(events.stop).toHaveBeenCalledTimes(1);
+    expect(persister.destroy).toHaveBeenCalledTimes(1);
+    expect(syncHandle.sync.destroy).toHaveBeenCalledTimes(1);
+
+    // Exactly one connection is live: stopping it releases one more set…
+    await stopConnection();
+    expect(events.stop).toHaveBeenCalledTimes(2);
+    expect(persister.destroy).toHaveBeenCalledTimes(2);
+    expect(syncHandle.sync.destroy).toHaveBeenCalledTimes(2);
+    // …and nothing beyond that remains to release.
+    await second.stop();
+    await stopConnection();
+    expect(events.stop).toHaveBeenCalledTimes(2);
   });
 
   test('clearLocalRecord is a no-op where OPFS does not exist', async () => {

@@ -35,10 +35,17 @@ export function writeMessage(id: string, row: MessageRow): void {
   store.setRow('messages', id, { kind: 'chat', ...row });
 }
 
-type SyncPhase = 'idle' | 'connecting' | 'synced' | 'offline' | 'revoked' | 'stale';
+// The single source of truth for the local cache file name. startPersistence
+// creates it and logout deletes it (connection.ts); two literals could drift
+// apart and leave the record un-cleared with no test able to notice.
+export const OPFS_RECORD_FILE = 'julian-chat.json';
+
+export type SyncPhase = 'idle' | 'connecting' | 'synced' | 'offline' | 'revoked' | 'stale';
 let phase: SyncPhase = 'idle';
 const phaseListeners = new Set<(p: SyncPhase) => void>();
-function setPhase(p: SyncPhase): void {
+// Exported so the app shell can report a connection that never came up on the
+// pill the user is already watching — a failure nobody can see is #43 again.
+export function setPhase(p: SyncPhase): void {
   phase = p;
   phaseListeners.forEach((fn) => fn(p));
 }
@@ -65,7 +72,7 @@ export async function startPersistence(handle?: FileSystemFileHandle): Promise<P
       return null; // no OPFS (old browser): sync-only, no local cache — degraded, never wrong
     }
     const dir = await navigator.storage.getDirectory();
-    handle = await dir.getFileHandle('julian-chat.json', { create: true });
+    handle = await dir.getFileHandle(OPFS_RECORD_FILE, { create: true });
   }
   const persister = createOpfsPersister(store, handle);
   // load() BEFORE startAutoSave(), or boot content overwrites the cache.
