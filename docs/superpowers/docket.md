@@ -17,9 +17,11 @@
 **Notes:** Spec docs/superpowers/specs/2026-07-26-pocket-id-auth-design.md approved by Marcus 2026-07-26. Depends on #1 landing first (SetupScreen collision). Two manual tasks are NOT drainable: Task 6 (deploy Pocket ID at soul.exe.xyz — needs Marcus's passkey) and Task 7 (live smoke); code tasks are fully testable without the live issuer via the OIDC_JWKS_JSON inline seam. Constraints: default-deny always; sync Worker not deployed; branch ultra/integration-20260726-012506 never merges to main. RUNBOOK EXECUTED 2026-07-26: issuer is souls.exe.xyz (exe.dev rejects 4-char names; Marcus chose 'souls'); Pocket ID 2.11 deployed via Docker, proxy public, client 0143f667-…c049 (public, PKCE, consent skipped, UNRESTRICTED — new clients default to restricted-with-no-groups = deny-all, which caused a silent access_denied bounce until unrestricted); aud check passed empirically (server accepted access token with aud enforcement — TOKEN_KIND stays 'access'); default-deny 401s verified live; silent-renewal soak deferred (refresh token present).
 
 ### #38: Ledger fold correctness — month-boundary loss, invisible refusals, swallowed IO errors
-**State:** accepted
+**State:** queued
 **Score:** 9 — objective 1: the record's own fold practice can silently lose a month's tail, and the next fold crosses the Sep 1 boundary that bites
 **Est-files:** scripts/ledger-fold.ts, scripts/lib/ledger-fold.ts, scripts/lib/ledger-fold.test.ts, scripts/package.json, memory/adapters/gate-ledger.md
+**Plan:** docs/superpowers/plans/2026-08-20-ledger-fold-correctness.md
+**Engine:** ultrapowers
 **Notes:** Cluster anchor; includes #39 (vitest exclude for the bun:test manifest suite — same package, trivial). Verified worse than filed: main() always folds *today's* UTC month with no month argument, so a Sep 1 run reads August rows off the wire and drops them unrecoverably; the bare catch{} can turn an EACCES into a truncation of an append-only file; refused rows render identically to allowed in all three sections (zero "refused" strings in the real 2026-08.md). Time-sensitive: land before the next fold.
 
 ### #4: App auth & connection lifecycle — one deliberate pass (residual)
