@@ -50,6 +50,7 @@ function spawnServer(port: number, extraEnv: Record<string, string>, fixtures = 
       PORT: String(port),
       ALLOWED_ORIGIN: `http://localhost:${port}`,
       OIDC_ISSUER: "", VITE_OIDC_ISSUER: "", // no-auth local mode
+      SKIP_AUTH_SETUP_CHECK: "1", // hermetic: fake CLI fixture, never real creds
       PATH: `${fixtures}:${process.env.PATH}`, // fake claude wins
       ...extraEnv,
     },
