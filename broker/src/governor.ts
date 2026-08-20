@@ -499,8 +499,17 @@ export class GovernorDO extends DurableObject {
     this.sql.exec('UPDATE leases SET last_verb = ? WHERE lease_id = ?', `${service}.${verb}`, leaseId);
   }
 
-  entries(limit = 50): LedgerEntry[] {
+  entries(limit = 50, before?: number): LedgerEntry[] {
     const n = Math.min(Math.max(1, Math.floor(limit) || 1), MAX_LIMIT);
+    if (before !== undefined && Number.isFinite(before)) {
+      return this.sql
+        .exec(
+          'SELECT ts, sub, service, verb, detail, allowed FROM ledger WHERE ts < ? ORDER BY ts DESC, rowid DESC LIMIT ?',
+          before,
+          n,
+        )
+        .toArray() as unknown as LedgerEntry[];
+    }
     return this.sql
       .exec('SELECT ts, sub, service, verb, detail, allowed FROM ledger ORDER BY ts DESC, rowid DESC LIMIT ?', n)
       .toArray() as unknown as LedgerEntry[];

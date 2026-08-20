@@ -84,4 +84,28 @@ describe('GovernorDO', () => {
       expect(identity?.principal).toBe('julian');
     });
   });
+
+  test('entries: before cursor returns only strictly-older rows, newest first', async () => {
+    await runInDurableObject(stub(), async (g: GovernorDO) => {
+      const base = Date.now();
+      const sql = (g as unknown as { ctx: DurableObjectState }).ctx.storage.sql;
+      for (let i = 0; i < 5; i++) {
+        sql.exec(
+          'INSERT INTO ledger (ts, sub, service, verb, detail, allowed) VALUES (?, ?, ?, ?, ?, ?)',
+          base + i * 1000, 's', 'mail', 'send', `row${i}`, 1,
+        );
+      }
+      const page = g.entries(2, base + 3000); // rows strictly older than row3
+      expect(page.map((r) => r.detail)).toEqual(['row2', 'row1']); // newest-first, limit 2
+      expect(g.entries(50, base).length).toBe(0); // nothing strictly older than row0
+      expect(g.entries(50).map((r) => r.detail)[0]).toBe('row4'); // no cursor → unchanged
+    });
+  });
+
+  test('entries: non-finite before values are ignored by the method (face validates)', async () => {
+    await runInDurableObject(stub(), async (g: GovernorDO) => {
+      g.reserve('s', 'mail', 'send', 'only', null);
+      expect(g.entries(50, Number.NaN).length).toBe(1); // NaN cursor → uncursored read
+    });
+  });
 });

@@ -544,9 +544,16 @@ async function exportLeases(gov: DurableObjectStub<GovernorDO>): Promise<Respons
 
 /** The ledger, same as `/leases*` — a register action, not a lease verb. */
 async function readLedger(req: Request, gov: DurableObjectStub<GovernorDO>): Promise<Response> {
-  const limit = parseInt(new URL(req.url).searchParams.get('limit') ?? '50', 10) || 50;
+  const params = new URL(req.url).searchParams;
+  const limit = parseInt(params.get('limit') ?? '50', 10) || 50;
+  const beforeRaw = params.get('before');
+  let before: number | undefined;
+  if (beforeRaw !== null) {
+    before = Number(beforeRaw);
+    if (!Number.isFinite(before)) return json({ error: 'before must be a unix-ms timestamp' }, 400);
+  }
   try {
-    return json({ entries: await gov.entries(limit) });
+    return json({ entries: await gov.entries(limit, before) });
   } catch {
     return json({ error: GOVERNOR_DOWN }, 503);
   }

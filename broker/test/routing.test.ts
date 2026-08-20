@@ -65,6 +65,22 @@ describe('default-deny', () => {
     expect(res.status).toBe(401); // a lease token is not an approver credential
   });
 
+  test('/ledger: before passes through; malformed before is a 400', async () => {
+    const { testEnv } = await authedEnv();
+    testEnv.BREAKGLASS_SECRET = 'test-breakglass-secret';
+    const ok = await worker.fetch(
+      new Request(`${BASE}/ledger?limit=5&before=1700000000000`, { headers: { 'X-Breakglass-Secret': 'test-breakglass-secret' } }),
+      testEnv,
+    );
+    expect(ok.status).toBe(200);
+    const bad = await worker.fetch(
+      new Request(`${BASE}/ledger?limit=5&before=nonsense`, { headers: { 'X-Breakglass-Secret': 'test-breakglass-secret' } }),
+      testEnv,
+    );
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error: string }).error).toBe('before must be a unix-ms timestamp');
+  });
+
   test('/refusals is introspect-secret territory, not a lease verb', async () => {
     const { token, testEnv } = await authedEnv();
     const res = await worker.fetch(authed(token, '/refusals', {
