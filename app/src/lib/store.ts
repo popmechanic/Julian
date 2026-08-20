@@ -109,10 +109,19 @@ export function createTicketUrlProvider(
     return b;
   };
 
+  // Consecutive *thrown* iterations, tracked separately from
+  // client.terminalCount() (which only counts resolved 'error'/'revoked'
+  // outcomes). #43: a shipped-bundle defect (the fetch-binding bug) made
+  // every ticket() call throw rather than resolve — that loop never touched
+  // terminalCount() and sat silently at 'connecting' for a forensic hour.
+  const STALE_THROW_LIMIT = 3;
+  let consecutiveThrows = 0;
+
   return async function provideUrl(): Promise<string> {
     for (;;) {
       try {
         const t = await client.ticket();
+        consecutiveThrows = 0; // the client resolved — whatever the outcome, the bundle can run it
         if ('ticket' in t) {
           backoffMs = PROVIDER_BACKOFF_START_MS;
           return `${base}/${STORE_PATH}?ticket=${encodeURIComponent(t.ticket)}`;
@@ -133,16 +142,27 @@ export function createTicketUrlProvider(
         if (client.terminalCount() >= 3) setPhase('stale');
         await sleep('after' in t ? t.after : backoff());
       } catch {
+        // A throw here is exactly the class most likely to be a
+        // shipped-bundle defect (#43) — three in a row means say so on the
+        // pill, same as the resolved-terminal-error path above.
+        consecutiveThrows += 1;
+        if (consecutiveThrows >= STALE_THROW_LIMIT) setPhase('stale');
         await sleep(backoff()); // belt over braces: nothing escapes
       }
     }
   };
 }
 
+export interface SyncHandle {
+  sync: Synchronizer;
+  ws: ReconnectingWebSocket;
+  client: ExchangeClient;
+}
+
 export async function startSync(
   getJwt: () => Promise<string | null>,
   client?: ExchangeClient,
-): Promise<Synchronizer | null> {
+): Promise<SyncHandle | null> {
   const base = import.meta.env.VITE_SYNC_URL;
   const gateUrl = import.meta.env.VITE_GATE_URL;
   if (!base || !gateUrl) {
@@ -172,5 +192,5 @@ export async function startSync(
     FRAGMENT_SIZE,
   );
   await sync.startSync();
-  return sync;
+  return { sync, ws, client: exchangeClient };
 }

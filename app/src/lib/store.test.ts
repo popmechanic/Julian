@@ -3,8 +3,37 @@ import { describe, expect, test, vi } from 'vitest';
 import { createMergeableStore } from 'tinybase';
 import { createOpfsPersister } from 'tinybase/persisters/persister-browser';
 import { createStreamStore } from 'julian-shared/schema';
-import { store, startPersistence, writeMessage, FRAGMENT_SIZE, createTicketUrlProvider, syncPhase, onSyncPhase } from './store';
+import {
+  store,
+  startPersistence,
+  writeMessage,
+  FRAGMENT_SIZE,
+  createTicketUrlProvider,
+  syncPhase,
+  onSyncPhase,
+  startSync,
+} from './store';
 import { ExchangeClient } from './exchange';
+
+// startSync has no injectable seam for the WebSocket constructor (only the
+// ExchangeClient is injectable) — mocking the socket layer here gives the
+// handle test real behavioral coverage (it fails before the SyncHandle
+// change lands, unlike a type-only assertion vitest's esbuild transform
+// wouldn't actually check) without opening a live WebSocket inside jsdom.
+// No other test in this file constructs a ReconnectingWebSocket or calls
+// createWsSynchronizer directly, so this mock cannot affect them.
+vi.mock('reconnecting-websocket', () => ({
+  default: vi.fn().mockImplementation(() => ({
+    close: vi.fn(),
+    addEventListener: vi.fn(),
+  })),
+}));
+vi.mock('tinybase/synchronizers/synchronizer-ws-client', () => ({
+  createWsSynchronizer: vi.fn().mockResolvedValue({
+    startSync: vi.fn().mockResolvedValue(undefined),
+    destroy: vi.fn(),
+  }),
+}));
 
 function jsonRes(status: number, body: unknown): Response {
   return { status, json: async () => body } as unknown as Response;
@@ -209,6 +238,113 @@ describe('createTicketUrlProvider — the total ticket URL provider (R2-D1)', ()
 
     const url = await provideUrl();
     expect(url).not.toMatch(/token=/);
+  });
+
+  // #43: the fetch-binding bug (`this.fetchImpl(...)` on a raw global) looped
+  // silently at 'connecting' for a forensic hour — every iteration THREW
+  // rather than resolving a terminal state, so the existing terminalCount()
+  // stale-detection (which only counts resolved 'error'/'revoked' outcomes)
+  // never fired. A deterministic defect must not read as an eternal
+  // 'connecting' — three consecutive thrown iterations must flip the pill.
+  //
+  // Assertions watch phase transitions OBSERVED during this test via
+  // onSyncPhase, not the ambient `syncPhase()` value: `phase` is
+  // module-level state that leaks across tests in this file (e.g. the
+  // preceding terminalCount-based stale test above already leaves it
+  // 'stale'), so asserting the ending global would pass or fail on test
+  // order rather than on this scenario's own behavior.
+  test('three consecutive provider throws reach stale — a deterministic defect is not an eternal connecting (#43)', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = {
+        ticket: vi.fn().mockRejectedValue(new TypeError('Illegal invocation')),
+        terminalCount: () => 0,
+      } as unknown as ExchangeClient;
+      const seenPhases: string[] = [];
+      const unsub = onSyncPhase((p) => seenPhases.push(p));
+      seenPhases.length = 0; // onSyncPhase delivers the current (possibly leftover-stale) phase synchronously at subscribe time — discard it so only transitions from THIS scenario count
+      const provideUrl = createTicketUrlProvider(client, 'wss://sync.example', () => {});
+
+      const pending = provideUrl(); // never resolves in this scenario; we watch the phase
+      for (let i = 0; i < 8; i++) await vi.advanceTimersByTimeAsync(31_000); // step through backoff sleeps
+      expect(seenPhases).toContain('stale');
+      unsub();
+      void pending;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The reset half of the same contract, and it must DISCRIMINATE: a
+  // scenario of two throws followed by success proves nothing, because two
+  // is already under the limit of three — it passes with or without the
+  // reset. The arrangement below spans FOUR throws, with a resolution in the
+  // middle that continues the loop rather than returning from it
+  // ({kind:'signed-out'} sleeps and loops). With the reset, the counter
+  // restarts at that resolution and never reaches three; without it, the
+  // throws accumulate 1,2,_,3 and the third flips the pill to 'stale' before
+  // the final ticket ever arrives. Deleting `consecutiveThrows = 0` turns
+  // this test red.
+  test('a resolved ticket() call resets the throw count — throws either side of a resolution do not accumulate into a false stale', async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      const client = {
+        // throw, throw, resolve (non-terminal: loops on), throw, throw, resolve a ticket
+        ticket: vi.fn().mockImplementation(async () => {
+          calls += 1;
+          if (calls === 3) return { kind: 'signed-out' };
+          if (calls <= 5) throw new TypeError('flaky');
+          return { ticket: 'jst_ok' };
+        }),
+        terminalCount: () => 0,
+      } as unknown as ExchangeClient;
+      const seenPhases: string[] = [];
+      const unsub = onSyncPhase((p) => seenPhases.push(p));
+      seenPhases.length = 0; // discard the synchronous current-phase delivery — see comment above
+      const provideUrl = createTicketUrlProvider(client, 'wss://sync.example', () => {});
+
+      const pending = provideUrl();
+      for (let i = 0; i < 6; i++) await vi.advanceTimersByTimeAsync(31_000);
+      const url = await pending;
+      expect(url).toContain('ticket=jst_ok');
+      expect(client.ticket).toHaveBeenCalledTimes(6); // all four throws and both resolutions actually ran
+      expect(seenPhases).toContain('offline'); // the mid-run resolution was reached (it is what resets the count)
+      expect(seenPhases).not.toContain('stale'); // …and four non-consecutive throws never reach the limit
+      unsub();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('startSync — returns a stoppable handle (#4)', () => {
+  test('startSync returns a handle carrying sync, ws, and client', async () => {
+    vi.stubEnv('VITE_SYNC_URL', 'wss://sync.example');
+    vi.stubEnv('VITE_GATE_URL', 'https://gate.example');
+    try {
+      const client = makeExchangeClient(vi.fn());
+      const handle = await startSync(async () => 'jwt', client);
+      expect(handle).not.toBeNull();
+      expect(typeof handle!.sync.destroy).toBe('function');
+      expect(typeof handle!.ws.close).toBe('function');
+      expect(typeof handle!.client.reset).toBe('function');
+      expect(handle!.client).toBe(client);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test('startSync returns null when sync env vars are absent (local mode)', async () => {
+    vi.stubEnv('VITE_SYNC_URL', '');
+    vi.stubEnv('VITE_GATE_URL', '');
+    try {
+      const client = makeExchangeClient(vi.fn());
+      const handle = await startSync(async () => 'jwt', client);
+      expect(handle).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 
