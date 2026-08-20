@@ -65,9 +65,11 @@
 **Notes:** Verified: the spawn passes no env; CLAUDE_CONFIG_DIR appears nowhere in the repo; the script was re-run unisolated after the incident. Small fix + a written standing rule.
 
 ### #15: Mail heartbeat hardening — silent drops, unvalidated boundaries, permanent holds
-**State:** accepted
+**State:** queued
 **Score:** 7 — objective 4: the sharpest failure (sent-listing drops) silently reclassifies every real correspondent as a stranger and autonomous replies stop permanently
 **Est-files:** scripts/mail-glance.ts, scripts/lib/mail-glance-lib.ts, tests/server/mail-glance.test.ts, docs/mail-heartbeat.md
+**Plan:** docs/superpowers/plans/2026-08-20-mail-heartbeat-hardening.md
+**Engine:** ultrapowers
 **Notes:** Cluster anchor; includes #14 (container-key rename reads as empty forever — and the in-code comment claims coverage it doesn't have), #16 (to[]/labels[] element validation; one malformed element aborts the whole beat), #17 (doc names the wrong id namespace), #18 (cap-holds never expire — needs the dated-hold design decision), #19 (runner has no test seam — prerequisite for #14/#15 fixes; extraction needed since the runner exports nothing). One plan, one pass.
 
 ### #26: Presence language — a rest is not a death
