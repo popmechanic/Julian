@@ -15,6 +15,13 @@
 // inside such a tie, so a group larger than a page is neither dropped nor
 // re-served — and the dedupe keys on `id` alone, never on row content,
 // because byte-identical rows one millisecond apart are separate acts.
+//
+// The same compound key joins run to run: the watermark is (ts, id), not ts
+// alone, so a row that shares the last folded millisecond but carries a
+// higher id is still new. And the walk ends on the record, never on page
+// size — a page reaching under the watermark, or an empty page — because the
+// gate's own limit clamp lives in another package and `length < LEDGER_LIMIT`
+// would silently drop the ledger's tail the day that clamp moved.
 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,8 +57,14 @@ export function getLedgerPath(baseDir: string, monthUtc: string): string {
   return join(baseDir, `${monthUtc}.md`);
 }
 
+/**
+ * The run-to-run join, compound because `ts` is not an identity: the last
+ * folded row is named by (ts, id), so a row sharing that millisecond with a
+ * higher id is correctly still new.
+ */
 export interface FoldState {
   lastFoldedTs: number;
+  lastFoldedId: number;
 }
 
 export function foldStatePath(baseDir: string): string {
@@ -63,14 +76,26 @@ export async function readFoldState(path: string): Promise<FoldState> {
   try {
     raw = await fs.readFile(path, 'utf8');
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { lastFoldedTs: 0 };
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { lastFoldedTs: 0, lastFoldedId: 0 };
     throw e;
   }
-  const parsed = JSON.parse(raw) as FoldState; // malformed JSON throws — fail loud, never refold from zero
-  if (typeof parsed.lastFoldedTs !== 'number' || !Number.isFinite(parsed.lastFoldedTs)) {
+  const parsed = JSON.parse(raw) as Partial<FoldState> | null; // malformed JSON throws — fail loud, never refold from zero
+  if (typeof parsed?.lastFoldedTs !== 'number' || !Number.isFinite(parsed.lastFoldedTs)) {
     throw new Error(`fold state malformed at ${path}: ${raw.slice(0, 80)}`);
   }
-  return parsed;
+
+  // A state file written before 2026-08-20 (#38) carries no `lastFoldedId`.
+  // Reading its absence as 0 re-folds any row sharing that millisecond — the
+  // ts-only shape cannot say which of a tie it already took, and duplication
+  // under a fresh run marker is recoverable where a dropped row is not.
+  // A *present* id that isn't a finite number is corruption, not an old
+  // shape, and gets the same loud refusal as a corrupt ts.
+  const rawId = parsed.lastFoldedId;
+  const idAbsent = rawId === undefined || rawId === null;
+  if (!idAbsent && (typeof rawId !== 'number' || !Number.isFinite(rawId))) {
+    throw new Error(`fold state malformed at ${path}: ${raw.slice(0, 80)}`);
+  }
+  return { lastFoldedTs: parsed.lastFoldedTs, lastFoldedId: rawId ?? 0 };
 }
 
 export async function writeFoldState(path: string, s: FoldState): Promise<void> {
@@ -78,8 +103,40 @@ export async function writeFoldState(path: string, s: FoldState): Promise<void> 
 }
 
 /**
- * Fetch every ledger row newer than sinceTs, newest-first, paging backward
- * with the compound cursor `(before, beforeId)` — the gate's
+ * Is this row past the watermark — i.e. did this run not already take it?
+ *
+ * An unreadable `ts` cannot be ordered against anything. Such a row is kept
+ * (main() warns and skips it at append time) and, crucially, is never read as
+ * the bottom of the new territory: letting a corrupt timestamp end the walk
+ * would orphan every real row behind it.
+ */
+function isAboveWatermark(entry: LedgerRowWire, since: FoldState): boolean {
+  if (!Number.isFinite(entry.ts)) return true;
+  if (entry.ts !== since.lastFoldedTs) return entry.ts > since.lastFoldedTs;
+  return entry.id > since.lastFoldedId;
+}
+
+/**
+ * The watermark a successful run leaves: the largest `ts` folded, and the
+ * largest `id` among the rows at that `ts`. Monotone by construction — it
+ * starts from the prior watermark and only ever climbs, so a short or empty
+ * run can never walk the join backward and re-fold the record.
+ */
+export function nextWatermark(entries: LedgerRowWire[], prev: FoldState): FoldState {
+  let ts = prev.lastFoldedTs;
+  for (const e of entries) {
+    if (Number.isFinite(e.ts) && e.ts > ts) ts = e.ts;
+  }
+  let id = ts === prev.lastFoldedTs ? prev.lastFoldedId : 0;
+  for (const e of entries) {
+    if (e.ts === ts && Number.isFinite(e.id) && e.id > id) id = e.id;
+  }
+  return { lastFoldedTs: ts, lastFoldedId: id };
+}
+
+/**
+ * Fetch every ledger row above the compound watermark, newest-first, paging
+ * backward with the compound cursor `(before, beforeId)` — the gate's
  * `ts < before OR (ts = before AND rowid < beforeId)`.
  *
  * The cursor is strictly exclusive on the total order (ts DESC, id DESC),
@@ -92,9 +149,9 @@ export async function writeFoldState(path: string, s: FoldState): Promise<void> 
 export async function pageLedger(
   brokerUrl: string,
   secret: string,
-  sinceTs: number,
+  since: FoldState,
   fetchImpl: typeof fetch = fetch,
-): Promise<LedgerEntryWire[]> {
+): Promise<LedgerRowWire[]> {
   const out: LedgerRowWire[] = [];
   const seen = new Set<number>();
   let cursor: { before: number; beforeId: number } | undefined;
@@ -111,6 +168,10 @@ export async function pageLedger(
     if (!body || !Array.isArray(body.entries))
       throw new Error('Ledger response malformed: missing entries array');
 
+    // The ledger is exhausted — the only page-size fact the walk may read,
+    // because it is about the record and not about anyone's limit clamp.
+    if (body.entries.length === 0) return out;
+
     let crossedWatermark = false;
     let newThisPage = 0;
     for (const entry of body.entries) {
@@ -123,7 +184,7 @@ export async function pageLedger(
             'Deploy the broker first, then fold; folding now could collapse distinct same-millisecond rows.',
         );
       }
-      if (entry.ts <= sinceTs) {
+      if (!isAboveWatermark(entry, since)) {
         crossedWatermark = true;
         continue;
       }
@@ -134,20 +195,36 @@ export async function pageLedger(
       }
     }
 
-    if (crossedWatermark || body.entries.length < LEDGER_LIMIT) return out;
+    // The gate serves (ts DESC, id DESC), so the first row at-or-below the
+    // watermark proves every row after it is older still: this run's new
+    // territory ends here. Page size is never the completion signal — the
+    // gate's MAX_LIMIT clamp lives in another package, and reading
+    // `length < LEDGER_LIMIT` as "last page" would silently drop the whole
+    // tail of the ledger the day that clamp dropped below this limit.
+    if (crossedWatermark) return out;
 
-    // A full page that yielded nothing new cannot happen against a gate
-    // honoring the exclusive cursor — every row on it is either past the
-    // watermark or unseen. If it does, the cursor is not advancing; stop
-    // rather than spin, and say so.
+    // A non-empty page of rows all above the watermark that yielded nothing
+    // new means the cursor did not move. Against a gate honoring the
+    // exclusive compound cursor this cannot happen — it is a tripwire, not a
+    // code path. Resolving here would fold a partial set and advance the
+    // watermark past rows this run never reached, orphaning them forever, so
+    // it throws: nothing is appended and the watermark file is left alone.
     if (newThisPage === 0) {
-      process.stderr.write(
-        'warning: ledger cursor stopped advancing; folding what was reachable.\n',
+      const at = cursor ? `before=${cursor.before}&beforeId=${cursor.beforeId}` : 'no cursor';
+      throw new Error(
+        `Ledger cursor is not advancing (${at}): a page of ${body.entries.length} row(s) above the watermark ` +
+          'yielded nothing new. Refusing to fold a partial set — advancing the watermark now would orphan ' +
+          'every row past it.',
       );
-      return out;
     }
 
     const oldest = body.entries[body.entries.length - 1];
+    if (!Number.isFinite(oldest.ts)) {
+      throw new Error(
+        `Ledger row id=${oldest.id} has an unreadable ts (${String(oldest.ts)}); a page cursor cannot be ` +
+          'placed on it, and guessing past it would skip the rows behind it.',
+      );
+    }
     cursor = { before: oldest.ts, beforeId: oldest.id };
   }
 }
@@ -202,9 +279,11 @@ async function main(): Promise<void> {
     const statePath = foldStatePath(ledgerDir);
 
     const state = await readFoldState(statePath);
-    const entries = await pageLedger(brokerUrl, secret, state.lastFoldedTs);
+    const entries = await pageLedger(brokerUrl, secret, state);
     if (entries.length === 0) {
-      process.stdout.write(`Nothing new since watermark ${state.lastFoldedTs}.\n`);
+      process.stdout.write(
+        `Nothing new since watermark ${state.lastFoldedTs}/${state.lastFoldedId}.\n`,
+      );
       return;
     }
 
@@ -217,21 +296,24 @@ async function main(): Promise<void> {
     }
 
     const months = [...grouped.keys()].filter((m) => m !== '').sort();
+    let appended = 0;
     for (const month of months) {
       const rows = grouped.get(month)!;
       const ledgerPath = getLedgerPath(ledgerDir, month);
       await appendToLedgerFile(ledgerPath, foldEntries(rows, month));
+      appended += rows.length;
       process.stdout.write(`Ledger folded: ${ledgerPath} (${rows.length} rows)\n`);
     }
 
     // Advance only after every append succeeded: a partial failure re-appends
-    // next run (duplication, separated by run markers) — never loss.
-    const newWatermark = entries.reduce(
-      (max, e) => (Number.isFinite(e.ts) && e.ts > max ? e.ts : max),
-      state.lastFoldedTs,
+    // next run (duplication, separated by run markers) — never loss. The
+    // count reports rows actually written, so an undated row is warned about
+    // once and never counted as folded.
+    const watermark = nextWatermark(entries, state);
+    await writeFoldState(statePath, watermark);
+    process.stdout.write(
+      `Rows folded: ${appended}; watermark → ${watermark.lastFoldedTs}/${watermark.lastFoldedId}\n`,
     );
-    await writeFoldState(statePath, { lastFoldedTs: newWatermark });
-    process.stdout.write(`Rows folded: ${entries.length}; watermark → ${newWatermark}\n`);
   } catch (e) {
     process.stderr.write(`error: ${e instanceof Error ? e.message : String(e)}\n`);
     process.exit(1);

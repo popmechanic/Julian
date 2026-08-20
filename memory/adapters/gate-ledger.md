@@ -87,7 +87,33 @@ month file — a run just after a month boundary writes the old month's tail to
 the old month's file. The watermark advances only after every append succeeds;
 a partial failure re-appends on the next run (duplicate rows under a new run
 marker), never drops. Rows with unreadable timestamps are reported on stderr
-and skipped.
+and skipped — and are not counted in the run's `Rows folded: N` line, which
+reports rows actually written, never rows merely fetched.
+
+**The watermark is compound, and so is the join.** `.fold-state.json` carries
+`{ "lastFoldedTs": <ms>, "lastFoldedId": <rowid> }` from 2026-08-20; files
+written before that date carry `{ "lastFoldedTs": <ms> }` alone, and both
+shapes are read (the old shape reads as `lastFoldedId: 0`). A run keeps a row
+iff `ts > lastFoldedTs || (ts === lastFoldedTs && id > lastFoldedId)`, and
+leaves behind the largest `ts` it folded together with the largest `id` at that
+`ts`. The ts-only shape cannot say *which* of a same-millisecond tie a prior
+run already took, so reading it as id `0` re-folds that whole millisecond:
+duplicate rows under a fresh run marker, which is the recoverable failure. A
+malformed state file — unparseable, or carrying a non-numeric field — aborts
+the run rather than silently refolding from zero.
+
+**The walk ends on the record, never on page size.** A page reaching a row
+at-or-below the watermark ends the run's new territory (rows arrive
+`ts DESC, id DESC`, so everything behind that row is older still); an empty
+page ends an exhausted ledger. What the fold must *not* read as "last page" is
+`page.length < limit`: the gate's own limit clamp lives in another package, and
+the day it drops below the fold's requested 200 that reading would stop the
+walk after one page and silently drop the whole tail. If a non-empty page of
+rows above the watermark ever yields nothing new — the cursor not advancing,
+which an honest gate cannot produce — the fold *throws* rather than folding a
+partial set: advancing the watermark over rows the run never reached would
+orphan them permanently, and a loud failure that appends nothing is the only
+honest outcome.
 
 Each wire row now carries `id`, the ledger table's sqlite rowid: a unique row
 identity that `ts` cannot supply, since `ts` is bare `Date.now()` and distinct
