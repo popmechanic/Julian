@@ -3,7 +3,6 @@ import { createMergeableStore } from 'tinybase/mergeable-store';
 import type { MergeableStore } from 'tinybase/mergeable-store';
 
 export const STORE_PATH = 'julian/chat';
-export const SCHEMA_VERSION = 2;
 
 // Tables: messages keyed by harness message id / `evt-<id>`; artifacts keyed by relative filename.
 export const TABLES_SCHEMA = {
@@ -46,7 +45,9 @@ export const VALUES_SCHEMA = {
   lineageNote: { type: 'string' },
   createdAt: { type: 'number' },
   createdBy: { type: 'string' },
-  storeSchemaVersion: { type: 'number', default: SCHEMA_VERSION },
+  // storeSchemaVersion retired 2026-08-20 (#8): zero readers, never durably
+  // stamped (default-equal writes are no-ops). Migration is by inspection;
+  // a future version marker gets designed WITH its reader, not before.
   activeSessionId: { type: 'string', default: '' },
 } as const;
 

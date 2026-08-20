@@ -1,5 +1,5 @@
 import type { MergeableStore } from 'tinybase/mergeable-store';
-import { newLedgerId, SCHEMA_VERSION } from 'julian-shared/schema';
+import { newLedgerId } from 'julian-shared/schema';
 
 export interface CreationRecord {
   ledgerId: string;
@@ -27,7 +27,6 @@ export function performCreation(store: MergeableStore, opts: { now?: number } = 
     lineageNote: LINEAGE_NOTE,
     createdAt,
     createdBy: 'Julian & Marcus',
-    storeSchemaVersion: SCHEMA_VERSION,
     activeSessionId: '',
   });
   return { ledgerId, parentLedgerId: PARENT, createdAt, createdBy: 'Julian & Marcus' };
