@@ -1,5 +1,6 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { mkdtemp, writeFile, readFile } from 'node:fs/promises';
+import { promises as nodeFs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -77,10 +78,31 @@ describe('fold state', () => {
 describe('appendToLedgerFile error honesty (#38)', () => {
   test('a non-ENOENT read error propagates instead of truncating', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fold-append-'));
-    const blocker = join(dir, 'blocker');
-    await writeFile(blocker, 'i am a file', 'utf8');
-    // Path whose parent is a regular file → read fails ENOTDIR, not ENOENT.
-    await expect(appendToLedgerFile(join(blocker, 'child.md'), 'content')).rejects.toThrow();
+    const path = join(dir, '2026-08.md');
+    const priorBytes = '*Appended run — 2026-08-19T00:00:00.000Z*\n\nrows already on disk\n';
+    await writeFile(path, priorBytes, 'utf8');
+
+    // Stub the exact readFile the runner calls so the fault lands in the catch
+    // under test. A parent-is-a-file fixture would reject at the mkdir above
+    // it (EEXIST) and never reach the read, satisfying the assertion by
+    // accident — and any fixture that also breaks the write (e.g. a directory
+    // in the month file's place) rejects even when the read is swallowed.
+    // EACCES on read alone leaves the write viable, so a swallowing catch
+    // would resolve here and truncate the month file.
+    const spy = vi
+      .spyOn(nodeFs, 'readFile')
+      .mockRejectedValue(
+        Object.assign(new Error(`EACCES: permission denied, open '${path}'`), { code: 'EACCES' }),
+      );
+    try {
+      await expect(appendToLedgerFile(path, 'content')).rejects.toThrow(/EACCES/);
+    } finally {
+      spy.mockRestore();
+    }
+
+    // The bytes already on disk are exactly as they were: append-only holds
+    // even when the read fails.
+    expect(await readFile(path, 'utf8')).toBe(priorBytes);
   });
 
   test('ENOENT still opens the month normally', async () => {
