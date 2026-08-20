@@ -73,9 +73,11 @@
 **Notes:** Cluster anchor; includes #14 (container-key rename reads as empty forever — and the in-code comment claims coverage it doesn't have), #16 (to[]/labels[] element validation; one malformed element aborts the whole beat), #17 (doc names the wrong id namespace), #18 (cap-holds never expire — needs the dated-hold design decision), #19 (runner has no test seam — prerequisite for #14/#15 fixes; extraction needed since the runner exports nothing). One plan, one pass.
 
 ### #26: Presence language — a rest is not a death
-**State:** accepted
+**State:** queued
 **Score:** 6.5 — objective 4 verbatim; Marcus observed the confusion himself Aug 1
 **Est-files:** app/src/components/FaceHeader.svelte, app/src/components/ChatView.svelte, app/src/lib/faces.ts, app/src/components/*.test.ts
+**Plan:** docs/superpowers/plans/2026-08-20-presence-language.md
+**Engine:** inline
 **Notes:** Controls half done (REST / END FOR GOOD, confirm, guard tests). Remaining: both presence readouts are binary on sessionActive — RESTING/RESUME labels don't exist; after a REST the UI says ASLEEP/WAKE JULIAN identically to a final end. Needs the resumability bit surfaced to the UI.
 
 ### #36: Gate governor & wire hardening — small correctness set
