@@ -23,7 +23,7 @@ journaled in `memory/mail-journal.md`.
 | Daemon definition | `~/Library/LaunchAgents/com.julian.mail-heartbeat.plist` (installed from `deploy/com.julian.mail-heartbeat.plist`) |
 | The glance | `scripts/mail-glance.ts` (`DRY_RUN=1` to rehearse) |
 | Session prompt | `scripts/lib/mail-reply-prompt.md` |
-| State (held threads, stranger watermark) | `~/.julian/mail-heartbeat.json` |
+| State (holds, stranger watermark) | `~/.julian/mail-heartbeat.json` |
 | Log | `~/Library/Logs/julian-mail-heartbeat.log` |
 | Testimony | `memory/mail-journal.md` |
 
@@ -71,14 +71,26 @@ Both must print a path, or the install must not proceed.
     # Resume it
     launchctl load ~/Library/LaunchAgents/com.julian.mail-heartbeat.plist
 
-    # Release a held thread — edit ~/.julian/mail-heartbeat.json and
-    # remove its id from the `held` array. The file must stay complete,
-    # valid JSON with all three fields (`strangerWatermarkMs`, `held`,
-    # `updatedAt`) — the runner strictly rejects partial files. Validate
-    # afterward with:
+    # Park a thread (suspicion — stays until YOU release it):
+    #   bun scripts/mail-glance.ts --hold <messageId>
+    # Park for the daily cap (auto-releases next UTC day, with a notification):
+    #   bun scripts/mail-glance.ts --hold-cap <messageId>
+    # Holds are keyed by the thread's LATEST messageId (not the threadId the
+    # reply cap counts by). Release a suspicion hold by editing
+    # ~/.julian/mail-heartbeat.json and removing its entry from `holds` —
+    # hand-editing is the only release path for suspicion, by design.
+
+    # The file must stay complete, valid JSON with all three fields
+    # (`strangerWatermarkMs`, `holds`, `updatedAt`) — the runner strictly
+    # rejects partial files. Validate afterward with:
     DRY_RUN=1 bun scripts/mail-glance.ts
-    # Holds do not expire on their own — a cap-of-the-day hold persists
-    # until released.
+    # Two kinds of hold, two lifecycles. A `cap` hold records the UTC day it
+    # was parked on and releases itself once that day is over, announcing the
+    # release by notification — it says only "capped for that day", and that
+    # stops being true at midnight UTC. A `suspicion` hold records no day and
+    # never expires: it means something felt wrong, and no clock can un-feel
+    # that. A pre-#18 `held: []` file is read as suspicion holds, because a
+    # hold whose reason nobody wrote down must not release itself.
 
     # UNINSTALL — the full removal, written before the daemon ever ran
     launchctl unload ~/Library/LaunchAgents/com.julian.mail-heartbeat.plist

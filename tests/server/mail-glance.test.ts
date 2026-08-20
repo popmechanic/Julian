@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  classifyThreads, extractAddress, hasTrustworthyTimestamps, idsUsable, isAutomated, isSafeId,
-  knownFromSent, latestArrival, normalizeThread, parseStateFile, SAFE_ID,
-  type MailMessage, type MailThread,
+  activeHoldIds, classifyThreads, extractAddress, hasTrustworthyTimestamps, idsUsable, isAutomated,
+  isSafeId, knownFromSent, latestArrival, mergeHolds, normalizeThread, parseStateFile, SAFE_ID,
+  type Hold, type MailMessage, type MailThread,
 } from '../../scripts/lib/mail-glance-lib';
 
 const SELF = 'julian-marcus@agentmail.to';
@@ -348,11 +348,18 @@ describe('latestArrival', () => {
 });
 
 describe('parseStateFile', () => {
-  test('valid state parses ok', () => {
+  test('valid legacy state parses ok, migrating held into holds', () => {
     const r = parseStateFile(JSON.stringify({ strangerWatermarkMs: 123, held: ['a', 'b'], updatedAt: '2026-07-31T00:00:00Z' }));
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.state).toEqual({ strangerWatermarkMs: 123, held: ['a', 'b'], updatedAt: '2026-07-31T00:00:00Z' });
+      expect(r.state).toEqual({
+        strangerWatermarkMs: 123,
+        holds: [
+          { id: 'a', kind: 'suspicion', heldUtcDay: '' },
+          { id: 'b', kind: 'suspicion', heldUtcDay: '' },
+        ],
+        updatedAt: '2026-07-31T00:00:00Z',
+      });
     }
   });
 
@@ -388,5 +395,121 @@ describe('parseStateFile', () => {
   test('a JSON array (not an object) is rejected', () => {
     const r = parseStateFile('[]');
     expect(r.ok).toBe(false);
+  });
+});
+
+describe('holds with lifecycles (#18)', () => {
+  test('legacy held: string[] migrates as suspicion — unknown intent never auto-releases', () => {
+    const r = parseStateFile(JSON.stringify({ strangerWatermarkMs: 0, held: ['m1'], updatedAt: '' }));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.state.holds).toEqual([{ id: 'm1', kind: 'suspicion', heldUtcDay: '' }]);
+  });
+
+  test('the new holds shape validates strictly', () => {
+    const good = JSON.stringify({
+      strangerWatermarkMs: 0, updatedAt: '',
+      holds: [{ id: 'm1', kind: 'cap', heldUtcDay: '2026-08-20' }],
+    });
+    expect(parseStateFile(good).ok).toBe(true);
+    const bad = JSON.stringify({ strangerWatermarkMs: 0, updatedAt: '', holds: [{ id: 'm1', kind: 'whatever', heldUtcDay: '' }] });
+    expect(parseStateFile(bad).ok).toBe(false);
+  });
+
+  test('cap-holds expire at the UTC day boundary; suspicion-holds never (#18)', () => {
+    const holds = [
+      { id: 'cap-old', kind: 'cap' as const, heldUtcDay: '2026-08-19' },
+      { id: 'cap-today', kind: 'cap' as const, heldUtcDay: '2026-08-20' },
+      { id: 'sus', kind: 'suspicion' as const, heldUtcDay: '' },
+    ];
+    const { active, expired } = activeHoldIds(holds, '2026-08-20');
+    expect(active.has('cap-today')).toBe(true);
+    expect(active.has('sus')).toBe(true);
+    expect(active.has('cap-old')).toBe(false);
+    expect(expired.map((h) => h.id)).toEqual(['cap-old']);
+  });
+
+  // Every remaining malformed shape stays ok:false. A corrupt state file
+  // aborts the beat; silently coercing a half-parsed hold into "no hold"
+  // is the one failure that could release a parked thread unannounced.
+  test('malformed holds entries are corrupt, never coerced away', () => {
+    const withHolds = (holds: unknown) =>
+      parseStateFile(JSON.stringify({ strangerWatermarkMs: 0, updatedAt: '', holds }));
+    expect(withHolds('nope').ok).toBe(false);                                     // not an array
+    expect(withHolds(['m1']).ok).toBe(false);                                     // bare string, not a Hold
+    expect(withHolds([{ kind: 'cap', heldUtcDay: '' }]).ok).toBe(false);          // no id
+    expect(withHolds([{ id: '', kind: 'cap', heldUtcDay: '' }]).ok).toBe(false);  // empty id
+    expect(withHolds([{ id: 'm1', kind: 'cap' }]).ok).toBe(false);                // no heldUtcDay
+    expect(withHolds([{ id: 'm1', kind: 'cap', heldUtcDay: 20260820 }]).ok).toBe(false); // wrong type
+    expect(withHolds([null]).ok).toBe(false);
+  });
+
+  test('a state file carrying neither holds nor held is corrupt', () => {
+    expect(parseStateFile(JSON.stringify({ strangerWatermarkMs: 0, updatedAt: '' })).ok).toBe(false);
+  });
+
+  test('a state file carrying BOTH holds and held is corrupt, not silently merged', () => {
+    // Two disagreeing hold lists cannot be reconciled without guessing, and a
+    // wrong guess releases a parked thread. Stop the beat instead.
+    const raw = JSON.stringify({ strangerWatermarkMs: 0, updatedAt: '', held: ['m1'], holds: [] });
+    expect(parseStateFile(raw).ok).toBe(false);
+  });
+
+  test('an empty holds array parses ok (the normal steady state)', () => {
+    const r = parseStateFile(JSON.stringify({ strangerWatermarkMs: 7, updatedAt: '', holds: [] }));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.state).toEqual({ strangerWatermarkMs: 7, holds: [], updatedAt: '' });
+  });
+
+  test('a cap-hold with no day never expires — a dayless cap is not evidence of yesterday', () => {
+    const { active, expired } = activeHoldIds([{ id: 'x', kind: 'cap', heldUtcDay: '' }], '2026-08-20');
+    expect(active.has('x')).toBe(true);
+    expect(expired).toEqual([]);
+  });
+
+  test('a cap-hold dated in the future does not expire', () => {
+    const { active, expired } = activeHoldIds([{ id: 'x', kind: 'cap', heldUtcDay: '2026-08-21' }], '2026-08-20');
+    expect(active.has('x')).toBe(true);
+    expect(expired).toEqual([]);
+  });
+
+  test('no holds yields an empty active set and no expiries', () => {
+    expect(activeHoldIds([], '2026-08-20')).toEqual({ active: new Set<string>(), expired: [] });
+  });
+});
+
+describe('mergeHolds', () => {
+  const cap = (id: string, day: string): Hold => ({ id, kind: 'cap', heldUtcDay: day });
+  const sus = (id: string): Hold => ({ id, kind: 'suspicion', heldUtcDay: '' });
+
+  test('distinct ids are unioned', () => {
+    expect(mergeHolds([cap('a', '2026-08-20')], [sus('b')])).toEqual([cap('a', '2026-08-20'), sus('b')]);
+  });
+
+  test('on a kind conflict suspicion wins, whichever side it came from', () => {
+    // The stricter intent survives a race: an id parked because something
+    // felt wrong must not be downgraded to a hold that auto-releases.
+    expect(mergeHolds([cap('a', '2026-08-20')], [sus('a')])).toEqual([sus('a')]);
+    expect(mergeHolds([sus('a')], [cap('a', '2026-08-20')])).toEqual([sus('a')]);
+  });
+
+  test('two cap-holds for one id keep the LATER day — never shorten a hold', () => {
+    expect(mergeHolds([cap('a', '2026-08-20')], [cap('a', '2026-08-19')])).toEqual([cap('a', '2026-08-20')]);
+    expect(mergeHolds([cap('a', '2026-08-19')], [cap('a', '2026-08-20')])).toEqual([cap('a', '2026-08-20')]);
+  });
+
+  test('a dayless cap-hold outlasts a dated one — a merge never shortens a hold', () => {
+    // heldUtcDay '' never expires, so it must not be overwritten by a dated
+    // cap-hold that would release itself tomorrow.
+    expect(mergeHolds([cap('a', '')], [cap('a', '2026-08-20')])).toEqual([cap('a', '')]);
+    expect(mergeHolds([cap('a', '2026-08-20')], [cap('a', '')])).toEqual([cap('a', '')]);
+  });
+
+  test('duplicate identical holds collapse to one', () => {
+    expect(mergeHolds([sus('a')], [sus('a')])).toEqual([sus('a')]);
+  });
+
+  test('merging with an empty list is the identity', () => {
+    expect(mergeHolds([], [sus('a')])).toEqual([sus('a')]);
+    expect(mergeHolds([sus('a')], [])).toEqual([sus('a')]);
   });
 });

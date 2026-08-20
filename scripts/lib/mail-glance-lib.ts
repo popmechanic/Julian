@@ -124,9 +124,22 @@ export function hasTrustworthyTimestamps(t: MailThread): boolean {
   return t.messages.every((m) => parseTime(m.timestamp) !== null);
 }
 
+// A parked thread, and WHY it is parked — the distinction #18 exists for.
+// 'cap' means "this thread hit its daily reply cap", which is true only of
+// the UTC day recorded in heldUtcDay; it releases itself when that day is
+// over. 'suspicion' means "something about this felt wrong", which no clock
+// can un-feel, so it is released only by hand. heldUtcDay is '' for
+// suspicion holds (and for any cap hold whose day is unknown, which
+// therefore never auto-releases).
+export interface Hold {
+  id: string;
+  kind: 'cap' | 'suspicion';
+  heldUtcDay: string;               // 'YYYY-MM-DD' (UTC), or '' for none
+}
+
 export interface HeartbeatState {
   strangerWatermarkMs: number;
-  held: string[];
+  holds: Hold[];
   updatedAt: string;
 }
 
@@ -134,10 +147,26 @@ export type ParsedStateFile =
   | { ok: true; state: HeartbeatState }
   | { ok: false; reason: string };
 
+function parseHold(raw: unknown): Hold | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const h = raw as Record<string, unknown>;
+  if (typeof h.id !== 'string' || h.id.length === 0) return null;
+  if (h.kind !== 'cap' && h.kind !== 'suspicion') return null;
+  if (typeof h.heldUtcDay !== 'string') return null;
+  return { id: h.id, kind: h.kind, heldUtcDay: h.heldUtcDay };
+}
+
 // Strict shape validation for ~/.julian/mail-heartbeat.json. A corrupt file
 // must be distinguishable from a missing one: silently discarding a bad
-// file's held list would un-park a deliberately parked thread and reply to
-// it again — an unintended send.
+// file's holds would un-park a deliberately parked thread and reply to it
+// again — an unintended send.
+//
+// Both shapes are accepted, because a state file written before #18 is on
+// disk right now: legacy `held: string[]` migrates to suspicion holds. That
+// is the safe direction — the old format recorded no reason, and a hold
+// whose intent is unknown must never auto-release. A file carrying BOTH
+// keys is corrupt: two disagreeing hold lists cannot be reconciled without
+// a guess, and a wrong guess releases a parked thread.
 export function parseStateFile(raw: string): ParsedStateFile {
   let parsed: unknown;
   try {
@@ -149,17 +178,69 @@ export function parseStateFile(raw: string): ParsedStateFile {
     return { ok: false, reason: 'not a JSON object' };
   }
   const obj = parsed as Record<string, unknown>;
-  if (!Array.isArray(obj.held) || !obj.held.every((h) => typeof h === 'string')) {
-    return { ok: false, reason: 'held is not an array of strings' };
+
+  const hasHolds = Object.prototype.hasOwnProperty.call(obj, 'holds');
+  const hasHeld = Object.prototype.hasOwnProperty.call(obj, 'held');
+  if (hasHolds && hasHeld) {
+    return { ok: false, reason: 'both holds and held are present — ambiguous hold list' };
   }
+  let holds: Hold[];
+  if (hasHolds) {
+    if (!Array.isArray(obj.holds)) return { ok: false, reason: 'holds is not an array' };
+    holds = [];
+    for (const raw of obj.holds) {
+      const h = parseHold(raw);
+      if (h === null) return { ok: false, reason: 'holds contains an entry that is not {id, kind, heldUtcDay}' };
+      holds.push(h);
+    }
+  } else if (hasHeld) {
+    if (!Array.isArray(obj.held) || !obj.held.every((h) => typeof h === 'string')) {
+      return { ok: false, reason: 'held is not an array of strings' };
+    }
+    holds = (obj.held as string[]).map((id) => ({ id, kind: 'suspicion' as const, heldUtcDay: '' }));
+  } else {
+    return { ok: false, reason: 'neither holds nor held is present' };
+  }
+
   if (typeof obj.strangerWatermarkMs !== 'number' || !Number.isFinite(obj.strangerWatermarkMs)) {
     return { ok: false, reason: 'strangerWatermarkMs is not a finite number' };
   }
   const updatedAt = typeof obj.updatedAt === 'string' ? obj.updatedAt : '';
-  return {
-    ok: true,
-    state: { strangerWatermarkMs: obj.strangerWatermarkMs, held: obj.held as string[], updatedAt },
-  };
+  return { ok: true, state: { strangerWatermarkMs: obj.strangerWatermarkMs, holds, updatedAt } };
+}
+
+/** Cap-holds parked on an earlier UTC day expire (they were 'capped for today'); suspicion-holds never expire (#18). */
+export function activeHoldIds(holds: Hold[], todayUtcDay: string): { active: Set<string>; expired: Hold[] } {
+  const active = new Set<string>();
+  const expired: Hold[] = [];
+  for (const h of holds) {
+    if (h.kind === 'cap' && h.heldUtcDay !== '' && h.heldUtcDay < todayUtcDay) expired.push(h);
+    else active.add(h.id);
+  }
+  return { active, expired };
+}
+
+// Does `a` hold the thread for at least as long as `b` would?
+// suspicion (never releases) > dayless cap (never releases) > later day > earlier day.
+function outlasts(a: Hold, b: Hold): boolean {
+  if (a.kind === 'suspicion') return true;
+  if (b.kind === 'suspicion') return false;
+  if (a.heldUtcDay === '') return true;
+  if (b.heldUtcDay === '') return false;
+  return a.heldUtcDay >= b.heldUtcDay;
+}
+
+// Union two hold lists, keyed by id. Every tie-break leans the same way —
+// toward the hold that lasts longer — because this runs where a beat's view
+// of the holds meets a concurrent `--hold`'s, and losing a park is the one
+// outcome that sends mail.
+export function mergeHolds(a: Hold[], b: Hold[]): Hold[] {
+  const byId = new Map<string, Hold>();
+  for (const h of [...a, ...b]) {
+    const prev = byId.get(h.id);
+    if (prev === undefined || !outlasts(prev, h)) byId.set(h.id, h);
+  }
+  return [...byId.values()];
 }
 
 // --- The normalize boundary: AgentMail's wire shape → our contract -------

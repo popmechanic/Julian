@@ -8,9 +8,9 @@ import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import {
-  classifyThreads, knownFromSent, hasTrustworthyTimestamps,
-  idsUsable, isSafeId, latestArrival, normalizeThread, parseStateFile,
-  type HeartbeatState, type MailMessage, type MailThread,
+  activeHoldIds, classifyThreads, knownFromSent, hasTrustworthyTimestamps,
+  idsUsable, isSafeId, latestArrival, mergeHolds, normalizeThread, parseStateFile,
+  type HeartbeatState, type Hold, type MailMessage, type MailThread,
 } from './lib/mail-glance-lib';
 
 const INBOX = 'julian-marcus@agentmail.to';
@@ -31,6 +31,21 @@ function notify(text: string) {
   Bun.spawnSync(['osascript', '-e', `display notification ${JSON.stringify(text)} with title "Julian Mail"`]);
 }
 
+// Cap-hold expiry is the ONLY thing in this program that can make a
+// previously-ineligible thread eligible, so it may never happen quietly —
+// but it is detected in two places (before classifying, and again on the
+// union at save time), and announcing it twice for one release is noise.
+// This set lives for exactly one beat: announced once, never again, never
+// zero. Loud beats silent.
+const announcedExpiries = new Set<string>();
+
+function announceExpiries(expired: Hold[]): void {
+  const fresh = expired.map((h) => h.id).filter((id) => !announcedExpiries.has(id));
+  if (!fresh.length) return;
+  for (const id of fresh) announcedExpiries.add(id);
+  notify(`cap-hold(s) expired and released: ${fresh.join(', ')} — threads eligible again`);
+}
+
 // Every failure path ends here: silence plus a notification, never a
 // half-run beat and never an improvised send.
 function abort(text: string, code = 1): never {
@@ -40,15 +55,24 @@ function abort(text: string, code = 1): never {
 }
 
 function usage(): never {
-  console.error('usage: mail-glance.ts                     run one beat');
-  console.error('       mail-glance.ts --hold <messageId>  park a thread');
+  console.error('usage: mail-glance.ts                         run one beat');
+  console.error('       mail-glance.ts --hold <messageId>      park a thread (suspicion — stays until released by hand)');
+  console.error('       mail-glance.ts --hold-cap <messageId>  park a thread for today\'s reply cap (auto-releases next UTC day)');
   // Routed through abort() like every other failure: no stop path in this
   // file is silent, so a mistyped invocation still reaches Marcus.
   abort('unrecognized arguments — no beat run, nothing sent', 2);
 }
 
+// The UTC calendar day a cap-hold is stamped with, and the day expiry is
+// measured against. UTC, not local: the reply cap in the amended rule 6 is
+// counted per UTC day, so the hold that enforces it must end on the same
+// boundary the count resets on.
+function utcDay(d = new Date()): string {
+  return d.toISOString().slice(0, 10);
+}
+
 function freshState(): State {
-  return { strangerWatermarkMs: 0, held: [], updatedAt: '' };
+  return { strangerWatermarkMs: 0, holds: [], updatedAt: '' };
 }
 
 // Thrown by loadStateFrom whenever a state file exists but cannot be trusted
@@ -119,28 +143,47 @@ function writeState(s: State) {
 }
 
 // The injectable-path core of saveBeatState: re-read the file at `path`
-// immediately before writing and union the on-disk held list with ours. A
-// reply session from an earlier beat may have run `--hold` while this beat
-// was in flight; dropping that parked id would make the thread eligible
-// again — an unintended send. The watermark only ever moves forward, so take
-// the later of the two.
-export function saveBeatStateTo(path: string, s: HeartbeatState): void {
+// immediately before writing and union the on-disk holds with ours. A reply
+// session from an earlier beat may have run `--hold` while this beat was in
+// flight; dropping that parked id would make the thread eligible again — an
+// unintended send. The watermark only ever moves forward, so take the later
+// of the two.
+//
+// Expiry is executed HERE, on the union, because this is the last place a
+// stale cap-hold could come back: the beat may have pruned it from its own
+// copy, but it is still sitting on disk. The expired holds are returned
+// rather than announced, so the caller can guarantee exactly one
+// notification per beat for a release — silence is never an option, but two
+// notifications for one release is noise.
+export function saveBeatStateTo(
+  path: string, s: HeartbeatState, todayUtcDay: string = utcDay(),
+): { expired: Hold[] } {
   const onDisk = loadStateFrom(path);
+  const merged = mergeHolds(onDisk.holds, s.holds);
+  const { expired } = activeHoldIds(merged, todayUtcDay);
+  const gone = new Set(expired);
   writeStateTo(path, {
     ...s,
     strangerWatermarkMs: Math.max(onDisk.strangerWatermarkMs, s.strangerWatermarkMs),
-    held: [...new Set([...onDisk.held, ...s.held])],
+    holds: merged.filter((h) => !gone.has(h)),
   });
+  return { expired };
 }
 
 // Thin wrapper bound to STATE_PATH: DRY gating plus the same
 // StateCorruptError → abort() translation as loadState, so a corrupt on-disk
 // file re-read during a beat-side save produces the exact same message it
 // always has.
-function saveBeatState(s: State) {
-  if (DRY) { console.log('[dry] would save state:', JSON.stringify(s)); return; }
+function saveBeatState(s: State): { expired: Hold[] } {
+  if (DRY) { console.log('[dry] would save state:', JSON.stringify(s)); return { expired: [] }; }
   try {
-    saveBeatStateTo(STATE_PATH, s);
+    const r = saveBeatStateTo(STATE_PATH, s);
+    // A stale cap-hold can still surface here — the union re-reads a disk
+    // copy this beat never saw, and a beat that spans UTC midnight expires
+    // holds it found active minutes earlier. Either way it is a release, so
+    // it is announced (deduped against the pre-classify announcement).
+    announceExpiries(r.expired);
+    return r;
   } catch (e) {
     if (e instanceof StateCorruptError) {
       abort(`${e.message} at ${STATE_PATH} — beat aborted, nothing sent`);
@@ -188,12 +231,23 @@ async function main() {
   // `--dry-run` must print usage, never fall through into a live beat.
   const argv = process.argv.slice(2);
   if (argv.length > 0) {
-    if (argv[0] !== '--hold' || argv.length !== 2 || !argv[1]) usage();
+    const flag = argv[0];
+    if ((flag !== '--hold' && flag !== '--hold-cap') || argv.length !== 2 || !argv[1]) usage();
     const id = argv[1];
+    // `--hold` is the unchanged, unqualified park: a reason nobody wrote down
+    // is a reason no clock may overrule, so it is suspicion and it stays.
+    // `--hold-cap` is the one hold that says what it is — "capped for today" —
+    // and so is the one hold allowed to end by itself.
+    const hold: Hold = flag === '--hold-cap'
+      ? { id, kind: 'cap', heldUtcDay: utcDay() }
+      : { id, kind: 'suspicion', heldUtcDay: '' };
     const s = loadState();
-    if (!s.held.includes(id)) s.held.push(id);
+    // mergeHolds is the dedupe: one entry per id, and on a conflict the
+    // longer-lasting hold survives (so --hold-cap can never downgrade a
+    // suspicion hold that is already parked on this id).
+    s.holds = mergeHolds(s.holds, [hold]);
     writeState(s);
-    console.log(`[glance] held ${id}`);
+    console.log(`[glance] held ${id} (${hold.kind})`);
     return;
   }
 
@@ -247,7 +301,24 @@ async function main() {
   // a thread parked in that window must be honored by THIS classification,
   // not only by the union at save time.
   const state = loadState();
-  const { eligible, strangers } = classifyThreads(threads, known, INBOX, new Set(state.held));
+
+  // The one change in this program that can make a previously-ineligible
+  // thread eligible, and it announces itself. A cap-hold says "capped for
+  // this UTC day"; once that day is over the statement is simply no longer
+  // true, and leaving it in place was the bug (#18) — a thread parked for
+  // one day's cap stayed parked forever. Suspicion-holds are untouched.
+  const { active, expired } = activeHoldIds(state.holds, utcDay());
+  if (expired.length) {
+    announceExpiries(expired);
+    // Persist the release now, in the same beat that announced it, so the
+    // announcement is made exactly once. saveBeatStateTo re-prunes the union
+    // with the on-disk copy, so the expired holds cannot come back.
+    const gone = new Set(expired);
+    state.holds = state.holds.filter((h) => !gone.has(h));
+    saveBeatState(state);
+  }
+
+  const { eligible, strangers } = classifyThreads(threads, known, INBOX, active);
 
   // Strangers: notify once per new arrival (watermark), content unread.
   // `latestArrival` also reports whether the time it returned came from the
