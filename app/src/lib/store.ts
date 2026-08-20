@@ -146,7 +146,19 @@ export function createTicketUrlProvider(
         // shipped-bundle defect (#43) — three in a row means say so on the
         // pill, same as the resolved-terminal-error path above.
         consecutiveThrows += 1;
-        if (consecutiveThrows >= STALE_THROW_LIMIT) setPhase('stale');
+        if (consecutiveThrows >= STALE_THROW_LIMIT) {
+          try {
+            setPhase('stale');
+          } catch {
+            // setPhase calls every phaseListeners subscriber synchronously —
+            // statements in this catch arm are not themselves protected by
+            // it, so a throwing subscriber would otherwise escape here and
+            // reject provideUrl's promise, holding RWS's _connectLock
+            // forever (the exact TOTAL violation this module exists to
+            // prevent). Swallow: a bad subscriber is the subscriber's bug,
+            // not a reason to break reconnection.
+          }
+        }
         await sleep(backoff()); // belt over braces: nothing escapes
       }
     }

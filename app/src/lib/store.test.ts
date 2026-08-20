@@ -285,6 +285,53 @@ describe('createTicketUrlProvider — the total ticket URL provider (R2-D1)', ()
   // throws accumulate 1,2,_,3 and the third flips the pill to 'stale' before
   // the final ticket ever arrives. Deleting `consecutiveThrows = 0` turns
   // this test red.
+  // Totality hole (review-confirmed): `setPhase('stale')` in the catch arm
+  // synchronously calls every phaseListeners subscriber via forEach — a
+  // throwing subscriber is not shielded by the surrounding catch (it IS the
+  // catch), so its exception propagates out of provideUrl and rejects the
+  // provider's promise. That is the exact violation the module header and
+  // the global constraint forbid: a rejecting provider holds RWS's
+  // _connectLock forever (R2-D1). The `armed` gate skips the synchronous
+  // current-phase delivery call onSyncPhase makes at subscribe time — only
+  // calls triggered from INSIDE the provider's own setPhase('stale') should
+  // throw.
+  test('a throwing onSyncPhase subscriber does not escape the provider on the stale transition (TOTAL)', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = {
+        ticket: vi.fn().mockRejectedValue(new TypeError('Illegal invocation')),
+        terminalCount: () => 0,
+      } as unknown as ExchangeClient;
+
+      let armed = false;
+      const unsub = onSyncPhase(() => {
+        if (armed) throw new Error('subscriber exploded');
+      });
+      armed = true;
+
+      const provideUrl = createTicketUrlProvider(client, 'wss://sync.example', () => {});
+
+      let rejection: unknown = '<not yet settled>';
+      const settled = provideUrl().then(
+        () => {
+          rejection = null;
+          return '<resolved>';
+        },
+        (e: unknown) => {
+          rejection = e;
+          return '<rejected>';
+        },
+      );
+
+      for (let i = 0; i < 8; i++) await vi.advanceTimersByTimeAsync(31_000); // drive well past three consecutive throws
+      expect(rejection).toBe('<not yet settled>'); // TOTAL: never rejects, even with an exploding subscriber
+      unsub();
+      void settled;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('a resolved ticket() call resets the throw count — throws either side of a resolution do not accumulate into a false stale', async () => {
     vi.useFakeTimers();
     try {
