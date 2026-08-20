@@ -11,10 +11,6 @@ export interface LedgerEntryWire {
   service: string;
   verb: string;
   detail: string;
-  // Read (part of the wire shape) but not yet rendered: a refused row prints
-  // identically to an allowed one in every table below. Left documented
-  // rather than fixed here, since a `refused:` marker would touch every
-  // pinned row format across all three sections. Future work.
   allowed: number;
 }
 
@@ -38,6 +34,23 @@ export function utcMonthOf(ts: number): string {
   if (Number.isNaN(date.getTime())) return '';
   const month = String(date.getUTCMonth() + 1).padStart(2, '0');
   return `${date.getUTCFullYear()}-${month}`;
+}
+
+/** Route rows to their own UTC month files. '' collects unreadable timestamps. */
+export function groupByMonth(entries: LedgerEntryWire[]): Map<string, LedgerEntryWire[]> {
+  const grouped = new Map<string, LedgerEntryWire[]>();
+  for (const entry of entries) {
+    const month = utcMonthOf(entry.ts);
+    const bucket = grouped.get(month);
+    if (bucket) bucket.push(entry);
+    else grouped.set(month, [entry]);
+  }
+  return grouped;
+}
+
+/** A row's outcome as the fold prints it. Any non-1 value reads as refused — fail visible. */
+function okText(allowed: number): string {
+  return allowed === 1 ? 'yes' : 'refused';
 }
 
 /**
@@ -134,11 +147,11 @@ export function foldEntries(entries: LedgerEntryWire[], monthUtc: string): strin
   if (wakings.length === 0) {
     lines.push('*(none)*');
   } else {
-    lines.push('| when (UTC) | holder/session | verb | detail |');
-    lines.push('|---|---|---|---|');
+    lines.push('| when (UTC) | holder/session | verb | ok | detail |');
+    lines.push('|---|---|---|---|---|');
     for (const entry of wakings) {
       lines.push(
-        `| ${formatTimestamp(entry.ts)} | ${cellText(entry.sub)} | ${cellText(entry.verb)} | ${cellText(entry.detail)} |`,
+        `| ${formatTimestamp(entry.ts)} | ${cellText(entry.sub)} | ${cellText(entry.verb)} | ${okText(entry.allowed)} | ${cellText(entry.detail)} |`,
       );
     }
   }
@@ -149,11 +162,11 @@ export function foldEntries(entries: LedgerEntryWire[], monthUtc: string): strin
   if (theft.length === 0) {
     lines.push('*(none)*');
   } else {
-    lines.push('| when (UTC) | holder/session | verb | detail | token_id |');
-    lines.push('|---|---|---|---|---|');
+    lines.push('| when (UTC) | holder/session | verb | ok | detail | token_id |');
+    lines.push('|---|---|---|---|---|---|');
     for (const entry of theft) {
       lines.push(
-        `| ${formatTimestamp(entry.ts)} | ${cellText(entry.sub)} | ${cellText(entry.verb)} | ${cellText(entry.detail)} | ${cellText(tokenIdOf(entry.detail))} |`,
+        `| ${formatTimestamp(entry.ts)} | ${cellText(entry.sub)} | ${cellText(entry.verb)} | ${okText(entry.allowed)} | ${cellText(entry.detail)} | ${cellText(tokenIdOf(entry.detail))} |`,
       );
     }
   }
@@ -164,18 +177,19 @@ export function foldEntries(entries: LedgerEntryWire[], monthUtc: string): strin
   if (routine.length === 0) {
     lines.push('*(none)*');
   } else {
-    // One pass: count per (holder/session × verb), keeping first-seen order.
-    const counts = new Map<string, { sub: string; verb: string; count: number }>();
+    // One pass: count per (holder/session × verb × outcome), keeping first-seen order.
+    const counts = new Map<string, { sub: string; verb: string; ok: string; count: number }>();
     for (const entry of routine) {
-      const key = JSON.stringify([entry.sub, entry.verb]);
+      const ok = okText(entry.allowed);
+      const key = JSON.stringify([entry.sub, entry.verb, ok]);
       const seen = counts.get(key);
       if (seen) seen.count += 1;
-      else counts.set(key, { sub: entry.sub, verb: entry.verb, count: 1 });
+      else counts.set(key, { sub: entry.sub, verb: entry.verb, ok, count: 1 });
     }
-    lines.push('| holder/session | verb | count |');
-    lines.push('|---|---|---|');
-    for (const { sub, verb, count } of counts.values()) {
-      lines.push(`| ${cellText(sub)} | ${cellText(verb)} | ${count} |`);
+    lines.push('| holder/session | verb | ok | count |');
+    lines.push('|---|---|---|---|');
+    for (const { sub, verb, ok, count } of counts.values()) {
+      lines.push(`| ${cellText(sub)} | ${cellText(verb)} | ${ok} | ${count} |`);
     }
   }
   lines.push('');

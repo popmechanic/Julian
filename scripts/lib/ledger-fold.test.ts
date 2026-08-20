@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { foldEntries, partitionEntries, type LedgerEntryWire } from './ledger-fold';
+import { foldEntries, groupByMonth, partitionEntries, type LedgerEntryWire } from './ledger-fold';
 import { appendToLedgerFile, getLedgerPath, getUtcMonth } from '../ledger-fold';
 
 const MONTH = '2026-08';
@@ -134,10 +134,10 @@ describe('foldEntries — the three sections over the fixture', () => {
       [
         '## Wakings & package reads',
         '',
-        '| when (UTC) | holder/session | verb | detail |',
-        '|---|---|---|---|',
-        '| 2026-08-05 08:05 | lease:SESS1 | list |  |',
-        '| 2026-08-05 08:06 | lease:SESS1 | read | path=soul/01-naming.md pin=4299b3b0a1b2 class=ok |',
+        '| when (UTC) | holder/session | verb | ok | detail |',
+        '|---|---|---|---|---|',
+        '| 2026-08-05 08:05 | lease:SESS1 | list | yes |  |',
+        '| 2026-08-05 08:06 | lease:SESS1 | read | yes | path=soul/01-naming.md pin=4299b3b0a1b2 class=ok |',
       ].join('\n'),
     );
   });
@@ -147,10 +147,10 @@ describe('foldEntries — the three sections over the fixture', () => {
       [
         '## Theft signals',
         '',
-        '| when (UTC) | holder/session | verb | detail | token_id |',
-        '|---|---|---|---|---|',
-        '| 2026-08-04 11:30 | lease:L1 | ticket-reused | token_id=t9 reused at 10s interval | t9 |',
-        '| 2026-08-04 11:31 | lease:L2 | killed | door=browser:tab lease killed: rotation replay | — |',
+        '| when (UTC) | holder/session | verb | ok | detail | token_id |',
+        '|---|---|---|---|---|---|',
+        '| 2026-08-04 11:30 | lease:L1 | ticket-reused | refused | token_id=t9 reused at 10s interval | t9 |',
+        '| 2026-08-04 11:31 | lease:L2 | killed | refused | door=browser:tab lease killed: rotation replay | — |',
       ].join('\n'),
     );
   });
@@ -160,19 +160,19 @@ describe('foldEntries — the three sections over the fixture', () => {
       [
         '## Routine delegated-session traffic',
         '',
-        '| holder/session | verb | count |',
-        '|---|---|---|',
-        '| lease:SESS1 | exchange | 1 |',
-        '| lease:SESS1 | socket | 2 |',
-        '| lease:SESS2 | socket | 1 |',
+        '| holder/session | verb | ok | count |',
+        '|---|---|---|---|',
+        '| lease:SESS1 | exchange | yes | 1 |',
+        '| lease:SESS1 | socket | yes | 2 |',
+        '| lease:SESS2 | socket | yes | 1 |',
       ].join('\n'),
     );
   });
 
   test('the routine table is emitted exactly once, header and separator included', () => {
     const doc = foldEntries(fixture(), MONTH);
-    const headers = doc.match(/\| holder\/session \| verb \| count \|/g) ?? [];
-    const separators = doc.match(/^\|---\|---\|---\|$/gm) ?? [];
+    const headers = doc.match(/\| holder\/session \| verb \| ok \| count \|/g) ?? [];
+    const separators = doc.match(/^\|---\|---\|---\|---\|$/gm) ?? [];
     expect(headers).toHaveLength(1);
     expect(separators).toHaveLength(1);
   });
@@ -198,10 +198,10 @@ describe('foldEntries — theft is never collapsed into routine', () => {
       [
         '## Theft signals',
         '',
-        '| when (UTC) | holder/session | verb | detail | token_id |',
-        '|---|---|---|---|---|',
-        '| 2026-08-06 01:00 | lease:L3 | ticket-reused |  | — |',
-        '| 2026-08-06 01:01 | lease:L4 | killed |  | — |',
+        '| when (UTC) | holder/session | verb | ok | detail | token_id |',
+        '|---|---|---|---|---|---|',
+        '| 2026-08-06 01:00 | lease:L3 | ticket-reused | refused |  | — |',
+        '| 2026-08-06 01:01 | lease:L4 | killed | refused |  | — |',
       ].join('\n'),
     );
     expect(sectionOf(doc, 'Routine delegated-session traffic')).toBe(
@@ -264,7 +264,7 @@ describe('foldEntries — details are carried whole', () => {
       MONTH,
     );
     const dataRow = sectionOf(doc, 'Wakings & package reads').split('\n')[4];
-    expect(dataRow).toBe('| 2026-08-09 05:00 | lease:L7 | read | path=a\\|b |');
+    expect(dataRow).toBe('| 2026-08-09 05:00 | lease:L7 | read | yes | path=a\\|b |');
   });
 });
 
@@ -285,11 +285,11 @@ describe('foldEntries — the month is a filter, not just a caption', () => {
       [
         '## Routine delegated-session traffic',
         '',
-        '| holder/session | verb | count |',
-        '|---|---|---|',
-        '| lease:SESS1 | exchange | 1 |',
-        '| lease:SESS1 | socket | 2 |',
-        '| lease:SESS2 | socket | 1 |',
+        '| holder/session | verb | ok | count |',
+        '|---|---|---|---|',
+        '| lease:SESS1 | exchange | yes | 1 |',
+        '| lease:SESS1 | socket | yes | 2 |',
+        '| lease:SESS2 | socket | yes | 1 |',
       ].join('\n'),
     );
   });
@@ -304,6 +304,59 @@ describe('foldEntries — the month is a filter, not just a caption', () => {
   test('getUtcMonth reads the UTC month of a date', () => {
     expect(getUtcMonth(new Date(Date.UTC(2026, 7, 13, 1, 32)))).toBe('2026-08');
     expect(getUtcMonth(new Date(Date.UTC(2026, 11, 31, 23, 59)))).toBe('2026-12');
+  });
+});
+
+describe('refusal visibility (#38)', () => {
+  const at = Date.UTC(2026, 7, 15, 12, 0); // 2026-08-15 in-month
+
+  test('wakings rows carry an ok column: yes vs refused', () => {
+    const out = foldEntries(
+      [
+        { ts: at, sub: 'lease:a', service: 'package', verb: 'package_read', detail: 'path=soul/01-naming.md', allowed: 1 },
+        { ts: at, sub: 'lease:a', service: 'package', verb: 'package_read', detail: 'held at home', allowed: 0 },
+      ],
+      '2026-08',
+    );
+    expect(out).toContain('| when (UTC) | holder/session | verb | ok | detail |');
+    expect(out).toContain('| package_read | yes | path=soul/01-naming.md |');
+    expect(out).toContain('| package_read | refused | held at home |');
+  });
+
+  test('theft rows carry the ok column too', () => {
+    const out = foldEntries(
+      [{ ts: at, sub: 'lease:a', service: 'stream', verb: 'ticket-reused', detail: 'token_id=tk1', allowed: 0 }],
+      '2026-08',
+    );
+    expect(out).toContain('| when (UTC) | holder/session | verb | ok | detail | token_id |');
+    expect(out).toContain('| ticket-reused | refused | token_id=tk1 | tk1 |');
+  });
+
+  test('routine counts split by outcome instead of absorbing refusals', () => {
+    const out = foldEntries(
+      [
+        { ts: at, sub: 'lease:b', service: 'stream', verb: 'stream.export', detail: '', allowed: 1 },
+        { ts: at, sub: 'lease:b', service: 'stream', verb: 'stream.export', detail: '', allowed: 1 },
+        { ts: at, sub: 'lease:b', service: 'stream', verb: 'stream.export', detail: 'principal mismatch', allowed: 0 },
+      ],
+      '2026-08',
+    );
+    expect(out).toContain('| holder/session | verb | ok | count |');
+    expect(out).toContain('| lease:b | stream.export | yes | 2 |');
+    expect(out).toContain('| lease:b | stream.export | refused | 1 |');
+  });
+});
+
+describe('groupByMonth (#38)', () => {
+  test('routes rows to their own UTC month; unreadable ts lands under the empty key', () => {
+    const aug = { ts: Date.UTC(2026, 7, 31, 23, 59), sub: 's', service: 'mail', verb: 'send', detail: 'a', allowed: 1 };
+    const sep = { ts: Date.UTC(2026, 8, 1, 0, 1), sub: 's', service: 'mail', verb: 'send', detail: 'b', allowed: 1 };
+    const bad = { ts: Number.NaN, sub: 's', service: 'mail', verb: 'send', detail: 'c', allowed: 1 };
+    const grouped = groupByMonth([sep, aug, bad]);
+    expect([...grouped.keys()].sort()).toEqual(['', '2026-08', '2026-09']);
+    expect(grouped.get('2026-08')!.map((e) => e.detail)).toEqual(['a']);
+    expect(grouped.get('2026-09')!.map((e) => e.detail)).toEqual(['b']);
+    expect(grouped.get('')!.map((e) => e.detail)).toEqual(['c']);
   });
 });
 
@@ -348,7 +401,7 @@ describe('appendToLedgerFile — append-only on a real file', () => {
       expect(afterSecond).toBe(
         `${afterFirst}\n\n---\n\n*Appended run — 2026-08-20T06:30:00.000Z*\n\n${second}`,
       );
-      expect(afterSecond).toContain('| lease:SESS9 | exchange | 1 |');
+      expect(afterSecond).toContain('| lease:SESS9 | exchange | yes | 1 |');
     });
   });
 
