@@ -275,14 +275,26 @@ describe('createTicketUrlProvider — the total ticket URL provider (R2-D1)', ()
     }
   });
 
-  test('a successful ticket resolution resets the throw count — two throws then success is no false stale', async () => {
+  // The reset half of the same contract, and it must DISCRIMINATE: a
+  // scenario of two throws followed by success proves nothing, because two
+  // is already under the limit of three — it passes with or without the
+  // reset. The arrangement below spans FOUR throws, with a resolution in the
+  // middle that continues the loop rather than returning from it
+  // ({kind:'signed-out'} sleeps and loops). With the reset, the counter
+  // restarts at that resolution and never reaches three; without it, the
+  // throws accumulate 1,2,_,3 and the third flips the pill to 'stale' before
+  // the final ticket ever arrives. Deleting `consecutiveThrows = 0` turns
+  // this test red.
+  test('a resolved ticket() call resets the throw count — throws either side of a resolution do not accumulate into a false stale', async () => {
     vi.useFakeTimers();
     try {
       let calls = 0;
       const client = {
+        // throw, throw, resolve (non-terminal: loops on), throw, throw, resolve a ticket
         ticket: vi.fn().mockImplementation(async () => {
           calls += 1;
-          if (calls <= 2) throw new TypeError('flaky');
+          if (calls === 3) return { kind: 'signed-out' };
+          if (calls <= 5) throw new TypeError('flaky');
           return { ticket: 'jst_ok' };
         }),
         terminalCount: () => 0,
@@ -293,10 +305,12 @@ describe('createTicketUrlProvider — the total ticket URL provider (R2-D1)', ()
       const provideUrl = createTicketUrlProvider(client, 'wss://sync.example', () => {});
 
       const pending = provideUrl();
-      for (let i = 0; i < 4; i++) await vi.advanceTimersByTimeAsync(31_000);
+      for (let i = 0; i < 6; i++) await vi.advanceTimersByTimeAsync(31_000);
       const url = await pending;
       expect(url).toContain('ticket=jst_ok');
-      expect(seenPhases).not.toContain('stale');
+      expect(client.ticket).toHaveBeenCalledTimes(6); // all four throws and both resolutions actually ran
+      expect(seenPhases).toContain('offline'); // the mid-run resolution was reached (it is what resets the count)
+      expect(seenPhases).not.toContain('stale'); // …and four non-consecutive throws never reach the limit
       unsub();
     } finally {
       vi.useRealTimers();
