@@ -174,6 +174,19 @@ describe('ExchangeClient', () => {
     await client.access();
     expect(client.terminalCount()).toBe(0);
   });
+
+  test('terminalCount: the revoked latch counts once, not once per read (#34)', async () => {
+    const fetchImpl = vi.fn(async () => jsonRes(403, { error: 'access revoked', class: 'revoked' }));
+    const client = makeClient(fetchImpl);
+
+    await client.access(); // latches: terminal 0 → 1
+    expect(client.terminalCount()).toBe(1);
+    await client.access(); // latched reads must not inflate
+    await client.access();
+    expect(client.terminalCount()).toBe(1);
+    client.reset();
+    expect(client.terminalCount()).toBe(0);
+  });
 });
 
 describe('ExchangeClient in-flight dedupe', () => {
