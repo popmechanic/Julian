@@ -80,13 +80,28 @@ The offload to distributed archive (R2) is future work; for now the month files
 are the local record.
 
 **Operations, from 2026-08-20 (issue #38):** the fold pages `/ledger` backward
-with `before=<ts>` to the watermark in `memory/ledger/.fold-state.json`
-(committed beside the month files, so the state travels with the record) and
-routes every fetched row to its own UTC month file — a run just after a month
-boundary writes the old month's tail to the old month's file. The watermark
-advances only after every append succeeds; a partial failure re-appends on
-the next run (duplicate rows under a new run marker), never drops. Rows with
-unreadable timestamps are reported on stderr and skipped.
+with the compound cursor `before=<ts>&beforeId=<id>` to the watermark in
+`memory/ledger/.fold-state.json` (committed beside the month files, so the
+state travels with the record) and routes every fetched row to its own UTC
+month file — a run just after a month boundary writes the old month's tail to
+the old month's file. The watermark advances only after every append succeeds;
+a partial failure re-appends on the next run (duplicate rows under a new run
+marker), never drops. Rows with unreadable timestamps are reported on stderr
+and skipped.
+
+Each wire row now carries `id`, the ledger table's sqlite rowid: a unique row
+identity that `ts` cannot supply, since `ts` is bare `Date.now()` and distinct
+rows routinely share one millisecond. The pager needs it twice over. It keys
+the page cursor on `(ts, id)` — the gate resolves ties with
+`ts < ? OR (ts = ? AND rowid < ?)` — so a same-millisecond group larger than
+one page is walked through rather than dropped or re-served at the boundary.
+And it keys the dedupe on `id` alone, never on row content: two byte-identical
+rows in one millisecond are two acts, and content-keyed dedupe silently
+collapsed them into one (the loss this correction closes; the earlier
+`before=<ts>`-only cursor is superseded — forward-only, like every change
+here). A gate that serves rows without `id` predates this contract, so the
+fold refuses to run against it and says to deploy the broker first, rather
+than fold a record it cannot vouch for.
 
 ## The derived files are substrate in the customs-house sense
 

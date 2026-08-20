@@ -6,19 +6,32 @@
 // inside this command (mail discipline rule 5: scope the secret, never as
 // ambient session state) — e.g. `source .env && bun scripts/ledger-fold.ts`.
 //
-// Paging: the fetch walks /ledger?limit=200&before=<ts> backward until it
-// crosses the watermark in memory/ledger/.fold-state.json, so a fold sees
-// every row since the last run regardless of traffic volume. Pages overlap
-// by one millisecond at the boundary and are deduped, so same-ms rows
-// straddling a page break are never lost.
+// Paging: the fetch walks /ledger backward with the compound cursor
+// `before=<ts>&beforeId=<id>` until it crosses the watermark in
+// memory/ledger/.fold-state.json, so a fold sees every row since the last
+// run regardless of traffic volume. `id` is the row's sqlite rowid, unique
+// per row; `ts` is bare Date.now() and distinct rows routinely share one
+// millisecond. Only the compound key (ts, id) can place a cursor strictly
+// inside such a tie, so a group larger than a page is neither dropped nor
+// re-served — and the dedupe keys on `id` alone, never on row content,
+// because byte-identical rows one millisecond apart are separate acts.
 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promises as fs } from 'node:fs';
 import { foldEntries, groupByMonth, type LedgerEntryWire } from './lib/ledger-fold';
 
+/**
+ * The wire row as the gate serves it since 2026-08-20 (#38): every field of
+ * `LedgerEntryWire` plus `id`, the ledger table's sqlite rowid. The lib's
+ * fold takes the fields it prints; only the pager needs the identity.
+ */
+export interface LedgerRowWire extends LedgerEntryWire {
+  id: number;
+}
+
 interface LedgerResponse {
-  entries: LedgerEntryWire[];
+  entries: LedgerRowWire[];
 }
 
 const LEDGER_LIMIT = 200;
@@ -66,9 +79,15 @@ export async function writeFoldState(path: string, s: FoldState): Promise<void> 
 
 /**
  * Fetch every ledger row newer than sinceTs, newest-first, paging backward
- * with the before cursor. Pages overlap by 1ms at the boundary (before =
- * smallest ts + 1) so same-ms rows straddling a page break are never lost;
- * the seen-set dedupes the overlap.
+ * with the compound cursor `(before, beforeId)` — the gate's
+ * `ts < before OR (ts = before AND rowid < beforeId)`.
+ *
+ * The cursor is strictly exclusive on the total order (ts DESC, id DESC),
+ * so pages neither overlap nor skip: a same-millisecond group larger than a
+ * page is walked through, not jumped over. Dedupe keys on `id` alone —
+ * keying on row content would collapse byte-identical rows (the same verb
+ * spent twice in one millisecond is two acts, not one) and lose the
+ * duplicate, which the append-only record can never recover.
  */
 export async function pageLedger(
   brokerUrl: string,
@@ -76,52 +95,60 @@ export async function pageLedger(
   sinceTs: number,
   fetchImpl: typeof fetch = fetch,
 ): Promise<LedgerEntryWire[]> {
-  const out: LedgerEntryWire[] = [];
-  const seen = new Set<string>();
-  let before: number | undefined;
+  const out: LedgerRowWire[] = [];
+  const seen = new Set<number>();
+  let cursor: { before: number; beforeId: number } | undefined;
 
   for (;;) {
-    const cursor = before === undefined ? '' : `&before=${before}`;
-    const res = await fetchImpl(`${trimSlash(brokerUrl)}/ledger?limit=${LEDGER_LIMIT}${cursor}`, {
-      headers: { 'X-Breakglass-Secret': secret },
-    });
+    const cursorQuery =
+      cursor === undefined ? '' : `&before=${cursor.before}&beforeId=${cursor.beforeId}`;
+    const res = await fetchImpl(
+      `${trimSlash(brokerUrl)}/ledger?limit=${LEDGER_LIMIT}${cursorQuery}`,
+      { headers: { 'X-Breakglass-Secret': secret } },
+    );
     if (!res.ok) throw new Error(`Failed to fetch ledger (${res.status}): ${await res.text()}`);
     const body = (await res.json()) as LedgerResponse | null;
     if (!body || !Array.isArray(body.entries))
       throw new Error('Ledger response malformed: missing entries array');
 
     let crossedWatermark = false;
+    let newThisPage = 0;
     for (const entry of body.entries) {
+      // A row with no id means the deployed gate predates the compound-cursor
+      // contract (#38). There is no safe way to dedupe or page such rows, and
+      // guessing risks collapsing distinct acts — so refuse, loudly.
+      if (typeof entry.id !== 'number' || !Number.isFinite(entry.id)) {
+        throw new Error(
+          'Ledger row has no `id` — the deployed gate predates the compound-cursor contract (#38). ' +
+            'Deploy the broker first, then fold; folding now could collapse distinct same-millisecond rows.',
+        );
+      }
       if (entry.ts <= sinceTs) {
         crossedWatermark = true;
         continue;
       }
-      const key = JSON.stringify([
-        entry.ts,
-        entry.sub,
-        entry.service,
-        entry.verb,
-        entry.detail,
-        entry.allowed,
-      ]);
-      if (!seen.has(key)) {
-        seen.add(key);
+      if (!seen.has(entry.id)) {
+        seen.add(entry.id);
         out.push(entry);
+        newThisPage += 1;
       }
     }
 
     if (crossedWatermark || body.entries.length < LEDGER_LIMIT) return out;
 
-    const smallest = body.entries[body.entries.length - 1].ts;
-    const next = smallest + 1; // 1ms overlap; the seen-set eats the duplicates
-    if (before !== undefined && next >= before) {
-      // A full page of one identical millisecond — cannot page past it.
+    // A full page that yielded nothing new cannot happen against a gate
+    // honoring the exclusive cursor — every row on it is either past the
+    // watermark or unseen. If it does, the cursor is not advancing; stop
+    // rather than spin, and say so.
+    if (newThisPage === 0) {
       process.stderr.write(
-        `warning: ledger page pinned at ts=${smallest}; folding what was reachable.\n`,
+        'warning: ledger cursor stopped advancing; folding what was reachable.\n',
       );
       return out;
     }
-    before = next;
+
+    const oldest = body.entries[body.entries.length - 1];
+    cursor = { before: oldest.ts, beforeId: oldest.id };
   }
 }
 
