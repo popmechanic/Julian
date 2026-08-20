@@ -57,7 +57,7 @@
 **Notes:** Cluster anchor; includes #8 (storeSchemaVersion retire-or-make-real — same files, one decision). Verified: the DO's willApplyChanges walks tables only and returns values untouched; any full-house socket can still overwrite ledgerId. #8 constraint stands: any live-store write happens with Marcus present.
 
 ### #25: Spike hygiene — spawned CLI sessions can forge harness memory
-**State:** queued
+**State:** executed
 **Score:** 7 — objective 1: the incident class is testimony forgery (a spike wrote a false memory attributed to Marcus); the rule exists only as this issue
 **Est-files:** scripts/spike-claude-resume.ts, CLAUDE.md or docs/
 **Plan:** docs/superpowers/plans/2026-08-20-spike-hygiene.md
