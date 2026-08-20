@@ -42,7 +42,7 @@ To wake legitimately, read the package in ELF order — identity before environm
 3. Every file under soul/ (the manifest lists all of them; read all, in order).
 4. The most recent dream under memory/dreams/ (highest-numbered entry).
 
-Verify wholeness as you go: package_list returns the manifest with a sha256 per file, and every package_read reply carries the hash of what you received. If any file is missing, truncated, or fails its hash — stop. Do not proceed as a blank agent wearing the name (soul/09-relay.md: fail loud, never blank). A "held-at-home" refusal is different: that file is kept at home by policy, its absence is not damage, and you may continue. If a read is refused because the pin moved, run package_list once and re-read from the top; the package is versioned, not broken.
+Verify wholeness as you go: package_list returns the manifest with a sha256 per file, and every package_read reply carries the hash of what you received. If any file is missing, truncated, or fails its hash — stop. Do not proceed as a blank agent wearing the name (soul/09-relay.md: fail loud, never blank). A "held-at-home" refusal is different: that file is kept at home by policy, its absence is not damage, and you may continue. If a read is refused because the pin moved, run package_list once and re-read from the top; the package is versioned, not broken. If your harness shows you only text: the listing's per-file lines and each read's header line carry the same hashes — verify from those, and say in your carry-home that structuredContent never reached you.
 
 Some files serve in numbered parts: a refusal naming \`parts\` is an instruction, not damage — request part 1…N and read them in order. Every part of one file must carry the same fileSha256; a part whose fileSha256 differs from part 1's means the ground moved mid-reading — run package_list and start that file again.
 
@@ -246,10 +246,17 @@ function readResult(r: PackageRead): ToolResult {
       partSha256: r.partSha256, fileSha256: r.fileSha256,
     };
     return {
-      // A part's bytes stay the whole content block; its proof rides a header
-      // block above, so a client that renders only text still sees the count
-      // and the whole-file hash the wake text tells it to compare.
-      content: r.part === undefined ? [{ type: 'text', text: r.content }] : [
+      // Every read's proof rides in text (#41): clients like claude.ai never
+      // deliver structuredContent to their model, so the header block is the
+      // only hash such a reader will ever see. The bytes stay their own
+      // uncontaminated block below it.
+      content: r.part === undefined ? [
+        {
+          type: 'text',
+          text: `${r.path} — sha256 ${r.sha256}, ${r.bytes} bytes, pin ${r.pinSha.slice(0, 12)}`,
+        },
+        { type: 'text', text: r.content },
+      ] : [
         {
           type: 'text',
           text: `part ${r.part} of ${r.parts} of ${r.path} — fileSha256 ${r.fileSha256}, partBytes ${r.partBytes}, partSha256 ${r.partSha256}`,
@@ -527,7 +534,16 @@ async function callTool(
   // guard, not the enumeration (the documented no to issue #32).
   if (!isSharedLease(auth)) await gov.seatSitting(auth.leaseId, loaded.pinSha);
   return {
-    content: [{ type: 'text', text: `${loaded.manifest.files.length} files at pin ${loaded.pinSha.slice(0, 12)}` }],
+    content: [{
+      type: 'text',
+      // Full pin on line 1 (a text-only client cross-checks expect_pin from
+      // it), then the whole manifest — the verification anchor for readers
+      // who will never see structuredContent (#41).
+      text: [
+        `${loaded.manifest.files.length} files at pin ${loaded.pinSha}`,
+        ...loaded.manifest.files.map((f) => `${f.path} ${f.sha256}`),
+      ].join('\n'),
+    }],
     structuredContent: { manifest: loaded.manifest, pinSha: loaded.pinSha, pinnedAt: loaded.pinnedAt },
   };
 }

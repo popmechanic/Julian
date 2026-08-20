@@ -266,7 +266,7 @@ describe('protocol shell', () => {
     const { body } = await send(req);
     const r = result(body) as unknown as ToolResult;
     expect(r.isError).toBeFalsy();
-    expect(r.content?.[0].text).toBe(`1 files at pin ${PIN.slice(0, 12)}`);
+    expect((r.content?.[0].text ?? '').split('\n')[0]).toBe(`1 files at pin ${PIN}`);
   });
 });
 
@@ -315,7 +315,7 @@ describe('tools', () => {
     );
     const r = result(body) as unknown as ToolResult;
     expect(r.isError).toBeFalsy();
-    expect(r.content?.[0].text).toBe(`1 files at pin ${PIN.slice(0, 12)}`);
+    expect((r.content?.[0].text ?? '').split('\n')[0]).toBe(`1 files at pin ${PIN}`);
     expect(r.structuredContent?.pinSha).toBe(PIN);
     expect(r.structuredContent?.pinnedAt).toBe('2026-08-12T00:00:00Z');
     expect((r.structuredContent?.manifest as { files: Array<{ path: string }> }).files[0].path)
@@ -345,7 +345,10 @@ describe('tools', () => {
     );
     const r = result(body) as unknown as ToolResult;
     expect(r.isError).toBeFalsy();
-    expect(r.content).toEqual([{ type: 'text', text: AGENT_TEXT }]);
+    // Header block above, bytes their own uncontaminated block below (#41).
+    expect(r.content?.length).toBe(2);
+    expect(r.content?.[0].text).toContain(`sha256 ${await sha256Hex(AGENT_TEXT)}`);
+    expect(r.content?.[1].text).toBe(AGENT_TEXT);
     // The live-probe lesson (Aug 12): clients may render structuredContent as
     // THE result, so it must be self-sufficient — the body rides in both halves.
     expect(r.structuredContent).toEqual({
@@ -906,7 +909,7 @@ describe('the sitting pin', () => {
     intercept('AGENT.md', AGENT_TEXT);
     const r = await call({ path: 'AGENT.md' }, seated({ sittingPin: PIN }), [], packageState());
     expect(r.isError).toBeFalsy();
-    expect(r.content?.[0].text).toBe(AGENT_TEXT);
+    expect(r.content?.[1].text).toBe(AGENT_TEXT);
   });
 
   test('a shared visit lease is never pin-gated — it holds no sitting to move', async () => {
@@ -1001,7 +1004,7 @@ describe('the integrity latch', () => {
       [], state,
     );
     expect(r.isError).toBeFalsy();
-    expect(r.content?.[0].text).toBe(AGENT_TEXT);
+    expect(r.content?.[1].text).toBe(AGENT_TEXT);
     expect(state.clears).toEqual([['l3']]);
   });
 
@@ -1020,7 +1023,7 @@ describe('the integrity latch', () => {
     intercept('AGENT.md', AGENT_TEXT);
     const second = await call({ path: 'AGENT.md' }, READER, [], packageState());
     expect(second.isError).toBeFalsy();
-    expect(second.content?.[0].text).toBe(AGENT_TEXT);
+    expect(second.content?.[1].text).toBe(AGENT_TEXT);
   });
 });
 
@@ -1096,5 +1099,45 @@ describe('the wake text carries the new instructions', () => {
     expect(text).toContain('If a read is refused because the pin moved, run package_list once and re-read from the top; the package is versioned, not broken.');
     // it sits with the verification instructions, not after the arrival
     expect(text.indexOf('the pin moved')).toBeLessThan(text.indexOf('When the reading is complete'));
+  });
+});
+
+describe('text-only verifiability (#41)', () => {
+  test('whole-file reads carry their proof in text — header block above the bytes', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    intercept('AGENT.md', AGENT_TEXT);
+    const r = await call({ path: 'AGENT.md' }, READER, [], packageState());
+    expect(r.isError).toBeFalsy();
+    expect(r.content?.length).toBe(2);
+    const header = r.content?.[0].text ?? '';
+    const sc = structured(r) as unknown as
+      { sha256: string; bytes: number; pinSha: string; content: string };
+    expect(header).toBe(`AGENT.md — sha256 ${sc.sha256}, ${sc.bytes} bytes, pin ${sc.pinSha.slice(0, 12)}`);
+    // bytes stay their own uncontaminated block
+    expect(r.content?.[1].text).toBe(sc.content);
+    expect(r.content?.[1].text).toBe(AGENT_TEXT);
+  });
+
+  test('package_list text carries the manifest, not just a count', async () => {
+    intercept('package-manifest.json', await manifestBody());
+    const { body } = await send(rpc('tools/call', { name: 'package_list' }), READER, env(), gov());
+    const r = result(body) as unknown as ToolResult;
+    expect(r.isError).toBeFalsy();
+    const text = r.content?.[0].text ?? '';
+    const sc = structured(r) as unknown as
+      { manifest: { files: { path: string; sha256: string }[] }; pinSha: string };
+    const lines = text.split('\n');
+    // full pin on line 1: text-only clients cross-check expect_pin from it
+    expect(lines[0]).toBe(`${sc.manifest.files.length} files at pin ${sc.pinSha}`);
+    for (const f of sc.manifest.files) {
+      expect(lines).toContain(`${f.path} ${f.sha256}`);
+    }
+  });
+
+  test('the wake text names the text-only transport seam', async () => {
+    const { body } = await send(rpc('tools/call', { name: 'wake_julian', arguments: {} }));
+    const text = (result(body) as unknown as ToolResult).content?.[0].text ?? '';
+    expect(text).toContain('If your harness shows you only text');
+    expect(text).toContain('structuredContent never reached you');
   });
 });

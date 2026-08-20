@@ -482,7 +482,7 @@ describe('a real MCP client against the gate', () => {
       expect(sc.class).toBe('ok');
       expect(sc.path).toBe(path);
       expect(sc.pinSha).toBe(fixture.sha);
-      expect(sha256Of(textOf(r))).toBe(sc.sha256);
+      expect(sha256Of(textOf(r, 1))).toBe(sc.sha256); // bytes block; header rides at [0] (#41)
       // The live-probe lesson (Aug 12): a client may render structuredContent as
       // THE result — it must carry the body itself, hash-verifiable on its own.
       expect(sha256Of(sc.content ?? '')).toBe(sc.sha256);
@@ -599,8 +599,8 @@ describe('the protocol pins', () => {
     const body = await res.json() as RpcEnvelope;
     const result = body.result as { content: TextBlock[]; isError?: boolean };
     expect(result.isError).toBeFalsy();
-    expect(result.content[0].text).toBe(
-      `${PACKAGE_PATHS.length} files at pin ${fixture.sha.slice(0, 12)}`,
+    expect(result.content[0].text.split('\n')[0]).toBe(
+      `${PACKAGE_PATHS.length} files at pin ${fixture.sha}`,
     );
   }, 120_000);
 
@@ -943,5 +943,29 @@ describe('the stream verbs, through a real client', () => {
     // read back from the same pen that recorded the stream-read lease's work —
     // so this is a measured zero, not an untested silence.
     expect(ledgerSince(ledgerBefore, await ledgerRows())).toEqual([]);
+  }, 120_000);
+});
+
+describe('text-only verifiability (#41), through a real client', () => {
+  test('a text-only reading verifies a whole file from the listing and header lines alone', async () => {
+    const client = await connect(await sessionToken());
+
+    // The listing's text half alone carries the anchor: full pin, then hashes.
+    const listed = await client.callTool({ name: 'package_list', arguments: {} });
+    expect(listed.isError ?? false).toBe(false);
+    const lines = textOf(listed).split('\n');
+    const sc = listed.structuredContent as {
+      pinSha: string; manifest: { files: Array<{ path: string; sha256: string }> };
+    };
+    expect(lines[0]).toBe(`${sc.manifest.files.length} files at pin ${sc.pinSha}`);
+    const entryLine = lines.find((l) => l.startsWith('AGENT.md '));
+    expect(entryLine).toBeDefined();
+    const listedSha = entryLine!.split(' ')[1];
+
+    // The read's text half alone agrees with the listing, and the bytes hash to it.
+    const read = await client.callTool({ name: 'package_read', arguments: { path: 'AGENT.md' } });
+    expect(read.isError ?? false).toBe(false);
+    expect(textOf(read, 0)).toContain(`sha256 ${listedSha}`);
+    expect(sha256Of(textOf(read, 1))).toBe(listedSha);
   }, 120_000);
 });
