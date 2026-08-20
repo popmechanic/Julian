@@ -183,9 +183,9 @@ export class ExchangeClient {
   }
 
   private revokedState(): ExchangeStateNonOk {
+    if (!this.isRevoked) this.terminal += 1; // count the latch itself once — reads of a latched state are not new outcomes (#34)
     this.isRevoked = true;
     this.cached = null;
-    this.terminal += 1;
     return { kind: 'revoked' };
   }
 }
