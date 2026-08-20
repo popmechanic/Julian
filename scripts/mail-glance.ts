@@ -5,7 +5,7 @@
 // the repo .env, which is this process's sanctioned key scope (rule 5).
 
 import { homedir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import {
   classifyThreads, knownFromSent, hasTrustworthyTimestamps,
@@ -51,54 +51,102 @@ function freshState(): State {
   return { strangerWatermarkMs: 0, held: [], updatedAt: '' };
 }
 
-// A missing file is a first run. Anything else — unreadable, unparseable,
-// wrong shape — is corrupt, and reading a corrupt file as empty would
-// silently discard the held list, making a deliberately parked thread
-// eligible again. That is an unintended send, so corruption stops the beat.
-function loadState(): State {
+// Thrown by loadStateFrom whenever a state file exists but cannot be trusted
+// (unreadable, unparseable, wrong shape). Reading a corrupt file as empty
+// would silently discard the held list, making a deliberately parked thread
+// eligible again — an unintended send — so corruption is a distinct, typed
+// failure rather than a fallback to fresh state.
+export class StateCorruptError extends Error {}
+
+// The injectable-path core: no DRY handling, no abort() — a caller (a test,
+// or the STATE_PATH-bound wrapper below) decides what a failure means. A
+// missing file is a first run and reads as fresh state; anything else that
+// keeps the file from being read as valid state throws StateCorruptError.
+export function loadStateFrom(path: string): HeartbeatState {
   let raw: string;
   try {
-    raw = readFileSync(STATE_PATH, 'utf8');
+    raw = readFileSync(path, 'utf8');
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return freshState();
-    abort(`state file unreadable at ${STATE_PATH} — beat aborted, nothing sent`);
+    throw new StateCorruptError('state file unreadable');
   }
 
   const parsed = parseStateFile(raw);
   if (!parsed.ok) {
-    abort(`state file corrupt (${parsed.reason}) at ${STATE_PATH} — beat aborted, nothing sent`);
+    throw new StateCorruptError(`state file corrupt (${parsed.reason})`);
   }
   return parsed.state;
 }
 
-// Write through a temp file and rename: rename is atomic within the
-// directory, so an interrupted beat can never leave a half-written file
-// behind. A torn write would read as corrupt, and corruption halts every
-// future beat — the heartbeat must not be able to stop its own heart.
-function writeState(s: State) {
-  if (DRY) { console.log('[dry] would save state:', JSON.stringify(s)); return; }
-  mkdirSync(STATE_DIR, { recursive: true });
+// A missing file is a first run. Anything else — unreadable, unparseable,
+// wrong shape — is corrupt, and reading a corrupt file as empty would
+// silently discard the held list, making a deliberately parked thread
+// eligible again. That is an unintended send, so corruption stops the beat.
+// This is a thin wrapper: it binds loadStateFrom to STATE_PATH and translates
+// StateCorruptError into the existing abort() call, byte-identical message.
+function loadState(): State {
+  try {
+    return loadStateFrom(STATE_PATH);
+  } catch (e) {
+    if (e instanceof StateCorruptError) {
+      abort(`${e.message} at ${STATE_PATH} — beat aborted, nothing sent`);
+    }
+    throw e;
+  }
+}
+
+// The injectable-path core of writeState: write through a temp file and
+// rename at the given path. Rename is atomic within the directory, so an
+// interrupted beat can never leave a half-written file behind. A torn write
+// would read as corrupt, and corruption halts every future beat — the
+// heartbeat must not be able to stop its own heart.
+export function writeStateTo(path: string, s: HeartbeatState): void {
+  mkdirSync(dirname(path), { recursive: true });
   // Pid-unique temp name: a single shared `.tmp` path let two concurrent
   // writers (a beat and a reply session's `--hold`) interleave their writes
   // into the same scratch file and rename the wreckage into place.
-  const tmp = `${STATE_PATH}.${process.pid}.tmp`;
+  const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify({ ...s, updatedAt: new Date().toISOString() }, null, 2));
-  renameSync(tmp, STATE_PATH);
+  renameSync(tmp, path);
 }
 
-// Beat-side save: re-read the file immediately before writing and union the
-// on-disk held list with ours. A reply session from an earlier beat may have
-// run `--hold` while this beat was in flight; dropping that parked id would
-// make the thread eligible again — an unintended send. The watermark only
-// ever moves forward, so take the later of the two.
-function saveBeatState(s: State) {
+// Thin wrapper bound to STATE_PATH: DRY gating stays here, not in the
+// injectable core, so a test calling writeStateTo directly always performs a
+// real write regardless of DRY_RUN.
+function writeState(s: State) {
   if (DRY) { console.log('[dry] would save state:', JSON.stringify(s)); return; }
-  const onDisk = loadState();
-  writeState({
+  writeStateTo(STATE_PATH, s);
+}
+
+// The injectable-path core of saveBeatState: re-read the file at `path`
+// immediately before writing and union the on-disk held list with ours. A
+// reply session from an earlier beat may have run `--hold` while this beat
+// was in flight; dropping that parked id would make the thread eligible
+// again — an unintended send. The watermark only ever moves forward, so take
+// the later of the two.
+export function saveBeatStateTo(path: string, s: HeartbeatState): void {
+  const onDisk = loadStateFrom(path);
+  writeStateTo(path, {
     ...s,
     strangerWatermarkMs: Math.max(onDisk.strangerWatermarkMs, s.strangerWatermarkMs),
     held: [...new Set([...onDisk.held, ...s.held])],
   });
+}
+
+// Thin wrapper bound to STATE_PATH: DRY gating plus the same
+// StateCorruptError → abort() translation as loadState, so a corrupt on-disk
+// file re-read during a beat-side save produces the exact same message it
+// always has.
+function saveBeatState(s: State) {
+  if (DRY) { console.log('[dry] would save state:', JSON.stringify(s)); return; }
+  try {
+    saveBeatStateTo(STATE_PATH, s);
+  } catch (e) {
+    if (e instanceof StateCorruptError) {
+      abort(`${e.message} at ${STATE_PATH} — beat aborted, nothing sent`);
+    }
+    throw e;
+  }
 }
 
 async function get(path: string): Promise<unknown> {
@@ -275,7 +323,12 @@ async function main() {
   );
 }
 
-main().catch((e) => {
-  // Logged by launchd and surfaced to Marcus; the next beat retries.
-  abort(`failed: ${e instanceof Error ? e.message : String(e)}`);
-});
+// Main-guard: importing this module (e.g. from a test) must run no beat —
+// no network call, no exit, no spawned session. Only running it directly
+// (`bun scripts/mail-glance.ts`, the launchd entry point) executes main().
+if (import.meta.main) {
+  main().catch((e) => {
+    // Logged by launchd and surfaced to Marcus; the next beat retries.
+    abort(`failed: ${e instanceof Error ? e.message : String(e)}`);
+  });
+}
