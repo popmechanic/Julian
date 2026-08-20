@@ -193,9 +193,19 @@ function normalizeMessage(raw: unknown, index: number): { ok: true; message: Mai
     return { ok: false, reason: `message ${index} is missing timestamp` };
   }
   const message: MailMessage = { messageId, from, timestamp };
-  if (Array.isArray(raw.to)) message.to = raw.to as string[];
+  if (Array.isArray(raw.to)) {
+    if (!raw.to.every((v) => typeof v === 'string')) {
+      return { ok: false, reason: `message ${index}: to contains a non-string element` };
+    }
+    message.to = raw.to as string[];
+  }
   if (typeof raw.subject === 'string') message.subject = raw.subject;
-  if (Array.isArray(raw.labels)) message.labels = raw.labels as string[];
+  if (Array.isArray(raw.labels)) {
+    if (!raw.labels.every((v) => typeof v === 'string')) {
+      return { ok: false, reason: `message ${index}: labels contains a non-string element` };
+    }
+    message.labels = raw.labels as string[];
+  }
   if (isPlainObject(raw.headers)) message.headers = raw.headers as Record<string, string>;
   return { ok: true, message };
 }
@@ -223,6 +233,26 @@ export function normalizeThread(raw: unknown): NormalizedThread {
   const thread: MailThread = { threadId, messages };
   if (typeof raw.subject === 'string') thread.subject = raw.subject;
   return { ok: true, thread };
+}
+
+// The sent listing is a list of messages, not a thread, and normalizeThread's
+// boundary is thread-shaped and all-or-nothing by design (a thread carrying
+// one malformed message is not a trustworthy thread). Here the opposite is
+// right: one odd sent message must not erase every known correspondent and
+// turn the whole address book into strangers. So each raw message goes
+// through that same boundary on its own and the bad ones drop out — no
+// second normalizer, one dialect translated in one tested place. `dropped`
+// lets the caller notify rather than silently under-populate the
+// known-correspondent set (#15).
+export function normalizeSentMessages(raw: unknown[]): { messages: MailMessage[]; dropped: number } {
+  const messages: MailMessage[] = [];
+  let dropped = 0;
+  for (const m of raw) {
+    const r = normalizeThread({ threadId: 'sent-listing', messages: [m] });
+    if (r.ok && r.thread.messages.length === 1) messages.push(r.thread.messages[0]);
+    else dropped += 1;
+  }
+  return { messages, dropped };
 }
 
 // The most recent arrival time in a thread, for the stranger-notification

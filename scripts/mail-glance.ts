@@ -9,8 +9,8 @@ import { dirname, join } from 'path';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import {
   classifyThreads, knownFromSent, hasTrustworthyTimestamps,
-  idsUsable, isSafeId, latestArrival, normalizeThread, parseStateFile,
-  type HeartbeatState, type MailMessage, type MailThread,
+  idsUsable, isSafeId, latestArrival, normalizeSentMessages, normalizeThread, parseStateFile,
+  type HeartbeatState, type MailThread,
 } from './lib/mail-glance-lib';
 
 const INBOX = 'julian-marcus@agentmail.to';
@@ -166,23 +166,6 @@ function listedThreadId(raw: unknown): string | undefined {
   return typeof id === 'string' && isSafeId(id) ? id : undefined;
 }
 
-// The sent listing is a list of messages, not a thread, and the library's
-// normalize boundary is thread-shaped and all-or-nothing by design (a
-// thread carrying one malformed message is not a trustworthy thread). Here
-// the opposite is right: one odd sent message must not erase every known
-// correspondent and turn the whole address book into strangers. So each raw
-// message goes through that same library boundary on its own and the bad
-// ones drop out — no second normalizer, one dialect translated in one
-// tested place.
-function normalizeSentMessages(raw: unknown[]): MailMessage[] {
-  const out: MailMessage[] = [];
-  for (const m of raw) {
-    const r = normalizeThread({ threadId: 'sent-listing', messages: [m] });
-    if (r.ok && r.thread.messages.length === 1) out.push(r.thread.messages[0]);
-  }
-  return out;
-}
-
 async function main() {
   // Strict argv, before any state read or network call: a typo like
   // `--dry-run` must print usage, never fall through into a live beat.
@@ -204,12 +187,32 @@ async function main() {
   loadState();
 
   const sentRes = await get('/messages?limit=100') as { messages?: unknown[] };
-  const sent = normalizeSentMessages(sentRes.messages ?? [])
-    .filter((m) => m.labels?.includes('sent'));
+  if (!Array.isArray(sentRes.messages)) {
+    // Missing container key, not zero results — a renamed or restructured
+    // response leaves the known-correspondent set unbuilt this beat, and a
+    // silently empty known set would misclassify every genuine correspondent
+    // as a stranger. Loud beats silent (#14).
+    notify('sent listing container missing — API dialect changed? known-correspondent set NOT built this beat');
+  }
+  const sentNorm = normalizeSentMessages(sentRes.messages ?? []);
+  if (sentNorm.dropped > 0) {
+    // A boundary drop here shrinks the known-correspondent set without
+    // erasing it entirely — quieter than the missing-container case above,
+    // but still worth a notification: an undercounted known set can turn a
+    // real correspondent into a quarantined stranger (#15).
+    notify(`${sentNorm.dropped} sent message(s) dropped at the boundary — known-correspondent set may be incomplete (#15)`);
+  }
+  const sent = sentNorm.messages.filter((m) => m.labels?.includes('sent'));
   const known = knownFromSent(sent);
 
   const listRes = await get('/threads?limit=50') as { threads?: unknown[] };
-  const listed = listRes.threads ?? [];
+  if (!Array.isArray(listRes.threads)) {
+    // Same shape of failure as the sent listing above, but for the thread
+    // listing itself: a renamed container key means the beat sees no
+    // threads at all, not that there are none (#14).
+    notify('thread listing container missing — API dialect changed? beat sees no threads (#14)');
+  }
+  const listed = Array.isArray(listRes.threads) ? listRes.threads : [];
   const threads: MailThread[] = [];
   let unfetchable = 0;
   const unreadable: string[] = [];
@@ -235,9 +238,14 @@ async function main() {
   }
 
   // The deaf beat: a listing that arrived but produced nothing readable.
-  // Without this check a renamed container key drops every thread at the
-  // boundary and the beat prints a cheerful "nothing eligible" forever —
-  // the last failure mode that could still go quiet. Loud beats silent.
+  // The container-key rename case (the whole `threads` array missing or
+  // renamed) is covered above, before `listed` is even built — this check
+  // covers the narrower case where the container arrived fine but every
+  // thread's inner `messages` key was renamed or restructured, so each
+  // thread normalizes to zero readable messages. Without this check that
+  // rename drops every thread at the boundary and the beat prints a
+  // cheerful "nothing eligible" forever — the last failure mode that could
+  // still go quiet. Loud beats silent.
   if (listed.length > 0 && threads.every((t) => t.messages.length === 0)) {
     notify(`mail heartbeat may be deaf: ${listed.length} threads listed, 0 readable`);
   }

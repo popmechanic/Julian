@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   classifyThreads, extractAddress, hasTrustworthyTimestamps, idsUsable, isAutomated, isSafeId,
-  knownFromSent, latestArrival, normalizeThread, parseStateFile, SAFE_ID,
+  knownFromSent, latestArrival, normalizeSentMessages, normalizeThread, parseStateFile, SAFE_ID,
   type MailMessage, type MailThread,
 } from '../../scripts/lib/mail-glance-lib';
 
@@ -303,6 +303,32 @@ describe('normalizeThread', () => {
       expect('labels' in r.thread.messages[0]).toBe(false);
       expect('headers' in r.thread.messages[0]).toBe(false);
     }
+  });
+
+  test('a non-string to[] element rejects the message with a reason (#16)', () => {
+    const r = normalizeThread({
+      threadId: 't1',
+      messages: [{ messageId: 'm1', from: 'a@b.c', timestamp: '2026-08-20T00:00:00Z', to: [{ email: 'x@y.z' }] }],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toContain('to contains a non-string element');
+  });
+
+  test('a non-string labels[] element rejects the message with a reason (#16)', () => {
+    const r = normalizeThread({
+      threadId: 't1',
+      messages: [{ messageId: 'm1', from: 'a@b.c', timestamp: '2026-08-20T00:00:00Z', labels: [null] }],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toContain('labels contains a non-string element');
+  });
+
+  test('normalizeSentMessages reports its drop count (#15)', () => {
+    const good = { message_id: 'm1', from: 'a@b.c', timestamp: '2026-08-20T00:00:00Z', labels: ['sent'] };
+    const bad = { nope: true };
+    const r = normalizeSentMessages([good, bad, bad]);
+    expect(r.messages.length).toBe(1);
+    expect(r.dropped).toBe(2);
   });
 });
 
