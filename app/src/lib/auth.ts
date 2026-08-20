@@ -27,9 +27,9 @@ export async function initAuth(): Promise<void> {
     authority: cfg.issuer,
     client_id: cfg.clientId,
     redirect_uri: `${window.location.origin}/auth/callback`,
-    scope: 'openid profile',
+    scope: 'openid profile offline_access', // offline_access is what buys the refresh token
     userStore: new WebStorageStateStore({ store: window.localStorage }),
-    automaticSilentRenew: false, // renewal is explicit in getToken()
+    automaticSilentRenew: true, // background renewal via the refresh token; getToken() keeps its explicit renew as belt-over-braces
   });
   // Block bodies, not concise ones: these callbacks are typed to return
   // `void | Promise<void>`, so an assignment expression body would not typecheck.

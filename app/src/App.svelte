@@ -1,16 +1,17 @@
 <!-- app/src/App.svelte -->
 <!--
-  The running SPA shell. Boot sequence: initAuth → startPersistence →
-  connectEvents → startSync. Layout: the yellow room holds the chat machine
+  The running SPA shell. Boot sequence: initAuth, then — once SetupScreen
+  clears — startConnection, which owns the persister, the event reader and the
+  sync socket as one lifecycle. Layout: the yellow room holds the chat machine
   (face header + chat) on the left and the glass-tab console (screen /
   artifacts) on the right; below 768px the two stack. Processing state is
   driven by claude_result / session_* ephemeral events delivered through
-  connectEvents' onEphemeral.
+  startConnection's onEphemeral.
 -->
 <script lang="ts">
   import { initAuth, getToken, signOut, authEnabled } from './lib/auth';
-  import { startPersistence, startSync } from './lib/store';
-  import { connectEvents, type ServerEvent } from './lib/events';
+  import { startConnection, stopConnection, clearLocalRecord } from './lib/connection';
+  import { type ServerEvent } from './lib/events';
   import { startSession, endSession, fetchHealth, fetchArtifactTree, type ArtifactEntry } from './lib/api';
   import { sfx } from './lib/sfx';
   import SetupScreen from './components/SetupScreen.svelte';
@@ -69,7 +70,6 @@
   $effect(() => {
     (async () => {
       await initAuth();
-      await startPersistence();
       sfxMuted = sfx.isMuted();
       booted = true;
     })();
@@ -86,10 +86,9 @@
   // needed) — polling before then just 401s against the auth-gated server.
   $effect(() => {
     if (!ready) return;
-    const conn = connectEvents({ onEphemeral: handleEphemeral });
-    startSync(getToken);
+    void startConnection(getToken, { onEphemeral: handleEphemeral });
     fetchHealth().then((h) => (sessionActive = h.sessionActive));
-    return () => conn.stop();
+    return () => { void stopConnection(); };
   });
 
   // The artifact tree feeds both BROWSER and FILES; refresh whenever either
@@ -149,7 +148,18 @@
         {#if authEnabled()}
           <button
             class="logout"
-            onclick={async () => { await signOut(); ready = false; }}
+            onclick={async () => {
+              await stopConnection();      // close socket, kill ticket minting, stop reader, stop persister
+              try {
+                await clearLocalRecord();  // delete the OPFS cache
+              } catch (e) {
+                // A cache we could not delete must never trap the user in a
+                // signed-in session — say so, then finish the logout anyway.
+                console.error('[logout] clearing the local record failed:', e);
+              }
+              await signOut();             // drop the OIDC user
+              window.location.replace('/'); // the in-memory store dies with the page — never syncs a wipe
+            }}
           >LOGOUT</button>
         {/if}
       </nav>

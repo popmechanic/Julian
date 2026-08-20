@@ -70,6 +70,21 @@ describe('auth', () => {
     expect(await auth.getToken()).toBe('AT');
   });
 
+  test('requests offline_access and lets oidc-client-ts renew in the background (#5)', async () => {
+    vi.stubEnv('VITE_OIDC_ISSUER', 'https://soul.exe.xyz');
+    vi.stubEnv('VITE_OIDC_CLIENT_ID', 'julian');
+    // Import the mocked module inside the test: beforeEach resets the registry,
+    // so the constructor spy is fresh and shares a registry with ./auth.
+    const { UserManager } = await import('oidc-client-ts');
+    const auth = await import('./auth');
+    await auth.initAuth();
+    const cfg = vi.mocked(UserManager).mock.calls[0][0];
+    // No refresh token without offline_access — signinSilent would have nothing
+    // to spend, and every session would die at the access token's expiry.
+    expect(cfg.scope).toBe('openid profile offline_access');
+    expect(cfg.automaticSilentRenew).toBe(true);
+  });
+
   test('signed out (no user) → not signed in, null token, signIn redirects', async () => {
     vi.stubEnv('VITE_OIDC_ISSUER', 'https://soul.exe.xyz');
     vi.stubEnv('VITE_OIDC_CLIENT_ID', 'julian');
