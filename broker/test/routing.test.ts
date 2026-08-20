@@ -110,6 +110,27 @@ describe('default-deny', () => {
     expect(((await res.json()) as { error: string }).error).toBe('beforeId requires before');
   });
 
+  // The adversarial reviewer proved the beforeId malformed-value guard was
+  // untested: deleting it left the suite green, and with it gone
+  // `?before=<ts>&beforeId=abc` would degrade silently to the ts-only
+  // branch — dropping the tied-timestamp group, the loss direction the
+  // global constraint forbids (#38 redirect). `before` is always present
+  // and valid here so only the beforeId guard is under test.
+  test('/ledger: beforeId="" / whitespace / negative / non-numeric → 400, never silently ignored', async () => {
+    const { testEnv } = await authedEnv();
+    testEnv.BREAKGLASS_SECRET = 'test-breakglass-secret';
+    for (const bad of ['', '%20', '-5', 'abc']) {
+      const res = await worker.fetch(
+        new Request(`${BASE}/ledger?limit=5&before=1700000000000&beforeId=${bad}`, {
+          headers: { 'X-Breakglass-Secret': 'test-breakglass-secret' },
+        }),
+        testEnv,
+      );
+      expect(res.status, `beforeId=${bad}`).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe('beforeId must be a non-negative integer');
+    }
+  });
+
   test('/ledger: compound cursor (before+beforeId) actually filters, proven by BODY content (#38 redirect)', async () => {
     const { token, testEnv } = await authedEnv();
     testEnv.BREAKGLASS_SECRET = 'test-breakglass-secret';
