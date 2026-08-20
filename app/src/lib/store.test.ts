@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { createMergeableStore } from 'tinybase';
 import { createOpfsPersister } from 'tinybase/persisters/persister-browser';
 import { createStreamStore } from 'julian-shared/schema';
+import { createWsSynchronizer } from 'tinybase/synchronizers/synchronizer-ws-client';
 import {
   store,
   startPersistence,
@@ -12,6 +13,7 @@ import {
   syncPhase,
   onSyncPhase,
   startSync,
+  SyncStaleError,
 } from './store';
 import { ExchangeClient } from './exchange';
 
@@ -22,11 +24,27 @@ import { ExchangeClient } from './exchange';
 // wouldn't actually check) without opening a live WebSocket inside jsdom.
 // No other test in this file constructs a ReconnectingWebSocket or calls
 // createWsSynchronizer directly, so this mock cannot affect them.
+//
+// Each construction is recorded, along with the url provider it was handed.
+// The mock deliberately does NOT call that provider on its own — the real
+// library calls it from _connect(), and tests that need the provider loop to
+// run drive it explicitly, so no test pays for a background retry loop it did
+// not ask for.
+interface MockSocket {
+  close: ReturnType<typeof vi.fn>;
+  addEventListener: ReturnType<typeof vi.fn>;
+  urlProvider: (() => Promise<string>) & { cancel?: () => void };
+}
+const wsInstances = vi.hoisted(() => [] as unknown[]);
+function lastSocket(): MockSocket {
+  return wsInstances[wsInstances.length - 1] as MockSocket;
+}
 vi.mock('reconnecting-websocket', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    close: vi.fn(),
-    addEventListener: vi.fn(),
-  })),
+  default: vi.fn().mockImplementation((urlProvider: unknown) => {
+    const inst = { close: vi.fn(), addEventListener: vi.fn(), urlProvider };
+    wsInstances.push(inst);
+    return inst;
+  }),
 }));
 vi.mock('tinybase/synchronizers/synchronizer-ws-client', () => ({
   createWsSynchronizer: vi.fn().mockResolvedValue({
@@ -275,16 +293,6 @@ describe('createTicketUrlProvider — the total ticket URL provider (R2-D1)', ()
     }
   });
 
-  // The reset half of the same contract, and it must DISCRIMINATE: a
-  // scenario of two throws followed by success proves nothing, because two
-  // is already under the limit of three — it passes with or without the
-  // reset. The arrangement below spans FOUR throws, with a resolution in the
-  // middle that continues the loop rather than returning from it
-  // ({kind:'signed-out'} sleeps and loops). With the reset, the counter
-  // restarts at that resolution and never reaches three; without it, the
-  // throws accumulate 1,2,_,3 and the third flips the pill to 'stale' before
-  // the final ticket ever arrives. Deleting `consecutiveThrows = 0` turns
-  // this test red.
   // Totality hole (review-confirmed): `setPhase('stale')` in the catch arm
   // synchronously calls every phaseListeners subscriber via forEach — a
   // throwing subscriber is not shielded by the surrounding catch (it IS the
@@ -297,16 +305,19 @@ describe('createTicketUrlProvider — the total ticket URL provider (R2-D1)', ()
   // throw.
   test('a throwing onSyncPhase subscriber does not escape the provider on the stale transition (TOTAL)', async () => {
     vi.useFakeTimers();
+    let armed = false;
+    // Registered outside the try so the finally can always remove it: a
+    // failed assertion must not leave an exploding subscriber attached to
+    // module-level phaseListeners and cascade into unrelated tests.
+    const unsub = onSyncPhase(() => {
+      if (armed) throw new Error('subscriber exploded');
+    });
     try {
       const client = {
         ticket: vi.fn().mockRejectedValue(new TypeError('Illegal invocation')),
         terminalCount: () => 0,
       } as unknown as ExchangeClient;
 
-      let armed = false;
-      const unsub = onSyncPhase(() => {
-        if (armed) throw new Error('subscriber exploded');
-      });
       armed = true;
 
       const provideUrl = createTicketUrlProvider(client, 'wss://sync.example', () => {});
@@ -325,13 +336,24 @@ describe('createTicketUrlProvider — the total ticket URL provider (R2-D1)', ()
 
       for (let i = 0; i < 8; i++) await vi.advanceTimersByTimeAsync(31_000); // drive well past three consecutive throws
       expect(rejection).toBe('<not yet settled>'); // TOTAL: never rejects, even with an exploding subscriber
-      unsub();
       void settled;
     } finally {
+      armed = false;
+      unsub();
       vi.useRealTimers();
     }
   });
 
+  // The reset half of the same contract, and it must DISCRIMINATE: a
+  // scenario of two throws followed by success proves nothing, because two
+  // is already under the limit of three — it passes with or without the
+  // reset. The arrangement below spans FOUR throws, with a resolution in the
+  // middle that continues the loop rather than returning from it
+  // ({kind:'signed-out'} sleeps and loops). With the reset, the counter
+  // restarts at that resolution and never reaches three; without it, the
+  // throws accumulate 1,2,_,3 and the third flips the pill to 'stale' before
+  // the final ticket ever arrives. Deleting `consecutiveThrows = 0` turns
+  // this test red.
   test('a resolved ticket() call resets the throw count — throws either side of a resolution do not accumulate into a false stale', async () => {
     vi.useFakeTimers();
     try {
@@ -377,6 +399,79 @@ describe('startSync — returns a stoppable handle (#4)', () => {
       expect(typeof handle!.ws.close).toBe('function');
       expect(typeof handle!.client.reset).toBe('function');
       expect(handle!.client).toBe(client);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // The provider is correctly TOTAL, which is exactly what strands startSync
+  // under the #43 defect: a forever-throwing ticket() means provideUrl never
+  // resolves, ReconnectingWebSocket parks inside _connect() awaiting the URL
+  // and so never fires open or error, and createWsSynchronizer never
+  // resolves. startSync would then hang forever — connection.ts never
+  // installs a handle, and every other leg of the connection is orphaned with
+  // nothing able to stop it. The stale phase is the one signal that arrives,
+  // so startSync must convert it into a settled rejection.
+  test('a forever-throwing ticket client settles startSync (rejects) and closes the socket', async () => {
+    vi.stubEnv('VITE_SYNC_URL', 'wss://sync.example');
+    vi.stubEnv('VITE_GATE_URL', 'https://gate.example');
+    vi.useFakeTimers();
+    try {
+      // The synchronizer never resolves here, mirroring a socket that never opens.
+      vi.mocked(createWsSynchronizer).mockReturnValueOnce(new Promise(() => {}) as never);
+      const client = {
+        ticket: vi.fn().mockRejectedValue(new TypeError('Illegal invocation')),
+        terminalCount: () => 0,
+        reset: () => {},
+      } as unknown as ExchangeClient;
+
+      const pending = startSync(async () => 'jwt', client);
+      let settled: unknown = '<not yet settled>';
+      const observed = pending.then(
+        (h) => {
+          settled = h;
+          return '<resolved>';
+        },
+        (e: unknown) => {
+          settled = e;
+          return '<rejected>';
+        },
+      );
+
+      const socket = lastSocket();
+      // Drive the url provider exactly as the library's _connect does.
+      void (socket.urlProvider as () => Promise<string>)().catch(() => {});
+      for (let i = 0; i < 8; i++) await vi.advanceTimersByTimeAsync(31_000);
+
+      await observed;
+      expect(settled).toBeInstanceOf(SyncStaleError);
+      expect(socket.close).toHaveBeenCalled(); // the caller never got the handle, so startSync must release the socket itself
+
+      // …and the retry loop is actually stopped, not merely abandoned: a
+      // rejected startSync that leaves the provider minting tickets forever
+      // is the same orphan in a quieter costume. Deleting provideUrl.cancel()
+      // (or its call in the teardown path) turns this assertion red.
+      const callsAtTeardown = (client.ticket as ReturnType<typeof vi.fn>).mock.calls.length;
+      for (let i = 0; i < 8; i++) await vi.advanceTimersByTimeAsync(31_000);
+      expect((client.ticket as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAtTeardown);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test('a failing createWsSynchronizer closes the socket and propagates the error', async () => {
+    vi.stubEnv('VITE_SYNC_URL', 'wss://sync.example');
+    vi.stubEnv('VITE_GATE_URL', 'https://gate.example');
+    try {
+      const boom = new Error('synchronizer refused');
+      vi.mocked(createWsSynchronizer).mockRejectedValueOnce(boom);
+      const client = makeExchangeClient(vi.fn());
+
+      await expect(startSync(async () => 'jwt', client)).rejects.toBe(boom);
+      // Without the wrapper the socket reference dies with the throw — the
+      // caller structurally cannot close a socket it never received.
+      expect(lastSocket().close).toHaveBeenCalled();
     } finally {
       vi.unstubAllEnvs();
     }
