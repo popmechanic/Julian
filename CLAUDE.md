@@ -134,6 +134,16 @@ echo "TEXT" | pbcopy                # write clipboard
 osascript -e 'display notification "MESSAGE" with title "Julian"'
 ```
 
+## Spike Hygiene
+
+Any spike, test, or experiment that spawns the real `claude` CLI must isolate
+the child: set `CLAUDE_CONFIG_DIR` to a fresh temp directory in the child's
+env (see `scripts/spike-claude-resume.ts`'s `spikeChildEnv`), or pass
+`--no-session-persistence` and verify nothing landed in the shared harness.
+A spawned session interprets its prompt as real requests — one once wrote a
+false memory attributed to Marcus (issue #25). Testimony can only be
+protected structurally: sandbox first, spawn second.
+
 ## Web Interface (Local)
 
 Julian's web app runs on localhost:8000 via `bun run server/server.ts`.
