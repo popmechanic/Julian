@@ -3,7 +3,7 @@
 import { WsServerDurableObject } from 'tinybase/synchronizers/synchronizer-ws-server-durable-object';
 import { createDurableObjectSqlStoragePersister } from 'tinybase/persisters/persister-durable-object-sql-storage';
 import { createMiddleware, getHash } from 'tinybase';
-import type { Middleware, Cell, Changes } from 'tinybase';
+import type { Middleware, Cell, Changes, Value } from 'tinybase';
 import type { MergeableStore } from 'tinybase/mergeable-store';
 import { createStreamStore } from 'julian-shared/schema';
 import {
@@ -171,6 +171,24 @@ const MAX_CELL_JSON_BYTES = 65_536; // 64 KiB
 // in the record instead of an indistinguishable empty string.
 const DROPPED_MARKER = '[dropped: cell exceeded 64 KiB]';
 
+// The creation ceremony's identity values (scripts/lib/creation.ts): once
+// set, no socket may ever change them — the once-ever guard, server-side (#9).
+// activeSessionId is runtime state and deliberately absent, as is
+// storeSchemaVersion, which a migration is allowed to advance.
+export const LINEAGE_KEYS = [
+  'ledgerId', 'parentLedgerId', 'lineageNote', 'createdAt', 'createdBy',
+] as const;
+const LINEAGE_KEY_SET: ReadonlySet<string> = new Set<string>(LINEAGE_KEYS);
+
+// The transient value the restore bounce writes before rewriting the true one.
+// It is only ever visible for the width of one microtask, but if a replica
+// happens to observe it, it should say what it is — not borrow the oversized
+// guard's sentence, which would claim a size problem that never happened.
+const LINEAGE_RESTORE_MARKER = '[lineage-restore: refused an overwrite of an immutable lineage value]';
+// createdAt is schema-typed 'number': a string temp would be rejected by the
+// schema, stamp nothing, and leave the foreign value winning the stamp tree.
+const LINEAGE_RESTORE_NUMBER = -1;
+
 const ENCODER = new TextEncoder();
 const cellJsonBytes = (cell: Cell): number => ENCODER.encode(JSON.stringify(cell ?? '')).length;
 
@@ -196,7 +214,14 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
   // Cells stripped by the merge guard, awaiting an authoritative rewrite:
   // "<tableId> <rowId> <cellId>" -> the incoming cell's typeof.
   #oversized = new Map<string, string>();
+  // Lineage overwrites blocked mid-merge: valueId → the true value to converge
+  // back into the stamp tree (the incoming value already merged there before
+  // the callback ran, same as the oversized cells).
+  #lineageBlocked = new Map<string, Value>();
   #flushing = false;
+  // Set only around the restore bounce below, so the local-path lineage guard
+  // lets the DO's own corrective writes through. Nothing else may set it.
+  #restoring = false;
 
   createPersister() {
     this.store = createStreamStore();
@@ -220,6 +245,32 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
     this.#middleware = createMiddleware(this.store);
     this.#middleware.addWillSetCellCallback((_tableId, _rowId, _cellId, cell) =>
       cellJsonBytes(cell) <= MAX_CELL_JSON_BYTES ? cell : undefined,
+    );
+    // The local write path's half of the lineage guard (#9). setValue and
+    // setValues both funnel through here, so one callback covers both.
+    // Returning undefined rejects the write and leaves the prior value intact.
+    this.#middleware.addWillSetValueCallback((valueId, value) => {
+      if (this.#restoring) return value; // the DO's own corrective rewrite
+      if (!LINEAGE_KEY_SET.has(valueId)) return value;
+      const existing = this.store.getValue(valueId);
+      // First set (the creation ceremony) and an equal re-write both pass;
+      // once set to something, lineage is immutable.
+      if (existing === undefined || existing === value) return value;
+      return undefined;
+    });
+    // Deletion is an overwrite by another name, and the most dangerous one:
+    // once a lineage value is gone, `existing === undefined` makes the very
+    // next write look like a first set, so an unguarded delete launders any
+    // overwrite into two legal steps. Refuse both the single delete and the
+    // wholesale one (delValues would take lineage with it).
+    this.#middleware.addWillDelValueCallback((valueId) =>
+      this.#restoring ||
+      !LINEAGE_KEY_SET.has(valueId) ||
+      this.store.getValue(valueId) === undefined,
+    );
+    this.#middleware.addWillDelValuesCallback(() =>
+      this.#restoring ||
+      !LINEAGE_KEYS.some((key) => this.store.getValue(key) !== undefined),
     );
     // Synchronizer merges (the DO's dominant write path) bypass willSetCell and
     // arrive through willApplyChanges as plain [tables, values, 1] with CRDT
@@ -260,7 +311,28 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
         }
         guarded[tableId] = guardedTable;
       }
-      return (dropped ? [guarded, values, marker] : [tables, values, marker]) as Changes;
+      // The same treatment for lineage values (#9). Strip the overwrite so the
+      // plain store keeps the true value, and record it for the corrective
+      // rewrite — the incoming value has already merged into the stamp tree,
+      // which is the surface every replica actually reads.
+      let guardedValues = values;
+      if (values) {
+        for (const key of LINEAGE_KEYS) {
+          if (!(key in (values as Record<string, unknown>))) continue;
+          const incoming = (values as Record<string, Value | undefined>)[key];
+          const existing = this.store.getValue(key);
+          // A present-but-undefined entry is a deletion, and it is refused for
+          // the same reason as on the local path: it would launder the next
+          // overwrite into a first set.
+          if (existing === undefined || existing === incoming) continue;
+          if (guardedValues === values) {
+            guardedValues = { ...(values as Record<string, Value>) } as typeof values;
+          }
+          delete (guardedValues as Record<string, Value>)[key];
+          this.#lineageBlocked.set(key, existing);
+        }
+      }
+      return [dropped ? guarded : tables, guardedValues, marker] as Changes;
     });
 
     // Flush the corrective rewrites as a fresh top-level transaction. A write
@@ -268,10 +340,22 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
     // deferred to a microtask — convergence is eventual, which is the right
     // shape for a CRDT anyway.
     this.store.addDidFinishTransactionListener(() => {
-      if (this.#oversized.size === 0 || this.#flushing) return;
+      if ((this.#oversized.size === 0 && this.#lineageBlocked.size === 0) || this.#flushing) return;
       this.#flushing = true;
-      queueMicrotask(() => this.flushOversized());
+      queueMicrotask(() => this.flushGuarded());
     });
+  }
+
+  // The deferred corrective pass for both guards. Each half clears its own
+  // pending map before writing, so the transactions below re-enter the
+  // did-finish listener harmlessly.
+  flushGuarded(): void {
+    try {
+      this.flushOversized();
+      this.flushLineageBlocked();
+    } finally {
+      this.#flushing = false;
+    }
   }
 
   // Rewrite every cell the merge guard stripped. The stripped merge only edited
@@ -280,34 +364,61 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
   // persister, the export, and every replica actually read.
   flushOversized(): void {
     const pending = [...this.#oversized];
+    if (pending.length === 0) return;
     this.#oversized.clear();
-    try {
-      this.store.transaction(() => {
-        for (const [coord, cellType] of pending) {
-          const [tableId, rowId, cellId] = JSON.parse(coord) as [string, string, string];
-          // Must be schema-valid for the cell (arrays report typeof 'object';
-          // a string write to an array-typed cell is rejected and stamps
-          // nothing) AND differ from the value the stripped merge left behind:
-          // a write equal to the current value is a no-op producing no stamp —
-          // either way the blob would stay in the stamp tree. The marker also
-          // leaves a visible receipt.
-          const sentinel: Cell =
-            cellType === 'number' ? 0
-            : cellType === 'boolean' ? false
-            : cellType === 'object' ? ([DROPPED_MARKER] as unknown as Cell)
-            : DROPPED_MARKER;
-          if (JSON.stringify(this.store.getCell(tableId, rowId, cellId)) === JSON.stringify(sentinel)) {
-            // A prior drop already left the sentinel here; writing it again
-            // would be stampless. Deleting is a change, so it stamps — and the
-            // next drop can write the sentinel again.
-            this.store.delCell(tableId, rowId, cellId);
-          } else {
-            this.store.setCell(tableId, rowId, cellId, sentinel);
-          }
+    this.store.transaction(() => {
+      for (const [coord, cellType] of pending) {
+        const [tableId, rowId, cellId] = JSON.parse(coord) as [string, string, string];
+        // Must be schema-valid for the cell (arrays report typeof 'object';
+        // a string write to an array-typed cell is rejected and stamps
+        // nothing) AND differ from the value the stripped merge left behind:
+        // a write equal to the current value is a no-op producing no stamp —
+        // either way the blob would stay in the stamp tree. The marker also
+        // leaves a visible receipt.
+        const sentinel: Cell =
+          cellType === 'number' ? 0
+          : cellType === 'boolean' ? false
+          : cellType === 'object' ? ([DROPPED_MARKER] as unknown as Cell)
+          : DROPPED_MARKER;
+        if (JSON.stringify(this.store.getCell(tableId, rowId, cellId)) === JSON.stringify(sentinel)) {
+          // A prior drop already left the sentinel here; writing it again
+          // would be stampless. Deleting is a change, so it stamps — and the
+          // next drop can write the sentinel again.
+          this.store.delCell(tableId, rowId, cellId);
+        } else {
+          this.store.setCell(tableId, rowId, cellId, sentinel);
         }
-      });
+      }
+    });
+  }
+
+  // Converge a blocked lineage overwrite away. The strip only protected the
+  // plain store; the foreign value already merged into the stamp tree. A
+  // single restore write would be a stampless no-op (it equals the plain
+  // store's current value), so bounce: write a temp, then the true value —
+  // two stamps, the second newest, every replica converges back (#9).
+  //
+  // The bounce writes are the DO's own authority, not a socket's, so the
+  // local-path guard is lifted around them; the flag is cleared in a finally
+  // so a schema rejection can never leave lineage writable.
+  flushLineageBlocked(): void {
+    const pending = [...this.#lineageBlocked];
+    if (pending.length === 0) return;
+    this.#lineageBlocked.clear();
+    this.#restoring = true;
+    try {
+      for (const [key, trueValue] of pending) {
+        const temp: Value =
+          typeof trueValue === 'number' ? LINEAGE_RESTORE_NUMBER : LINEAGE_RESTORE_MARKER;
+        this.store.transaction(() => {
+          this.store.setValue(key as never, temp as never);
+        });
+        this.store.transaction(() => {
+          this.store.setValue(key as never, trueValue as never);
+        });
+      }
     } finally {
-      this.#flushing = false;
+      this.#restoring = false;
     }
   }
 
