@@ -1,9 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { TABLES_SCHEMA, SCHEMA_VERSION, createStreamStore } from '../../shared/schema';
+import { TABLES_SCHEMA, createStreamStore } from '../../shared/schema';
 
 describe('jobs schema (additive, v2)', () => {
-  test('version bumped, legacy tables intact', () => {
-    expect(SCHEMA_VERSION).toBe(2);
+  test('legacy tables intact', () => {
     expect(TABLES_SCHEMA.messages.sessionId.type).toBe('string');
     expect(TABLES_SCHEMA.artifacts.category.default).toBe('identity');
   });

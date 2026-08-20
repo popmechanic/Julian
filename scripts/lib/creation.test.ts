@@ -17,4 +17,9 @@ describe('performCreation', () => {
     performCreation(store);
     expect(() => performCreation(store)).toThrow('creation happens once');
   });
+  test('storeSchemaVersion is retired: creation writes no version marker (#8)', () => {
+    const store = createStreamStore('c3');
+    performCreation(store, { now: 1_700_000_000_000 });
+    expect(store.getValue('storeSchemaVersion' as never)).toBeUndefined();
+  });
 });
