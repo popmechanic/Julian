@@ -12,17 +12,21 @@ vi.mock('./store', async (importOriginal) => {
   // OPFS_RECORD_FILE is threaded through from the REAL module on purpose: a
   // literal here would let store.ts and connection.ts name different files
   // with this test still green — exactly the silent divergence the shared
-  // constant exists to prevent.
+  // constant exists to prevent. setPhase/syncPhase are threaded through too
+  // (real, unmocked) so a test can drive the exact call App.svelte makes
+  // (`.catch(() => setPhase('stale'))`) and observe whether it actually ran.
   const actual = await importOriginal<typeof import('./store')>();
   return {
     OPFS_RECORD_FILE: actual.OPFS_RECORD_FILE,
+    setPhase: actual.setPhase,
+    syncPhase: actual.syncPhase,
     startPersistence: vi.fn(async () => persister),
     startSync: vi.fn(async () => syncHandle),
   };
 });
 vi.mock('./events', () => ({ connectEvents: vi.fn(() => events) }));
 
-import { OPFS_RECORD_FILE, startPersistence, startSync } from './store';
+import { OPFS_RECORD_FILE, setPhase, startPersistence, startSync, syncPhase } from './store';
 import { clearLocalRecord, startConnection, stopConnection } from './connection';
 
 beforeEach(() => vi.clearAllMocks());
@@ -39,6 +43,26 @@ function parkSync(): { at: Promise<void>; release: () => void } {
   let release!: () => void;
   const held = new Promise((r) => {
     release = () => r(syncHandle);
+  });
+  vi.mocked(startSync).mockImplementationOnce(() => {
+    arrived();
+    return held as never;
+  });
+  return { at, release };
+}
+
+/**
+ * Same as parkSync, but `release` REJECTS the parked sync leg instead of
+ * resolving it — for proving a superseded start's own failure never escapes.
+ */
+function parkSyncReject(): { at: Promise<void>; release: (err: unknown) => void } {
+  let arrived!: () => void;
+  const at = new Promise<void>((r) => {
+    arrived = r;
+  });
+  let release!: (err: unknown) => void;
+  const held = new Promise((_resolve, reject) => {
+    release = (err: unknown) => reject(err);
   });
   vi.mocked(startSync).mockImplementationOnce(() => {
     arrived();
@@ -182,6 +206,36 @@ describe('connection lifecycle (#4)', () => {
     await second.stop();
     await stopConnection();
     expect(events.stop).toHaveBeenCalledTimes(2);
+  });
+
+  // App.svelte wires `startConnection(...).catch(connectionFailed('start'))`,
+  // and connectionFailed flips the pill to 'stale'. If a SUPERSEDED start's
+  // failed sync leg still rethrows, that per-call .catch fires and flips the
+  // pill to 'stale' over a healthy, newer connection — the exact bug this
+  // test pins. A superseded start's own failure must never escape: it must
+  // settle (resolve to an inert handle), so the App.svelte catch never runs.
+  test('a superseded start whose sync leg then rejects settles without throwing, and never flips the phase', async () => {
+    setPhase('synced'); // simulate: the newer connection is already healthy
+    const parked = parkSyncReject();
+    const starting = startConnection(async () => null);
+    await parked.at; // the losing start is now parked on its sync leg…
+    await stopConnection(); // …and superseded before it settles
+    const boom = new Error('sync leg down');
+    parked.release(boom);
+
+    // The exact call site App.svelte makes on the losing promise:
+    const handle = await starting.catch((e) => {
+      setPhase('stale');
+      throw e;
+    });
+
+    // It settled (did not throw), so the .catch body above never ran.
+    expect(typeof handle.stop).toBe('function');
+    expect(syncPhase()).toBe('synced'); // unchanged — no spurious 'stale'
+
+    // And it installed nothing: everything it acquired was released.
+    expect(events.stop).toHaveBeenCalledTimes(1);
+    expect(persister.destroy).toHaveBeenCalledTimes(1);
   });
 
   test('clearLocalRecord is a no-op where OPFS does not exist', async () => {
