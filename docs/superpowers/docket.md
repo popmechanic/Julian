@@ -49,7 +49,7 @@
 **Notes:** Verified unchanged: one non-ok branch labels 403/429/401/404 all as "sha unknown to the repo"; compare and raw fetches are unauthenticated (shared Cloudflare egress IP against GitHub's 60/hr anonymous budget). Fix: status-distinguished messages; consider GITHUB_TOKEN secret (availability coupling accepted, mislabeling not).
 
 ### #9: Sync DO — enforce the once-ever lineage guard server-side
-**State:** queued
+**State:** executed
 **Score:** 7.5 — objectives 1+2: protects the July 27 creation-ceremony lineage values; the Fireproof destruction makes the TinyBase lineage the only lineage
 **Est-files:** sync/src/do.ts, sync/test/*, shared/schema.ts, scripts/lib/creation.ts
 **Plan:** docs/superpowers/plans/2026-08-20-lineage-guard.md
