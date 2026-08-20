@@ -81,9 +81,11 @@
 **Notes:** Controls half done (REST / END FOR GOOD, confirm, guard tests). Remaining: both presence readouts are binary on sessionActive — RESTING/RESUME labels don't exist; after a REST the UI says ASLEEP/WAKE JULIAN identically to a final end. Needs the resumability bit surfaced to the UI.
 
 ### #36: Gate governor & wire hardening — small correctness set
-**State:** accepted
+**State:** queued
 **Score:** 6 — objective 3: four verified-small correctness items in the trust core, none urgent alone, cheap as a set
 **Est-files:** broker/src/governor.ts, broker/src/lease-auth.ts, shared/gate-contract.ts, broker/test/*
+**Plan:** docs/superpowers/plans/2026-08-20-governor-wire-hardening.md
+**Engine:** ultrapowers
 **Notes:** Cluster anchor; includes #37 (burned-ticket re-presentation grows the ledger unboundedly on a never-minting lease), #35 (per-lease 500/day is actually 3×500 per-verb — Marcus picks the intent at brainstorm, one line), #33 (IntrospectionWire as discriminated union; consume-ticket errors as closed set — types only). Correction recorded on #36: the mechanism is TICKET_MINT_CAP (10), not the session cap; fix is `AND used = 0` on the count.
 
 ### #22: Server small correctness — testimony framing, temp orphans, demo guard test
