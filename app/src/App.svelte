@@ -1,16 +1,18 @@
 <!-- app/src/App.svelte -->
 <!--
-  The running SPA shell. Boot sequence: initAuth → startPersistence →
-  connectEvents → startSync. Layout: the yellow room holds the chat machine
+  The running SPA shell. Boot sequence: initAuth, then — once SetupScreen
+  clears — startConnection, which owns the persister, the event reader and the
+  sync socket as one lifecycle. Layout: the yellow room holds the chat machine
   (face header + chat) on the left and the glass-tab console (screen /
   artifacts) on the right; below 768px the two stack. Processing state is
   driven by claude_result / session_* ephemeral events delivered through
-  connectEvents' onEphemeral.
+  startConnection's onEphemeral.
 -->
 <script lang="ts">
   import { initAuth, getToken, signOut, authEnabled } from './lib/auth';
-  import { startPersistence, startSync } from './lib/store';
-  import { connectEvents, type ServerEvent } from './lib/events';
+  import { startConnection, stopConnection, clearLocalRecord } from './lib/connection';
+  import { setPhase } from './lib/store';
+  import { type ServerEvent } from './lib/events';
   import { startSession, endSession, fetchHealth, fetchArtifactTree, type ArtifactEntry } from './lib/api';
   import { sfx } from './lib/sfx';
   import SetupScreen from './components/SetupScreen.svelte';
@@ -69,7 +71,6 @@
   $effect(() => {
     (async () => {
       await initAuth();
-      await startPersistence();
       sfxMuted = sfx.isMuted();
       booted = true;
     })();
@@ -84,12 +85,28 @@
 
   // Authed connections start only after SetupScreen clears (signed in + no setup
   // needed) — polling before then just 401s against the auth-gated server.
+  // A connection that never comes up must SAY so. startConnection releases and
+  // rethrows on a failed leg (unless it was superseded — see connection.ts),
+  // so an uncaught promise here would be an unhandled rejection and a room
+  // that sits silently at 'connecting' forever — the exact #43 failure. Put a
+  // genuine start failure on the pill the user is already watching ('stale':
+  // terminal, reload gets the fix).
+  const connectionFailed = (where: string) => (e: unknown) => {
+    console.error(`[connection] ${where} failed:`, e);
+    setPhase('stale');
+  };
+
   $effect(() => {
     if (!ready) return;
-    const conn = connectEvents({ onEphemeral: handleEphemeral });
-    startSync(getToken);
+    startConnection(getToken, { onEphemeral: handleEphemeral }).catch(connectionFailed('start'));
     fetchHealth().then((h) => (sessionActive = h.sessionActive));
-    return () => conn.stop();
+    // Teardown, not a start: this runs on every unmount/remount, including the
+    // ordinary case where a fresh startConnection is about to follow right
+    // behind it. A teardown failure is not a terminal state for the NEW
+    // connection that's coming — flipping the pill to 'stale' here would claim
+    // the room is broken over what may already be a healthy reconnect. Log it;
+    // only a failure in the current start's own promise earns the pill.
+    return () => { stopConnection().catch((e) => console.error('[connection] stop failed:', e)); };
   });
 
   // The artifact tree feeds both BROWSER and FILES; refresh whenever either
@@ -149,7 +166,28 @@
         {#if authEnabled()}
           <button
             class="logout"
-            onclick={async () => { await signOut(); ready = false; }}
+            onclick={async () => {
+              // Every leg is guarded on its own: a failure in one must neither
+              // skip the legs after it nor strand the user on a signed-in-looking
+              // page whose connection is already torn down and whose local record
+              // is already deleted. Say what broke, then finish the logout.
+              try {
+                await stopConnection();    // close socket, kill ticket minting, stop reader, stop persister
+              } catch (e) {
+                console.error('[logout] stopping the connection failed:', e);
+              }
+              try {
+                await clearLocalRecord();  // delete the OPFS cache
+              } catch (e) {
+                console.error('[logout] clearing the local record failed:', e);
+              }
+              try {
+                await signOut();           // drop the OIDC user
+              } catch (e) {
+                console.error('[logout] signing out failed:', e);
+              }
+              window.location.replace('/'); // the in-memory store dies with the page — never syncs a wipe
+            }}
           >LOGOUT</button>
         {/if}
       </nav>

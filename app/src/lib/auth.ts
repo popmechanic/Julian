@@ -27,9 +27,9 @@ export async function initAuth(): Promise<void> {
     authority: cfg.issuer,
     client_id: cfg.clientId,
     redirect_uri: `${window.location.origin}/auth/callback`,
-    scope: 'openid profile',
+    scope: 'openid profile offline_access', // offline_access is what buys the refresh token
     userStore: new WebStorageStateStore({ store: window.localStorage }),
-    automaticSilentRenew: false, // renewal is explicit in getToken()
+    automaticSilentRenew: true, // background renewal via the refresh token; getToken() keeps its explicit renew as belt-over-braces
   });
   // Block bodies, not concise ones: these callbacks are typed to return
   // `void | Promise<void>`, so an assignment expression body would not typecheck.
@@ -38,6 +38,14 @@ export async function initAuth(): Promise<void> {
   });
   um.events.addUserUnloaded(() => {
     user = null;
+  });
+  // automaticSilentRenew fails quietly by default, and no silent_redirect_uri
+  // is configured — so a renewal cycle can fail every time with no symptom
+  // but a session that expires for no visible reason. getToken()'s explicit
+  // signinSilent still covers the user-facing path; this makes the background
+  // half audible instead of swallowed.
+  um.events.addSilentRenewError((e: Error) => {
+    console.warn('[auth] silent renew failed:', e);
   });
 
   if (window.location.pathname === '/auth/callback') {
