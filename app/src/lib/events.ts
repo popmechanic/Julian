@@ -54,15 +54,20 @@ export function applyServerEvent(e: ServerEvent): void {
   // Everything else (claude_tool_result, claude_result, session_*, …) is ephemeral — handled by the UI layer.
 }
 
-export function connectEvents(handlers: { onEphemeral?: (e: ServerEvent) => void } = {}): { stop(): void } {
+export function connectEvents(
+  handlers: { onEphemeral?: (e: ServerEvent) => void } = {},
+  fetchImpl: typeof fetch = (...args: Parameters<typeof fetch>) => fetch(...args),
+): { stop(): void } {
   let stopped = false;
   let lastId = -1;
+  const controller = new AbortController();
   (async function loop() {
     while (!stopped) {
       try {
         const t = await getToken();
-        const res = await fetch(`/api/events?after=${lastId}`, {
+        const res = await fetchImpl(`/api/events?after=${lastId}`, {
           headers: t ? { 'X-Authorization': `Bearer ${t}` } : {},
+          signal: controller.signal,
         });
         if (!res.ok || !res.body) throw new Error(`events → ${res.status}`);
         const reader = res.body.getReader();
@@ -84,9 +89,15 @@ export function connectEvents(handlers: { onEphemeral?: (e: ServerEvent) => void
           }
         }
       } catch {
+        if (stopped) return; // an abort is a stop, not a reconnectable failure
         await new Promise((r) => setTimeout(r, 2000)); // reconnect with delay
       }
     }
   })();
-  return { stop() { stopped = true; } };
+  return {
+    stop() {
+      stopped = true;
+      controller.abort(); // rejects the pending fetch AND any parked reader.read()
+    },
+  };
 }
