@@ -604,12 +604,25 @@ async function pinBump(req: Request, env: Env): Promise<Response> {
     // (repo hardcoded there, e.g. …/repos/popmechanic/Julian/compare/main...);
     // env-addressable so the CI harness can point it at a fixture server.
     compare = await fetch(`${env.PIN_COMPARE_BASE}${sha}`, {
-      headers: { 'User-Agent': 'julian-gate', Accept: 'application/vnd.github+json' },
+      headers: {
+        'User-Agent': 'julian-gate',
+        Accept: 'application/vnd.github+json',
+        ...(env.GITHUB_TOKEN ? { Authorization: `Bearer ${env.GITHUB_TOKEN}` } : {}),
+      },
     });
   } catch {
     return json({ error: `could not reach GitHub to prove ${sha} is on main` }, 502);
   }
-  if (!compare.ok) return json({ error: `sha ${sha} is unknown to the repo` }, 409);
+  // A refusal is never labeled as a fact about the repo (#42): four attempts
+  // on drills night read "unknown sha" for a sha that was on main the whole
+  // time, because the shared-egress anonymous budget 403'd.
+  if (compare.status === 403 || compare.status === 429) {
+    return json({
+      error: `GitHub refused the proof request for ${sha} (rate limit) — retry later, or install GITHUB_TOKEN to authenticate the compare`,
+    }, 429);
+  }
+  if (compare.status === 404) return json({ error: `sha ${sha} is unknown to the repo` }, 409);
+  if (!compare.ok) return json({ error: `GitHub answered ${compare.status} proving ${sha} — pin unchanged` }, 502);
   const rel = (await compare.json() as { status?: string }).status ?? '';
   // 'identical' or 'behind' ⇒ sha is an ancestor of main (on the protected branch).
   if (rel !== 'identical' && rel !== 'behind') {

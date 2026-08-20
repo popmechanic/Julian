@@ -28,6 +28,7 @@ export interface Env {
 
   PACKAGE_RAW_BASE: string;   // raw content root, e.g. https://raw.githubusercontent.com/popmechanic/Julian
   PIN_COMPARE_BASE: string;   // branch-membership proof root, e.g. https://api.github.com/repos/popmechanic/Julian/compare/main...
+  GITHUB_TOKEN?: string;      // optional: authenticates the pin-bump compare call (rate-limit ceiling); never logged
 
   // Stream authority.
   STREAM_SUBS: string;        // sub=principal comma-separated map

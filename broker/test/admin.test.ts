@@ -1127,6 +1127,59 @@ describe('POST /pin-bump', () => {
     fetchMock.get(RAW).intercept({ path: `/${sha}/${path}` }).reply(status, body);
   }
 
+  test('a rate-limited compare is a refusal, not a fact about the repo (#42)', async () => {
+    const kv = pinKv();
+    const { env } = pinBumpEnv(kv);
+    fetchMock.get(GITHUB).intercept({ path: `${COMPARE_PREFIX}${SHA}` }).reply(403, 'rate limited');
+    const res = await worker.fetch(bumpReq({ 'X-Breakglass-Secret': BREAKGLASS_SECRET }), env);
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('rate limit');
+    expect(body.error).not.toContain('unknown to the repo');
+    expect(await kv.get(PIN_KEY)).toBeNull(); // pin untouched
+  });
+
+  test('only a 404 earns "unknown to the repo" (#42)', async () => {
+    const { env } = pinBumpEnv();
+    fetchMock.get(GITHUB).intercept({ path: `${COMPARE_PREFIX}${SHA}` }).reply(404, 'not found');
+    const res = await worker.fetch(bumpReq({ 'X-Breakglass-Secret': BREAKGLASS_SECRET }), env);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe(`sha ${SHA} is unknown to the repo`);
+  });
+
+  test('any other compare status is named honestly and changes nothing (#42)', async () => {
+    const kv = pinKv();
+    const { env } = pinBumpEnv(kv);
+    fetchMock.get(GITHUB).intercept({ path: `${COMPARE_PREFIX}${SHA}` }).reply(500, 'boom');
+    const res = await worker.fetch(bumpReq({ 'X-Breakglass-Secret': BREAKGLASS_SECRET }), env);
+    expect(res.status).toBe(502);
+    expect(((await res.json()) as { error: string }).error).toBe(`GitHub answered 500 proving ${SHA} — pin unchanged`);
+    expect(await kv.get(PIN_KEY)).toBeNull();
+  });
+
+  test('GITHUB_TOKEN, when present, rides the compare request — and only the compare request (#42)', async () => {
+    const { env } = pinBumpEnv();
+    (env as { GITHUB_TOKEN?: string }).GITHUB_TOKEN = 'ghp_test_token';
+    // The compare intercept MATCHES ONLY when the Authorization header is
+    // present: without the token on the request, the mock misses and (with
+    // net connections disabled) the flow lands in the could-not-reach arm.
+    fetchMock.get(GITHUB)
+      .intercept({
+        path: `${COMPARE_PREFIX}${SHA}`,
+        headers: { authorization: 'Bearer ghp_test_token' },
+      })
+      .reply(200, JSON.stringify({ status: 'behind' }));
+    // The raw manifest fetch must NOT carry the token: this intercept matches
+    // the un-authed request; a tokened one would miss and fail the fetch arm
+    // differently than asserted below.
+    interceptManifest(SHA, 'gone', 404);
+    const res = await worker.fetch(bumpReq({ 'X-Breakglass-Secret': BREAKGLASS_SECRET }), env);
+    const body = (await res.json()) as { error: string };
+    // Past the compare (no could-not-reach), into the manifest arm.
+    expect(body.error).not.toContain('could not reach GitHub');
+    expect(res.status).not.toBe(429);
+  });
+
   test('no credential → 401, KV untouched', async () => {
     const kv = pinKv();
     const { env } = pinBumpEnv(kv);
