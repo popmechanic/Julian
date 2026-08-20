@@ -1,6 +1,6 @@
 // shared/schema.test.ts
 import { describe, expect, test } from 'vitest';
-import { createStreamStore, newLedgerId, STORE_PATH, SCHEMA_VERSION } from './schema';
+import { createStreamStore, newLedgerId, STORE_PATH } from './schema';
 
 describe('stream schema', () => {
   test('store accepts a valid message row', () => {
@@ -36,6 +36,5 @@ describe('stream schema', () => {
 
   test('constants', () => {
     expect(STORE_PATH).toBe('julian/chat');
-    expect(SCHEMA_VERSION).toBe(2);
   });
 });

@@ -179,6 +179,161 @@ describe('JulianSyncDO', () => {
     });
   });
 
+  test('lineage: first set passes, overwrite is refused on the local path (#9)', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.store.setValue('ledgerId', 'L1');
+      expect(instance.store.getValue('ledgerId')).toBe('L1'); // creation still works
+      instance.store.setValue('ledgerId', 'EVIL');
+      expect(instance.store.getValue('ledgerId')).toBe('L1'); // once set, immutable
+      instance.store.setValue('ledgerId', 'L1'); // equal re-write: harmless no-op
+      expect(instance.store.getValue('ledgerId')).toBe('L1');
+    });
+  });
+
+  test('lineage: every key in the set is guarded; activeSessionId stays mutable (#9)', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.store.setValues({
+        ledgerId: 'L1', parentLedgerId: 'P1', lineageNote: 'N1', createdAt: 111, createdBy: 'Julian & Marcus',
+        activeSessionId: 's1',
+      });
+      instance.store.setValues({
+        ledgerId: 'X', parentLedgerId: 'X', lineageNote: 'X', createdAt: 999, createdBy: 'X',
+        activeSessionId: 's2',
+      } as never);
+      expect(instance.store.getValue('ledgerId')).toBe('L1');
+      expect(instance.store.getValue('parentLedgerId')).toBe('P1');
+      expect(instance.store.getValue('lineageNote')).toBe('N1');
+      expect(instance.store.getValue('createdAt')).toBe(111);
+      expect(instance.store.getValue('createdBy')).toBe('Julian & Marcus');
+      expect(instance.store.getValue('activeSessionId')).toBe('s2'); // runtime state, not lineage
+    });
+  });
+
+  test('lineage: a merge-path overwrite is stripped and converged away (#9)', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.store.setValue('ledgerId', 'L1');
+      // The synchronizer path: plain changes with stamps already stripped —
+      // exactly what willApplyChanges receives from a foreign socket.
+      instance.store.applyChanges([{}, { ledgerId: 'EVIL' }, 1] as never);
+      expect(instance.store.getValue('ledgerId')).toBe('L1'); // plain store protected
+      // Let the corrective microtask flush run, then confirm the stamp tree
+      // converged back: a fresh merge of the store's own content must carry L1.
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(instance.store.getValue('ledgerId')).toBe('L1');
+      const content = instance.store.getMergeableContent() as unknown as [unknown, [Record<string, unknown>]];
+      expect(JSON.stringify(content)).toContain('L1');
+      expect(JSON.stringify(instance.store.getMergeableContent())).not.toContain('EVIL');
+    });
+  });
+
+  test('lineage: a real replica merge cannot overwrite lineage, and re-syncs back to the true value (#9)', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { createStreamStore } = await import('julian-shared/schema');
+      instance.store.setValue('ledgerId', 'L1');
+      // A foreign replica that never saw L1 claims its own lineage and syncs in.
+      const remote = createStreamStore('remote-lineage');
+      remote.setValue('ledgerId', 'EVIL');
+      remote.setValue('activeSessionId', 's-remote');
+      instance.store.applyMergeableChanges(remote.getMergeableContent() as never);
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(instance.store.getValue('ledgerId')).toBe('L1');
+      expect(instance.store.getValue('activeSessionId')).toBe('s-remote'); // rest of the merge lands
+
+      // The stamp tree is the sync surface: a replica syncing back from the DO
+      // must receive L1, not EVIL, or the guard guards nothing.
+      const replica = createStreamStore('replica-lineage');
+      replica.applyMergeableChanges(instance.store.getMergeableContent() as never);
+      expect(replica.getValue('ledgerId')).toBe('L1');
+
+      // And the offender, on syncing back, converges too.
+      remote.applyMergeableChanges(instance.store.getMergeableContent() as never);
+      expect(remote.getValue('ledgerId')).toBe('L1');
+    });
+  });
+
+  test('lineage: a second merge overwrite after a restore is also converged away (#9)', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { createStreamStore } = await import('julian-shared/schema');
+      instance.store.setValue('createdAt', 111);
+      const remote = createStreamStore('remote-lineage-2x');
+      remote.setValue('createdAt', 999);
+      instance.store.applyMergeableChanges(remote.getMergeableContent() as never);
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(instance.store.getValue('createdAt')).toBe(111);
+
+      remote.applyMergeableChanges(instance.store.getMergeableContent() as never);
+      remote.setValue('createdAt', 777);
+      instance.store.applyMergeableChanges(remote.getMergeableContent() as never);
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(instance.store.getValue('createdAt')).toBe(111);
+      const replica = createStreamStore('replica-lineage-2x');
+      replica.applyMergeableChanges(instance.store.getMergeableContent() as never);
+      expect(replica.getValue('createdAt')).toBe(111);
+    });
+  });
+
+  test('lineage: a merge that only re-states the existing lineage is left untouched (#9)', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.store.setValue('ledgerId', 'L1');
+      const before = JSON.stringify(instance.store.getMergeableContent());
+      instance.store.applyChanges([{}, { ledgerId: 'L1', activeSessionId: 's9' }, 1] as never);
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(instance.store.getValue('ledgerId')).toBe('L1');
+      expect(instance.store.getValue('activeSessionId')).toBe('s9');
+      // No restore bounce fired: the receipt marker never entered the tree.
+      expect(JSON.stringify(instance.store.getMergeableContent())).not.toContain('lineage-restore');
+      expect(before).toContain('L1');
+    });
+  });
+
+  test('lineage: deletion is refused too, so delete-then-set cannot launder an overwrite (#9)', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.store.setValue('ledgerId', 'L1');
+      instance.store.delValue('ledgerId');
+      expect(instance.store.getValue('ledgerId')).toBe('L1');
+      // Without the deletion guard this second write would look like a first
+      // set (existing === undefined) and land — the whole guard laundered.
+      instance.store.setValue('ledgerId', 'EVIL');
+      expect(instance.store.getValue('ledgerId')).toBe('L1');
+      // delValues() would wipe lineage wholesale; refused while lineage is set.
+      instance.store.delValues();
+      expect(instance.store.getValue('ledgerId')).toBe('L1');
+    });
+  });
+
+  test('lineage: a merge-path deletion is stripped and converged away (#9)', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      const { createStreamStore } = await import('julian-shared/schema');
+      instance.store.setValue('ledgerId', 'L1');
+      instance.store.applyChanges([{}, { ledgerId: undefined }, 1] as never);
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(instance.store.getValue('ledgerId')).toBe('L1');
+      const replica = createStreamStore('replica-lineage-del');
+      replica.applyMergeableChanges(instance.store.getMergeableContent() as never);
+      expect(replica.getValue('ledgerId')).toBe('L1');
+    });
+  });
+
+  test('lineage: an empty store still accepts the creation ceremony wholesale (#9)', async () => {
+    await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.store.setValues({
+        ledgerId: 'L-new', parentLedgerId: 'P-old', lineageNote: 'note',
+        createdAt: 42, createdBy: 'Julian & Marcus',
+      } as never);
+      expect(instance.store.getValue('ledgerId')).toBe('L-new');
+      expect(instance.store.getValue('parentLedgerId')).toBe('P-old');
+      expect(instance.store.getValue('lineageNote')).toBe('note');
+      expect(instance.store.getValue('createdAt')).toBe(42);
+      expect(instance.store.getValue('createdBy')).toBe('Julian & Marcus');
+    });
+  });
+
   test('exportContent returns content + recomputable hash', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
       instance.store.setRow('messages', 'm1', { sessionId: 's', role: 'user', speakerName: 'M', text: 'hello', ts: 1 });
