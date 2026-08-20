@@ -68,9 +68,16 @@ export async function startConnection(
       return INERT;
     }
     events = connectEvents({ onEphemeral: opts.onEphemeral });
-    sync = await startSync(getJwt);
+    sync = await startSync(getJwt); // may reject with SyncStaleError, same as any other sync-leg failure
   } catch (e) {
     release();
+    // A start that has ALREADY been superseded owns nothing the caller can
+    // observe — installing nothing is correct, but so is settling quietly.
+    // Rethrowing here would reject the losing promise, and App.svelte's
+    // per-call `.catch` flips the pill to 'stale' — over a healthy, newer
+    // connection that superseded this one. Only a failure in the CURRENT
+    // attempt is worth surfacing.
+    if (superseded()) return INERT;
     throw e;
   }
   if (superseded()) {

@@ -86,10 +86,11 @@
   // Authed connections start only after SetupScreen clears (signed in + no setup
   // needed) — polling before then just 401s against the auth-gated server.
   // A connection that never comes up must SAY so. startConnection releases and
-  // rethrows on a failed leg, so an uncaught promise here would be an unhandled
-  // rejection and a room that sits silently at 'connecting' forever — the exact
-  // #43 failure. Catch both call sites and put it on the pill the user is
-  // already watching ('stale': terminal, reload gets the fix).
+  // rethrows on a failed leg (unless it was superseded — see connection.ts),
+  // so an uncaught promise here would be an unhandled rejection and a room
+  // that sits silently at 'connecting' forever — the exact #43 failure. Put a
+  // genuine start failure on the pill the user is already watching ('stale':
+  // terminal, reload gets the fix).
   const connectionFailed = (where: string) => (e: unknown) => {
     console.error(`[connection] ${where} failed:`, e);
     setPhase('stale');
@@ -99,7 +100,13 @@
     if (!ready) return;
     startConnection(getToken, { onEphemeral: handleEphemeral }).catch(connectionFailed('start'));
     fetchHealth().then((h) => (sessionActive = h.sessionActive));
-    return () => { stopConnection().catch(connectionFailed('stop')); };
+    // Teardown, not a start: this runs on every unmount/remount, including the
+    // ordinary case where a fresh startConnection is about to follow right
+    // behind it. A teardown failure is not a terminal state for the NEW
+    // connection that's coming — flipping the pill to 'stale' here would claim
+    // the room is broken over what may already be a healthy reconnect. Log it;
+    // only a failure in the current start's own promise earns the pill.
+    return () => { stopConnection().catch((e) => console.error('[connection] stop failed:', e)); };
   });
 
   // The artifact tree feeds both BROWSER and FILES; refresh whenever either
