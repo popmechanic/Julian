@@ -79,11 +79,14 @@ Nothing in the fold rewrites or prunes.
 The offload to distributed archive (R2) is future work; for now the month files
 are the local record.
 
-A second limit worth naming: the fold reads `/ledger?limit=200`, the most
-recent two hundred rows. Paging is future work, so a fold run after a busy
-stretch can see only the tail of it. Run it often enough that two hundred rows
-still bridge the gap; a month file is honest about what it saw, not about what
-happened.
+**Operations, from 2026-08-20 (issue #38):** the fold pages `/ledger` backward
+with `before=<ts>` to the watermark in `memory/ledger/.fold-state.json`
+(committed beside the month files, so the state travels with the record) and
+routes every fetched row to its own UTC month file — a run just after a month
+boundary writes the old month's tail to the old month's file. The watermark
+advances only after every append succeeds; a partial failure re-appends on
+the next run (duplicate rows under a new run marker), never drops. Rows with
+unreadable timestamps are reported on stderr and skipped.
 
 ## The derived files are substrate in the customs-house sense
 
