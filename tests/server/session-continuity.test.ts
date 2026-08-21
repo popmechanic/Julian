@@ -186,4 +186,26 @@ describe("session continuity lifecycle", () => {
 
     await end({ final: true });
   });
+
+  test("health.resumable: true after REST, false after END FOR GOOD (#26)", async () => {
+    // A fresh session, live: resumable must be false while active.
+    const res = await start({ previousTranscript: [] });
+    expect(res.status).toBe(200);
+    const live = await (await fetch(`${BASE}/api/health`)).json() as { resumable: boolean };
+    expect(live.resumable).toBe(false);
+
+    // REST (a pause, not a final end) leaves a resumable state behind.
+    expect((await end({})).ok).toBe(true);
+    await waitFor(() => existsSync(STATE));
+    const rested = await (await fetch(`${BASE}/api/health`)).json() as { resumable: boolean };
+    expect(rested.resumable).toBe(true);
+
+    // END FOR GOOD clears it.
+    const res2 = await start({ previousTranscript: [] });
+    expect(res2.status).toBe(200);
+    expect((await end({ final: true })).ok).toBe(true);
+    await waitFor(() => !existsSync(STATE));
+    const ended = await (await fetch(`${BASE}/api/health`)).json() as { resumable: boolean };
+    expect(ended.resumable).toBe(false);
+  });
 });

@@ -1,8 +1,10 @@
 <!-- app/src/components/FaceHeader.svelte -->
 <!-- The face header of the chat machine (legacy index.html left-column header). -->
 <script module lang="ts">
-  export function statusFor(sessionActive: boolean, processing: boolean): string {
-    if (!sessionActive) return 'ASLEEP';
+  export function statusFor(sessionActive: boolean, processing: boolean, resumable = false): string {
+    // A rest is not a death (#26): RESTING only when a resumable state
+    // genuinely exists server-side; the fallback is never optimistic.
+    if (!sessionActive) return resumable ? 'RESTING' : 'ASLEEP';
     return processing ? 'PROCESSING...' : 'LISTENING';
   }
 </script>
@@ -10,11 +12,11 @@
 <script lang="ts">
   import PixelFace from './PixelFace.svelte';
 
-  let { sessionActive, processing = false, onEnd, onEndFinal }: {
-    sessionActive: boolean; processing?: boolean; onEnd: () => void; onEndFinal: () => void;
+  let { sessionActive, processing = false, resumable = false, onEnd, onEndFinal }: {
+    sessionActive: boolean; processing?: boolean; resumable?: boolean; onEnd: () => void; onEndFinal: () => void;
   } = $props();
 
-  const status = $derived(statusFor(sessionActive, processing));
+  const status = $derived(statusFor(sessionActive, processing, resumable));
 </script>
 
 <header class="face-header">

@@ -34,5 +34,5 @@ export async function fetchArtifactTree(): Promise<ArtifactEntry[]> {
 }
 export async function fetchHealth() {
   const res = await fetch('/api/health');
-  return res.json() as Promise<{ status: string; sessionActive: boolean; needsSetup: boolean; version: string }>;
+  return res.json() as Promise<{ status: string; sessionActive: boolean; resumable?: boolean; needsSetup: boolean; version: string }>;
 }
