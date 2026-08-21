@@ -417,14 +417,27 @@ export class GovernorDO extends DurableObject {
     );
   }
 
-  private countSince(dayStart: number, service: string, verb: string, sub: string | null): number {
-    const row = sub === null
-      ? this.sql.exec(
-        'SELECT COUNT(*) AS n FROM ledger WHERE service = ? AND verb = ? AND allowed = 1 AND ts >= ?',
-        service, verb, dayStart).one()
-      : this.sql.exec(
-        'SELECT COUNT(*) AS n FROM ledger WHERE sub = ? AND service = ? AND verb = ? AND allowed = 1 AND ts >= ?',
-        sub, service, verb, dayStart).one();
+  // `verb: null` means "the whole service shares one budget" (#35: stream
+  // reads draw one combined 500/day allowance across recent/session/search,
+  // rather than 500 apiece). Every other caller today passes a concrete verb
+  // and keeps its own independent bucket — mail.send, mail.list, and so on
+  // are unaffected.
+  private countSince(dayStart: number, service: string, verb: string | null, sub: string | null): number {
+    const row = verb === null
+      ? (sub === null
+        ? this.sql.exec(
+          'SELECT COUNT(*) AS n FROM ledger WHERE service = ? AND allowed = 1 AND ts >= ?',
+          service, dayStart).one()
+        : this.sql.exec(
+          'SELECT COUNT(*) AS n FROM ledger WHERE sub = ? AND service = ? AND allowed = 1 AND ts >= ?',
+          sub, service, dayStart).one())
+      : (sub === null
+        ? this.sql.exec(
+          'SELECT COUNT(*) AS n FROM ledger WHERE service = ? AND verb = ? AND allowed = 1 AND ts >= ?',
+          service, verb, dayStart).one()
+        : this.sql.exec(
+          'SELECT COUNT(*) AS n FROM ledger WHERE sub = ? AND service = ? AND verb = ? AND allowed = 1 AND ts >= ?',
+          sub, service, verb, dayStart).one());
     return Number(row.n);
   }
 
@@ -468,7 +481,8 @@ export class GovernorDO extends DurableObject {
     const storedCap = metered ? Number(lease.send_cap_per_day) : null;
     const effectiveLeaseCap = tighter(leaseCap, storedCap);
 
-    const leaseUsed = effectiveLeaseCap === null ? 0 : this.countSince(dayStart, service, verb, sub);
+    const leaseCountVerb = service === 'stream' ? null : verb; // #35: one budget across stream verbs
+    const leaseUsed = effectiveLeaseCap === null ? 0 : this.countSince(dayStart, service, leaseCountVerb, sub);
     const globalUsed = this.countSince(dayStart, service, verb, null);
     const leaseOk = effectiveLeaseCap === null || leaseUsed < effectiveLeaseCap;
     const globalOk = globalCap === null || globalUsed < globalCap;
