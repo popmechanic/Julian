@@ -89,7 +89,7 @@
 **Notes:** Cluster anchor; includes #37 (burned-ticket re-presentation grows the ledger unboundedly on a never-minting lease), #35 (per-lease 500/day is actually 3×500 per-verb — Marcus picks the intent at brainstorm, one line), #33 (IntrospectionWire as discriminated union; consume-ticket errors as closed set — types only). Correction recorded on #36: the mechanism is TICKET_MINT_CAP (10), not the session cap; fix is `AND used = 0` on the count.
 
 ### #22: Server small correctness — testimony framing, temp orphans, demo guard test
-**State:** queued
+**State:** executed
 **Score:** 6 — objectives 1+3: the tail block is testimony (a store-controlled speaker name can break its framing); the kiosk guard protects the operator's resume state untested
 **Est-files:** server/lib.ts, server/session-state.ts, tests/server/*
 **Plan:** docs/superpowers/plans/2026-08-20-server-small-correctness.md
