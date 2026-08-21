@@ -3,6 +3,7 @@ import { mkdtempSync, readdirSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Subprocess } from "bun";
+import { readSessionState, writeSessionState } from "../../server/session-state";
 
 const TEST_PORT = 18100;
 const BASE = `http://localhost:${TEST_PORT}`;
@@ -207,5 +208,71 @@ describe("session continuity lifecycle", () => {
     await waitFor(() => !existsSync(STATE));
     const ended = await (await fetch(`${BASE}/api/health`)).json() as { resumable: boolean };
     expect(ended.resumable).toBe(false);
+  });
+});
+
+// This suite's server runs in LOCAL mode (no REMOTE_SESSION env var — that
+// mode returns before state handling and would observe nothing here). A
+// second, independent server instance runs with DEMO_MODE=1 so a kiosk
+// session's lifecycle can be exercised against a pre-seeded operator state
+// file without disturbing the main suite's server or state.
+describe("demo session final end (#21)", () => {
+  const DEMO_PORT = TEST_PORT + 1;
+  const DEMO_BASE = `http://localhost:${DEMO_PORT}`;
+  const demoTmp = mkdtempSync(join(tmpdir(), "julian-demo-continuity-"));
+  const DEMO_STATE = join(demoTmp, "session-state.json");
+  const DEMO_LOG = join(demoTmp, "fake-claude");
+  let demoProc: Subprocess | null = null;
+
+  beforeAll(async () => {
+    // Pre-seed the operator's resume state BEFORE the demo session ever starts.
+    writeSessionState(DEMO_STATE, { claudeSessionId: "operator-seed", lastActive: Date.now(), model: "opus" });
+    demoProc = Bun.spawn(["bun", "run", "server/server.ts"], {
+      cwd: resolve(import.meta.dir, "../.."),
+      env: {
+        ...process.env,
+        PORT: String(DEMO_PORT),
+        ALLOWED_ORIGIN: DEMO_BASE,
+        OIDC_ISSUER: "", VITE_OIDC_ISSUER: "",           // no-auth local mode
+        SESSION_STATE_PATH: DEMO_STATE,
+        FAKE_CLAUDE_LOG: DEMO_LOG,
+        SKIP_AUTH_SETUP_CHECK: "1",
+        DEMO_MODE: "1",                                   // kiosk, still LOCAL (REMOTE_SESSION unset)
+        PATH: `${resolve(import.meta.dir, "fixtures")}:${process.env.PATH}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await waitForServer(`${DEMO_BASE}/api/health`);
+  });
+
+  afterAll(async () => {
+    if (demoProc) {
+      demoProc.kill();
+      await demoProc.exited;
+      demoProc = null;
+    }
+    rmSync(demoTmp, { recursive: true, force: true });
+  });
+
+  test("a demo session's final end cannot delete the operator's resume state (#21)", async () => {
+    expect(readSessionState(DEMO_STATE)?.claudeSessionId).toBe("operator-seed"); // pre-seed sanity check
+
+    const startRes = await fetch(`${DEMO_BASE}/api/session/start`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ previousTranscript: [] }),
+    });
+    expect(startRes.ok).toBe(true);
+
+    const endRes = await fetch(`${DEMO_BASE}/api/session/end`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ final: true }),
+    });
+    expect(endRes.ok).toBe(true);
+
+    // The demo's final end must NOT clear the operator's pre-seeded state.
+    expect(existsSync(DEMO_STATE)).toBe(true);
+    expect(readSessionState(DEMO_STATE)?.claudeSessionId).toBe("operator-seed");
+    // Cross-reference: the inverse case — a non-demo final end DOES clear
+    // state — is already covered by "final end clears state; next start is
+    // fresh with a NEW id" in the main suite above.
   });
 });
