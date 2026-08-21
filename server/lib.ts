@@ -446,12 +446,11 @@ export function buildPreviousSessionBlock(msgs: TailMessage[]): string {
   const stamps = msgs.map((m) => m.ts).filter((t) => Number.isFinite(t) && t > 0);
   const from = stamps.length ? new Date(Math.min(...stamps)).toISOString() : "";
   const to = stamps.length ? new Date(Math.max(...stamps)).toISOString() : "";
+  // No store-controlled string may close the block early — the framing
+  // sentence is load-bearing, and speaker fields are store-controlled too (#22).
+  const esc = (v: unknown): string => String(v).replace(/<\/previous-session/gi, "<\\/previous-session");
   const lines = msgs
-    .map((m) => {
-      // Sanitize text to prevent </previous-session> from closing the block early.
-      const sanitized = String(m.text).replace(/<\/previous-session/gi, "<\\/previous-session");
-      return `[${m.speakerType || "human"} — ${m.speakerName || "Unknown"}]: ${sanitized}`;
-    })
+    .map((m) => `[${esc(m.speakerType || "human")} — ${esc(m.speakerName || "Unknown")}]: ${esc(m.text)}`)
     .join("\n");
   return (
     `<previous-session category="transcript" spans="multiple-sessions" message-count="${msgs.length}" from="${from}" to="${to}">\n` +

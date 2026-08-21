@@ -1,6 +1,6 @@
 // tests/server/session-state.test.ts
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -36,13 +36,26 @@ describe("session state file", () => {
     expect(readSessionState(p)).toBeNull();
     clearSessionState(p); // no throw
   });
-  test("interleaved writes to the same path leave a parseable state file", () => {
-    const p = tmp();
+  test("two writes use distinct temp paths, and leave no residue (#23)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "session-state-"));
+    const p = join(dir, "state.json");
     writeSessionState(p, { claudeSessionId: "first", lastActive: 1, model: "m" });
     writeSessionState(p, { claudeSessionId: "second", lastActive: 2, model: "m" });
-    const state = readSessionState(p);
-    expect(state).not.toBeNull();
-    expect(state).toEqual({ claudeSessionId: "second", lastActive: 2, model: "m" });
+    expect(JSON.parse(readFileSync(p, "utf8"))).toEqual({ claudeSessionId: "second", lastActive: 2, model: "m" });
+    expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toEqual([]); // no residue on the happy path
+  });
+
+  test("a failed write leaves no temp orphan and rethrows (#23)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "session-state-"));
+    const p = join(dir, "state.json");
+    // Pre-create the target path as a non-empty DIRECTORY: mkdirSync(dirname)
+    // and writeFileSync(tmp) both succeed, but the final renameSync onto a
+    // non-empty directory fails (ENOTEMPTY/EISDIR), guaranteeing the temp
+    // file exists on disk at the moment of failure.
+    mkdirSync(p);
+    writeFileSync(join(p, "occupant"), "x");
+    expect(() => writeSessionState(p, { claudeSessionId: "s", lastActive: 1, model: "m" })).toThrow();
+    expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toEqual([]);
   });
 });
 
