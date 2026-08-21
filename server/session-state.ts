@@ -36,8 +36,13 @@ export function writeSessionState(path: string, s: SessionState): void {
   // Collision-proof temp name: concurrent doors share this cwd, so a fixed
   // `${path}.tmp` name can let two writers interleave and publish torn JSON.
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  writeFileSync(tmp, JSON.stringify(s));
-  renameSync(tmp, path); // atomic on the same filesystem
+  try {
+    writeFileSync(tmp, JSON.stringify(s));
+    renameSync(tmp, path); // atomic on the same filesystem
+  } catch (e) {
+    rmSync(tmp, { force: true }); // a failed write must not strand its scratch file (#23)
+    throw e;
+  }
 }
 
 export function clearSessionState(path: string): void {
