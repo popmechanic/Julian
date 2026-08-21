@@ -1,5 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
 import { AUTHCODE_SCOPES, EXCHANGE_SCOPES, KNOCK_SCOPES } from 'julian-shared/scopes';
+// The stream read budget's verb set, read from where its cap is declared so the
+// number and the verbs that spend it can never drift apart. (`lease-auth` takes
+// nothing but types from here, so this edge is one-way, not a cycle.)
+import { STREAM_READ_VERBS } from './lease-auth';
 
 /**
  * `id` is the ledger table's sqlite `rowid`, aliased on the way out — a
@@ -171,9 +175,16 @@ export const EXCHANGE_SESSION_CAP = 6;
  * shape is an answer to that: sixty seconds of life, one single use, and no
  * standing of its own (the ticket buys a lookup of the lease, never a scope).
  *
- * `TICKET_MINT_CAP` bounds how many may be live for one lease at once. Ten is
- * generous for a reconnect storm and small enough that a stolen access token
- * cannot quietly manufacture a drawer full of upgrade credentials.
+ * `TICKET_MINT_CAP` bounds how many may be *outstanding* for one lease at
+ * once — minted, unexpired, and not yet spent. Ten is generous for a reconnect
+ * storm and small enough that a stolen access token cannot quietly manufacture
+ * a drawer full of upgrade credentials. A ticket that has been spent is no
+ * longer a credential anyone can use, so it stops counting (#36).
+ *
+ * It is not a bound on *rows*. Spent rows are retained until the TTL reap
+ * removes them — a deleted row would answer `unknown`, and a replay must sound
+ * like `reused` — so a lease may legitimately hold more ticket rows than the
+ * cap. What is bounded is what a thief could still redeem: live unspent ≤ cap.
  */
 export const TICKET_PREFIX = 'jst_';
 export const TICKET_TTL_SECONDS = 60;
@@ -367,6 +378,15 @@ export class GovernorDO extends DurableObject {
       (sql.exec('PRAGMA table_info(lease_tokens)').toArray() as Array<{ name: string }>).map((r) => r.name),
     );
     if (!tokenCols.has('token_id')) sql.exec('ALTER TABLE lease_tokens ADD COLUMN token_id TEXT');
+    // Whether this token's reuse alarm has already been rung (#37). It lives on
+    // the token row rather than being inferred from the ledger's prose, so the
+    // collapse is per-credential and O(1), and cannot be undone by a detail
+    // string that was truncated, reworded, or left without a handle to name.
+    // Guarded like the rest, and the default is honest for every row that
+    // predates it: no alarm rung yet.
+    if (!tokenCols.has('reuse_alarmed')) {
+      sql.exec('ALTER TABLE lease_tokens ADD COLUMN reuse_alarmed INTEGER NOT NULL DEFAULT 0');
+    }
     // The two shapes every cap question asks of the ledger, which is now also
     // written on the allowed path and so grows far faster than it used to.
     // Additive and idempotent: an index is not a schema the readers can see.
@@ -417,7 +437,35 @@ export class GovernorDO extends DurableObject {
     );
   }
 
-  private countSince(dayStart: number, service: string, verb: string, sub: string | null): number {
+  /**
+   * How many allowed rows a counter has already spent today.
+   *
+   * `verb` is either one verb — mail.send, mail.list and every other caller,
+   * each keeping its own independent bucket, unchanged — or an explicit *set*
+   * of verbs sharing one budget (#35: the three stream reads draw one combined
+   * 500/day allowance across recent/session/search, rather than 500 apiece).
+   *
+   * The set is named and closed rather than "any verb of this service",
+   * because a `stream` sub carries more than reads: the sync worker
+   * pen-reports every `socket` and `export`, and each handshake spends a
+   * `ticket.consume`. Counting those would let a door exhaust its reading by
+   * reconnecting, having read nothing.
+   */
+  private countSince(
+    dayStart: number, service: string, verb: string | readonly string[], sub: string | null,
+  ): number {
+    if (typeof verb !== 'string') {
+      if (verb.length === 0) return 0; // an empty set spends nothing — and never `IN ()`
+      const holes = verb.map(() => '?').join(', '); // placeholders only; values stay bound
+      const counted = sub === null
+        ? this.sql.exec(
+          `SELECT COUNT(*) AS n FROM ledger WHERE service = ? AND verb IN (${holes}) AND allowed = 1 AND ts >= ?`,
+          service, ...verb, dayStart).one()
+        : this.sql.exec(
+          `SELECT COUNT(*) AS n FROM ledger WHERE sub = ? AND service = ? AND verb IN (${holes}) AND allowed = 1 AND ts >= ?`,
+          sub, service, ...verb, dayStart).one();
+      return Number(counted.n);
+    }
     const row = sub === null
       ? this.sql.exec(
         'SELECT COUNT(*) AS n FROM ledger WHERE service = ? AND verb = ? AND allowed = 1 AND ts >= ?',
@@ -468,7 +516,15 @@ export class GovernorDO extends DurableObject {
     const storedCap = metered ? Number(lease.send_cap_per_day) : null;
     const effectiveLeaseCap = tighter(leaseCap, storedCap);
 
-    const leaseUsed = effectiveLeaseCap === null ? 0 : this.countSince(dayStart, service, verb, sub);
+    // #35: the three stream READS share one per-lease budget — the number
+    // `STREAM_READ_CAP_PER_DAY` names — and nothing else spends it. The set is
+    // explicit rather than "every stream verb", so the sync worker's
+    // `socket`/`export` pen-reports and the handshake's `ticket.consume` can
+    // never eat a read the door never took.
+    const leaseCountVerb: string | readonly string[] = service === 'stream' ? STREAM_READ_VERBS : verb;
+    const leaseUsed = effectiveLeaseCap === null ? 0 : this.countSince(dayStart, service, leaseCountVerb, sub);
+    // The house counter stays per-verb: stream's house caps are null in policy,
+    // so nothing rides on it, and mail's per-verb counting is untouched.
     const globalUsed = this.countSince(dayStart, service, verb, null);
     const leaseOk = effectiveLeaseCap === null || leaseUsed < effectiveLeaseCap;
     const globalOk = globalCap === null || globalUsed < globalCap;
@@ -901,7 +957,8 @@ export class GovernorDO extends DurableObject {
    * *ticket* rows go, and an access row — expired or not — is none of this
    * predicate's business. A spent ticket is kept until it expires, because a
    * deleted row answers `unknown` and `unknown` is exactly what a reuse must
-   * not be allowed to sound like.
+   * not be allowed to sound like — but it is kept as evidence only, and no
+   * longer occupies a slot under the cap (#36).
    *
    * A retried mint after a lost response is simply a second row. Two live
    * tickets for one session is not a fault; each is single-use, each dies in a
@@ -917,9 +974,15 @@ export class GovernorDO extends DurableObject {
     this.sql.exec(
       "DELETE FROM lease_tokens WHERE lease_id = ? AND kind = 'ticket' AND expires <= ?", leaseId, now,
     );
+    // Unspent only (#36): the cap bounds how many tickets are *outstanding*,
+    // and a ticket that has been spent is outstanding no longer — its slot is
+    // free the instant the socket takes it, not sixty seconds later. The spent
+    // row is still retained until it expires, because a deleted row answers
+    // `unknown` and a replay must sound like `reused`. Retention justifies the
+    // row; it does not justify holding the slot.
     const live = Number(
       this.sql.exec(
-        "SELECT COUNT(*) AS n FROM lease_tokens WHERE lease_id = ? AND kind = 'ticket'", leaseId,
+        "SELECT COUNT(*) AS n FROM lease_tokens WHERE lease_id = ? AND kind = 'ticket' AND used = 0", leaseId,
       ).one().n,
     );
     if (live >= TICKET_MINT_CAP) return { status: 'cap' };
@@ -983,10 +1046,28 @@ export class GovernorDO extends DurableObject {
     const burn = this.sql.exec('UPDATE lease_tokens SET used = 1 WHERE hash = ? AND used = 0', hash);
     burn.toArray();
     if (burn.rowsWritten === 0) {
-      this.ledger(
-        now, sub, 'stream', 'ticket-reused',
-        `door=${doorName} socket ticket presented twice token_id=${tokenId}`, false,
+      // One alarm per burned TICKET (#37): the first re-presentation IS the
+      // theft signal, and a retry loop replaying the same burned ticket must
+      // not grow the ledger without bound. Detection never dulls — every
+      // replay still answers `reused`; only the volume collapses.
+      //
+      // The key is this row, not the access-token handle it was minted
+      // against. A browser session mints many tickets on one handle, so a
+      // per-session collapse would let the *second* stolen credential in
+      // silently — the alarm has to be per credential to be an alarm at all.
+      // The flag is claimed by the same conditional-write idiom as the burn
+      // above, its write count the arbiter, so even the losing half of a raced
+      // pair rings it exactly once.
+      const alarm = this.sql.exec(
+        'UPDATE lease_tokens SET reuse_alarmed = 1 WHERE hash = ? AND reuse_alarmed = 0', hash,
       );
+      alarm.toArray();
+      if (alarm.rowsWritten > 0) {
+        this.ledger(
+          now, sub, 'stream', 'ticket-reused',
+          `door=${doorName} socket ticket presented twice token_id=${tokenId}`, false,
+        );
+      }
       return { ok: false, error: 'reused' };
     }
 

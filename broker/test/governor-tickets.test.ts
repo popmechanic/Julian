@@ -236,7 +236,29 @@ describe('consumeTicket', () => {
       expect(await g.consumeTicket(t)).toEqual({ ok: false, error: 'reused' });
       expect(await g.consumeTicket(t)).toEqual({ ok: false, error: 'reused' });
       expect(kindsOf(g, s.leaseId, 'ticket')[0].used).toBe(1);
-      expect(g.entries(10).filter((e) => e.verb === 'ticket-reused')).toHaveLength(2);
+      // One alarm, not one per replay (#37): the first re-presentation is the
+      // theft signal, and the second adds volume without adding information.
+      expect(g.entries(10).filter((e) => e.verb === 'ticket-reused')).toHaveLength(1);
+    });
+  });
+
+  test('a burned ticket ledgers its reuse once, not once per replay (#37)', async () => {
+    await withGovernor(async (g) => {
+      const s = await session(g);
+      const t = await ticket(g, s);
+      expect(await g.consumeTicket(t)).toMatchObject({ ok: true }); // legitimate spend
+      const replay = () => g.consumeTicket(t);
+      expect((await replay()).ok).toBe(false); // first re-presentation: the theft signal
+      await replay();
+      await replay(); // a retry loop hammering the same burned ticket
+      const reuseRows = g.entries(200).filter((r) => r.verb === 'ticket-reused');
+      expect(reuseRows).toHaveLength(1); // one alarm, not a runaway ledger
+      // The one row is the whole theft signal it always was.
+      expect(reuseRows[0]).toMatchObject({ sub: `lease:${s.leaseId}`, service: 'stream', allowed: 0 });
+      expect(reuseRows[0].detail).toContain(`token_id=${s.tokenId}`);
+      // Detection never dulls: volume collapses, the answer does not.
+      expect(await replay()).toEqual({ ok: false, error: 'reused' });
+      expect(g.entries(200).filter((r) => r.verb === 'ticket-reused')).toHaveLength(1);
     });
   });
 
@@ -321,6 +343,28 @@ describe('the ticket table is kind-scoped in both directions', () => {
     });
   });
 
+  test('a spent ticket frees its mint slot before the TTL (#36)', async () => {
+    await withGovernor(async (g) => {
+      const s = await session(g);
+      // Fill the cap, consuming each ticket as it is minted: every slot is
+      // spent, none expired.
+      for (let i = 0; i < TICKET_MINT_CAP; i++) {
+        const t = await g.mintTicket(s.leaseId, s.tokenId);
+        expect(t.status).toBe('ok');
+        if (t.status !== 'ok') throw new Error('unreachable');
+        expect(await g.consumeTicket(t.ticket)).toMatchObject({ ok: true });
+      }
+      // With spent tickets freeing their slots, the eleventh mint succeeds;
+      // before #36 it answered 'cap' for the whole sixty-second TTL.
+      expect((await g.mintTicket(s.leaseId, s.tokenId)).status).toBe('ok');
+      // The spent rows are *kept*, not deleted: retention is what makes a
+      // replay sound like `reused` instead of `unknown`. Ten spent, one live.
+      const rows = kindsOf(g, s.leaseId, 'ticket');
+      expect(rows).toHaveLength(TICKET_MINT_CAP + 1);
+      expect(rows.filter((r) => r.used === 1)).toHaveLength(TICKET_MINT_CAP);
+    });
+  });
+
   test('the ticket cap counts tickets only, and the session cap counts access only', async () => {
     await withGovernor(async (g) => {
       const s = await session(g);
@@ -359,6 +403,105 @@ describe('rotation arithmetic ignores ticket rows', () => {
       expect(g.leaseList().find((l) => l.doorName === DEVICE_DOOR)?.status).toBe('killed-rotation');
       // The kill burns everything, tickets included.
       expect(tokensOf(g, leaseId)).toHaveLength(0);
+    });
+  });
+});
+
+// The replay collapse (#37) is keyed to the TICKET, and it has to be: a browser
+// session mints many tickets against one access-token handle, so collapsing by
+// handle would let the second stolen credential in silently. The flag is a
+// column of the ticket row, claimed by the same conditional-write idiom as the
+// burn — not a probe of the ledger's prose, which is truncated, format-coupled,
+// and unindexed at the front.
+describe('one alarm per burned ticket, never per session (#37)', () => {
+  function reuseRows(g: GovernorDO): number {
+    return g.entries(200).filter((e) => e.verb === 'ticket-reused').length;
+  }
+
+  test('a second burned ticket of the SAME session raises its own alarm', async () => {
+    await withGovernor(async (g) => {
+      const s = await session(g);
+      const a = await ticket(g, s);
+      const b = await ticket(g, s);          // same lease, same access-token handle
+      expect(await g.consumeTicket(a)).toMatchObject({ ok: true });
+      expect(await g.consumeTicket(b)).toMatchObject({ ok: true });
+
+      expect(await g.consumeTicket(a)).toEqual({ ok: false, error: 'reused' });
+      expect(reuseRows(g)).toBe(1);
+      // b is a *different* stolen credential. Keyed by session it would find a's
+      // alarm already raised and say nothing — the theft would go unrecorded.
+      expect(await g.consumeTicket(b)).toEqual({ ok: false, error: 'reused' });
+      expect(reuseRows(g)).toBe(2);
+
+      // And each stays at one however hard it is hammered: two tickets, two rows.
+      for (let i = 0; i < 4; i++) {
+        await g.consumeTicket(a);
+        await g.consumeTicket(b);
+      }
+      expect(reuseRows(g)).toBe(2);
+    });
+  });
+
+  test('a ticket carrying no token handle alarms exactly once', async () => {
+    await withGovernor(async (g) => {
+      const s = await session(g);
+      const t = await ticket(g, s);
+      // A row from before the handle column existed: nullable, and null. A
+      // collapse that keyed off the detail text would degenerate here — the
+      // handle is the empty string, and the pattern matches every row.
+      sqlOf(g).exec(
+        "UPDATE lease_tokens SET token_id = NULL WHERE lease_id = ? AND kind = 'ticket'", s.leaseId,
+      );
+      expect(await g.consumeTicket(t)).toMatchObject({ ok: true });
+      expect(await g.consumeTicket(t)).toEqual({ ok: false, error: 'reused' });
+      expect(await g.consumeTicket(t)).toEqual({ ok: false, error: 'reused' });
+      expect(reuseRows(g)).toBe(1);
+    });
+  });
+
+  test('a handle-less ticket does not silence the next one', async () => {
+    await withGovernor(async (g) => {
+      const s = await session(g);
+      const a = await ticket(g, s);
+      sqlOf(g).exec(
+        "UPDATE lease_tokens SET token_id = NULL WHERE lease_id = ? AND kind = 'ticket'", s.leaseId,
+      );
+      const b = await ticket(g, s);
+      await g.consumeTicket(a);
+      await g.consumeTicket(b);
+      await g.consumeTicket(a);
+      await g.consumeTicket(b);
+      // Two burned tickets, two alarms — one of them with no handle to name.
+      expect(reuseRows(g)).toBe(2);
+    });
+  });
+
+  test('the losing half of a raced pair rings the alarm, and rings it once', async () => {
+    await withGovernor(async (g) => {
+      const s = await session(g);
+      const t = await ticket(g, s);
+      const [a, b] = await Promise.all([g.consumeTicket(t), g.consumeTicket(t)]);
+      expect([a, b].filter((r) => r.ok)).toHaveLength(1);
+      expect(reuseRows(g)).toBe(1);
+      // The racer already rang it; a later replay adds nothing but its answer.
+      expect(await g.consumeTicket(t)).toEqual({ ok: false, error: 'reused' });
+      expect(reuseRows(g)).toBe(1);
+    });
+  });
+
+  test('the alarm is a column of the ticket row: it starts down and is raised once', async () => {
+    await withGovernor(async (g) => {
+      const s = await session(g);
+      const t = await ticket(g, s);
+      const flag = (): number => Number((sqlOf(g).exec(
+        "SELECT reuse_alarmed FROM lease_tokens WHERE lease_id = ? AND kind = 'ticket'", s.leaseId,
+      ).toArray()[0] as { reuse_alarmed: number }).reuse_alarmed);
+
+      expect(flag()).toBe(0);
+      await g.consumeTicket(t);          // a legitimate spend raises no alarm
+      expect(flag()).toBe(0);
+      await g.consumeTicket(t);
+      expect(flag()).toBe(1);
     });
   });
 });

@@ -22,8 +22,15 @@ export const LEGACY_SCOPE = 'full-house';
 export const LEASE_SEND_CAP_PER_DAY = 5;
 
 // The per-lease `stream.*` allowance — a read a minute for twelve hours
-// straight, generous enough that no legitimate visit notices it exists.
+// straight, generous enough that no legitimate visit notices it exists
+// (one budget across the three stream verbs — #35).
 export const STREAM_READ_CAP_PER_DAY = 500;
+
+// The three verbs that budget names — and the only ones that spend it. The
+// `stream` service also carries the sync worker's `socket`/`export`
+// pen-reports and the handshake's `ticket.consume`; a door that reconnects all
+// day must not find its reading spent by rows that were never reads.
+export const STREAM_READ_VERBS = ['recent', 'session', 'search'] as const;
 
 export const GOVERNOR_DOWN = 'governor unavailable — refusing without a ledger entry';
 
