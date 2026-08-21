@@ -1,0 +1,20 @@
+# Stale engine-branch tips recorded at deletion — 2026-08-20 branch hygiene
+# Pre-drain (Aug 13 B3-era) per-task worktree branches, unmerged; work superseded and long merged via other branches (B3 0d5b794, live since Aug 13).
+worktree-wf_7ca8dc65-7dc-17 1b84497c54fdac527e36e0d55767f352382d32bb
+worktree-wf_7ca8dc65-7dc-33 2db36efce901ea7c3190b8bda315b7fb1d74278b
+worktree-wf_7ca8dc65-7dc-41 82bb666b96a3bb5b7547a35b5dc8556e1b654a17
+worktree-wf_7ca8dc65-7dc-47 d1053f74f22a6b3591c035e9b78d81a0ee97478c
+worktree-wf_7ca8dc65-7dc-8 012fa972a00e6471341dd7265acf179d9b957169
+worktree-wf_f2e93c1d-077-16 41c926e3d059737b30a7aef537bf248162b0f58e
+worktree-wf_f2e93c1d-077-18 b9e8a08f9f952ec6787fd5f5f71832a148fec28a
+worktree-wf_f2e93c1d-077-19 84ce1ed38b2aaf586a37ed44ce2978972d572c18
+worktree-wf_f2e93c1d-077-23 58244900835780ec544d8f169c5dbc30c7267e6c
+worktree-wf_f2e93c1d-077-24 ba16aa1e22e14fd6712fe5a7908a8fdcf3fd9fcf
+worktree-wf_f2e93c1d-077-27 35b92f6ed155c0c2b93dc57ab1f8755b1cf16064
+worktree-wf_f2e93c1d-077-3 44ca53b9fc6442372a256818eaea85f2367a31a6
+worktree-wf_f2e93c1d-077-4 9e678f0f541f971d5bc1b01a1b0e2643848e2fc7
+worktree-wf_f2e93c1d-077-5 30cbb7207bcf7bf9b48e50de52161c88ea8ffbab
+worktree-wf_f2e93c1d-077-6 ffb9cd2ccf4f7a07e1a7824736e574252b3fcd0c
+worktree-wf_f2e93c1d-077-7 e07bca2f700ea9a8563915f87676f08d753df1d2
+worktree-wf_f2e93c1d-077-8 07687d5396fed9edde7016496f528b98e74402ed
+worktree-wf_f2e93c1d-077-9 f877efdc586b59f9776d4e37c891fa36c8eed28d
