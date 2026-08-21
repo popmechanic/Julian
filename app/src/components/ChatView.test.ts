@@ -14,4 +14,10 @@ describe('presenceFor', () => {
     expect(presenceFor(true, 7)).toEqual({ divider: false, buttonLabel: null });
     expect(presenceFor(true, 0)).toEqual({ divider: false, buttonLabel: null });
   });
+
+  test('the idle button offers RESUME for a rest, WAKE JULIAN for a fresh waking (#26)', () => {
+    expect(presenceFor(false, 3, true).buttonLabel).toBe('RESUME');
+    expect(presenceFor(false, 3, false).buttonLabel).toBe('WAKE JULIAN');
+    expect(presenceFor(false, 3).buttonLabel).toBe('WAKE JULIAN');
+  });
 });

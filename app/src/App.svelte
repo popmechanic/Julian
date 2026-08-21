@@ -29,6 +29,7 @@
   let sfxMuted = $state(false);
   let ready = $state(false);
   let sessionActive = $state(false);
+  let resumable = $state(false);
   let processing = $state(false);
   let tab = $state<'screen' | 'browser' | 'files'>('screen');
   let entries = $state<ArtifactEntry[]>([]);
@@ -59,10 +60,13 @@
   }
 
   function handleEphemeral(e: ServerEvent) {
-    if (e.type === 'session_start') sessionActive = true;
+    if (e.type === 'session_start') { sessionActive = true; resumable = false; }
     if (e.type === 'session_end') {
       sessionActive = false;
       processing = false;
+      // Refresh so the idle label speaks the state that actually holds (#26):
+      // a rest reads RESTING/RESUME, a final end reads ASLEEP/WAKE JULIAN.
+      fetchHealth().then((h) => (resumable = h.resumable ?? false)).catch(() => (resumable = false));
     }
     if (e.type === 'user_message') processing = true;
     if (e.type === 'claude_result') processing = false;
@@ -99,7 +103,7 @@
   $effect(() => {
     if (!ready) return;
     startConnection(getToken, { onEphemeral: handleEphemeral }).catch(connectionFailed('start'));
-    fetchHealth().then((h) => (sessionActive = h.sessionActive));
+    fetchHealth().then((h) => { sessionActive = h.sessionActive; resumable = h.resumable ?? false; });
     // Teardown, not a start: this runs on every unmount/remount, including the
     // ordinary case where a fresh startConnection is about to follow right
     // behind it. A teardown failure is not a terminal state for the NEW
@@ -132,6 +136,7 @@
       <FaceHeader
         {sessionActive}
         {processing}
+        {resumable}
         onEnd={() => endSession()}
         onEndFinal={async () => {
           if (confirm('End this session for good? This cannot be resumed — the next session starts fresh, inheriting only the recent record.')) {
@@ -139,7 +144,7 @@
           }
         }}
       />
-      <ChatView {processing} {sessionActive} onStart={() => { sfx.playBoot(); startSession(); }} />
+      <ChatView {processing} {sessionActive} {resumable} onStart={() => { sfx.playBoot(); startSession(); }} />
     </div>
     <aside class="console">
       <nav class="tabbar">

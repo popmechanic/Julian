@@ -3,9 +3,11 @@
   export function presenceFor(
     sessionActive: boolean,
     messageCount: number,
+    resumable = false,
   ): { divider: boolean; buttonLabel: string | null } {
     if (sessionActive) return { divider: false, buttonLabel: null };
-    return { divider: messageCount > 0, buttonLabel: 'WAKE JULIAN' };
+    // A rest offers RESUME; only a true boundary offers WAKE JULIAN (#26).
+    return { divider: messageCount > 0, buttonLabel: resumable ? 'RESUME' : 'WAKE JULIAN' };
   }
 </script>
 
@@ -17,12 +19,12 @@
   import MessageBubble from './MessageBubble.svelte';
   import ChatInput from './ChatInput.svelte';
 
-  let { processing = false, sessionActive = false, onStart = () => {} }: {
-    processing?: boolean; sessionActive?: boolean; onStart?: () => void;
+  let { processing = false, sessionActive = false, resumable = false, onStart = () => {} }: {
+    processing?: boolean; sessionActive?: boolean; resumable?: boolean; onStart?: () => void;
   } = $props();
 
   const messages = useSortedMessages();
-  const presence = $derived(presenceFor(sessionActive, messages.ids.length));
+  const presence = $derived(presenceFor(sessionActive, messages.ids.length, resumable));
   let scroller: HTMLElement | undefined = $state();
   $effect(() => { messages.ids; scroller?.scrollTo({ top: scroller.scrollHeight }); });
 
