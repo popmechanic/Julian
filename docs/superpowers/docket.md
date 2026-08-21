@@ -65,7 +65,7 @@
 **Notes:** Verified: the spawn passes no env; CLAUDE_CONFIG_DIR appears nowhere in the repo; the script was re-run unisolated after the incident. Small fix + a written standing rule.
 
 ### #15: Mail heartbeat hardening — silent drops, unvalidated boundaries, permanent holds
-**State:** queued
+**State:** executed
 **Score:** 7 — objective 4: the sharpest failure (sent-listing drops) silently reclassifies every real correspondent as a stranger and autonomous replies stop permanently
 **Est-files:** scripts/mail-glance.ts, scripts/lib/mail-glance-lib.ts, tests/server/mail-glance.test.ts, docs/mail-heartbeat.md
 **Plan:** docs/superpowers/plans/2026-08-20-mail-heartbeat-hardening.md
