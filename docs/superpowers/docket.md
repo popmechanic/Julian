@@ -81,7 +81,7 @@
 **Notes:** Controls half done (REST / END FOR GOOD, confirm, guard tests). Remaining: both presence readouts are binary on sessionActive — RESTING/RESUME labels don't exist; after a REST the UI says ASLEEP/WAKE JULIAN identically to a final end. Needs the resumability bit surfaced to the UI.
 
 ### #36: Gate governor & wire hardening — small correctness set
-**State:** queued
+**State:** executed
 **Score:** 6 — objective 3: four verified-small correctness items in the trust core, none urgent alone, cheap as a set
 **Est-files:** broker/src/governor.ts, broker/src/lease-auth.ts, shared/gate-contract.ts, broker/test/*
 **Plan:** docs/superpowers/plans/2026-08-20-governor-wire-hardening.md
