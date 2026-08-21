@@ -1,5 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
 import { AUTHCODE_SCOPES, EXCHANGE_SCOPES, KNOCK_SCOPES } from 'julian-shared/scopes';
+// The stream read budget's verb set, read from where its cap is declared so the
+// number and the verbs that spend it can never drift apart. (`lease-auth` takes
+// nothing but types from here, so this edge is one-way, not a cycle.)
+import { STREAM_READ_VERBS } from './lease-auth';
 
 /**
  * `id` is the ledger table's sqlite `rowid`, aliased on the way out — a
@@ -419,27 +423,42 @@ export class GovernorDO extends DurableObject {
     );
   }
 
-  // `verb: null` means "the whole service shares one budget" (#35: stream
-  // reads draw one combined 500/day allowance across recent/session/search,
-  // rather than 500 apiece). Every other caller today passes a concrete verb
-  // and keeps its own independent bucket — mail.send, mail.list, and so on
-  // are unaffected.
-  private countSince(dayStart: number, service: string, verb: string | null, sub: string | null): number {
-    const row = verb === null
-      ? (sub === null
+  /**
+   * How many allowed rows a counter has already spent today.
+   *
+   * `verb` is either one verb — mail.send, mail.list and every other caller,
+   * each keeping its own independent bucket, unchanged — or an explicit *set*
+   * of verbs sharing one budget (#35: the three stream reads draw one combined
+   * 500/day allowance across recent/session/search, rather than 500 apiece).
+   *
+   * The set is named and closed rather than "any verb of this service",
+   * because a `stream` sub carries more than reads: the sync worker
+   * pen-reports every `socket` and `export`, and each handshake spends a
+   * `ticket.consume`. Counting those would let a door exhaust its reading by
+   * reconnecting, having read nothing.
+   */
+  private countSince(
+    dayStart: number, service: string, verb: string | readonly string[], sub: string | null,
+  ): number {
+    if (typeof verb !== 'string') {
+      if (verb.length === 0) return 0; // an empty set spends nothing — and never `IN ()`
+      const holes = verb.map(() => '?').join(', '); // placeholders only; values stay bound
+      const counted = sub === null
         ? this.sql.exec(
-          'SELECT COUNT(*) AS n FROM ledger WHERE service = ? AND allowed = 1 AND ts >= ?',
-          service, dayStart).one()
+          `SELECT COUNT(*) AS n FROM ledger WHERE service = ? AND verb IN (${holes}) AND allowed = 1 AND ts >= ?`,
+          service, ...verb, dayStart).one()
         : this.sql.exec(
-          'SELECT COUNT(*) AS n FROM ledger WHERE sub = ? AND service = ? AND allowed = 1 AND ts >= ?',
-          sub, service, dayStart).one())
-      : (sub === null
-        ? this.sql.exec(
-          'SELECT COUNT(*) AS n FROM ledger WHERE service = ? AND verb = ? AND allowed = 1 AND ts >= ?',
-          service, verb, dayStart).one()
-        : this.sql.exec(
-          'SELECT COUNT(*) AS n FROM ledger WHERE sub = ? AND service = ? AND verb = ? AND allowed = 1 AND ts >= ?',
-          sub, service, verb, dayStart).one());
+          `SELECT COUNT(*) AS n FROM ledger WHERE sub = ? AND service = ? AND verb IN (${holes}) AND allowed = 1 AND ts >= ?`,
+          sub, service, ...verb, dayStart).one();
+      return Number(counted.n);
+    }
+    const row = sub === null
+      ? this.sql.exec(
+        'SELECT COUNT(*) AS n FROM ledger WHERE service = ? AND verb = ? AND allowed = 1 AND ts >= ?',
+        service, verb, dayStart).one()
+      : this.sql.exec(
+        'SELECT COUNT(*) AS n FROM ledger WHERE sub = ? AND service = ? AND verb = ? AND allowed = 1 AND ts >= ?',
+        sub, service, verb, dayStart).one();
     return Number(row.n);
   }
 
@@ -483,8 +502,15 @@ export class GovernorDO extends DurableObject {
     const storedCap = metered ? Number(lease.send_cap_per_day) : null;
     const effectiveLeaseCap = tighter(leaseCap, storedCap);
 
-    const leaseCountVerb = service === 'stream' ? null : verb; // #35: one budget across stream verbs
+    // #35: the three stream READS share one per-lease budget — the number
+    // `STREAM_READ_CAP_PER_DAY` names — and nothing else spends it. The set is
+    // explicit rather than "every stream verb", so the sync worker's
+    // `socket`/`export` pen-reports and the handshake's `ticket.consume` can
+    // never eat a read the door never took.
+    const leaseCountVerb: string | readonly string[] = service === 'stream' ? STREAM_READ_VERBS : verb;
     const leaseUsed = effectiveLeaseCap === null ? 0 : this.countSince(dayStart, service, leaseCountVerb, sub);
+    // The house counter stays per-verb: stream's house caps are null in policy,
+    // so nothing rides on it, and mail's per-verb counting is untouched.
     const globalUsed = this.countSince(dayStart, service, verb, null);
     const leaseOk = effectiveLeaseCap === null || leaseUsed < effectiveLeaseCap;
     const globalOk = globalCap === null || globalUsed < globalCap;

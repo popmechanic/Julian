@@ -326,6 +326,39 @@ describe('the per-lease cap', () => {
         .toEqual({ ok: false, refusedBy: 'lease', count: STREAM_READ_CAP_PER_DAY, cap: STREAM_READ_CAP_PER_DAY });
     });
   });
+
+  test('the shared budget counts READS only — sockets, exports and ticket spends are not reads (#35)', async () => {
+    // `stream` carries more than the three reads: the sync worker pen-reports
+    // every socket it opens and every export it serves, and each handshake
+    // spends a ticket — all `allowed = 1` rows under the same lease sub. A
+    // door that merely reconnects all day must not find its reading spent.
+    const ns = (workerEnv as { GOVERNOR: DurableObjectNamespace }).GOVERNOR;
+    const stub = ns.get(ns.idFromName(`stream-read-verbs-${crypto.randomUUID()}`));
+    await runInDurableObject(stub, async (g: GovernorDO) => {
+      const leaseId = 'l-reconnector';
+      const sub = `lease:${leaseId}`;
+      const sql = (g as unknown as { sql: SqlStorage }).sql;
+      const now = (g as unknown as { now: () => number }).now();
+      // 250 reconnections: a socket row, an export row and a ticket spend each.
+      for (const verb of ['socket', 'export', 'ticket.consume']) {
+        for (let i = 0; i < 250; i++) {
+          sql.exec(
+            'INSERT INTO ledger (ts, sub, service, verb, detail, allowed) VALUES (?, ?, ?, ?, ?, ?)',
+            now, sub, 'stream', verb, 'seed', 1,
+          );
+        }
+      }
+      // 750 allowed stream rows, not one of them a read: the day's first read
+      // is the first unit of the budget, not the 751st.
+      expect(g.reserveLease(leaseId, 'door:x', 'stream', 'recent', 'd', null, STREAM_READ_CAP_PER_DAY))
+        .toEqual({ ok: true, count: 1, cap: null });
+      // And the count the register keeps is the reads' own count: one.
+      expect(g.reserveLease(leaseId, 'door:x', 'stream', 'search', 'd', null, 2))
+        .toEqual({ ok: true, count: 1, cap: null });
+      expect(g.reserveLease(leaseId, 'door:x', 'stream', 'session', 'd', null, 2))
+        .toEqual({ ok: false, refusedBy: 'lease', count: 2, cap: 2 });
+    });
+  });
 });
 
 describe('scope', () => {
