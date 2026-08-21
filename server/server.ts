@@ -1279,9 +1279,13 @@ const server = Bun.serve({
     }
 
     if (url.pathname === "/api/health") {
+      const active = processAlive && (claudeProc !== null || !!REMOTE_SESSION);
       return Response.json({
         status: "ok",
-        sessionActive: processAlive && (claudeProc !== null || !!REMOTE_SESSION),
+        sessionActive: active,
+        // A rest leaves a resumable state behind; a final end clears it (#26).
+        // The UI's RESTING/ASLEEP split hangs on this bit being honest.
+        resumable: !active && !!readSessionState(SESSION_STATE_PATH)?.claudeSessionId,
         sessionId,
         needsSetup: await needsSetup(),
         authMethod: getAuthMethod(),
