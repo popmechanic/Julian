@@ -176,6 +176,11 @@ export const EXCHANGE_SESSION_CAP = 6;
  * storm and small enough that a stolen access token cannot quietly manufacture
  * a drawer full of upgrade credentials. A ticket that has been spent is no
  * longer a credential anyone can use, so it stops counting (#36).
+ *
+ * It is not a bound on *rows*. Spent rows are retained until the TTL reap
+ * removes them — a deleted row would answer `unknown`, and a replay must sound
+ * like `reused` — so a lease may legitimately hold more ticket rows than the
+ * cap. What is bounded is what a thief could still redeem: live unspent ≤ cap.
  */
 export const TICKET_PREFIX = 'jst_';
 export const TICKET_TTL_SECONDS = 60;
@@ -369,6 +374,15 @@ export class GovernorDO extends DurableObject {
       (sql.exec('PRAGMA table_info(lease_tokens)').toArray() as Array<{ name: string }>).map((r) => r.name),
     );
     if (!tokenCols.has('token_id')) sql.exec('ALTER TABLE lease_tokens ADD COLUMN token_id TEXT');
+    // Whether this token's reuse alarm has already been rung (#37). It lives on
+    // the token row rather than being inferred from the ledger's prose, so the
+    // collapse is per-credential and O(1), and cannot be undone by a detail
+    // string that was truncated, reworded, or left without a handle to name.
+    // Guarded like the rest, and the default is honest for every row that
+    // predates it: no alarm rung yet.
+    if (!tokenCols.has('reuse_alarmed')) {
+      sql.exec('ALTER TABLE lease_tokens ADD COLUMN reuse_alarmed INTEGER NOT NULL DEFAULT 0');
+    }
     // The two shapes every cap question asks of the ledger, which is now also
     // written on the allowed path and so grows far faster than it used to.
     // Additive and idempotent: an index is not a schema the readers can see.
@@ -1006,20 +1020,23 @@ export class GovernorDO extends DurableObject {
     const burn = this.sql.exec('UPDATE lease_tokens SET used = 1 WHERE hash = ? AND used = 0', hash);
     burn.toArray();
     if (burn.rowsWritten === 0) {
-      // One alarm per burned token (#37): the first re-presentation IS the
+      // One alarm per burned TICKET (#37): the first re-presentation IS the
       // theft signal, and a retry loop replaying the same burned ticket must
       // not grow the ledger without bound. Detection never dulls — every
       // replay still answers `reused`; only the volume collapses.
       //
-      // The key is the access-token handle the ticket was minted against, so
-      // the collapse is per browser session rather than per ticket: a second,
-      // *different* burned ticket on the same session finds the alarm already
-      // raised and adds no row of its own.
-      const already = Number(this.sql.exec(
-        "SELECT COUNT(*) AS n FROM ledger WHERE sub = ? AND verb = 'ticket-reused' AND detail LIKE ?",
-        sub, `%token_id=${tokenId}%`,
-      ).one().n);
-      if (already === 0) {
+      // The key is this row, not the access-token handle it was minted
+      // against. A browser session mints many tickets on one handle, so a
+      // per-session collapse would let the *second* stolen credential in
+      // silently — the alarm has to be per credential to be an alarm at all.
+      // The flag is claimed by the same conditional-write idiom as the burn
+      // above, its write count the arbiter, so even the losing half of a raced
+      // pair rings it exactly once.
+      const alarm = this.sql.exec(
+        'UPDATE lease_tokens SET reuse_alarmed = 1 WHERE hash = ? AND reuse_alarmed = 0', hash,
+      );
+      alarm.toArray();
+      if (alarm.rowsWritten > 0) {
         this.ledger(
           now, sub, 'stream', 'ticket-reused',
           `door=${doorName} socket ticket presented twice token_id=${tokenId}`, false,
