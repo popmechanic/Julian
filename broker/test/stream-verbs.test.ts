@@ -5,6 +5,7 @@
 // so a test can script the exact wire response (and record the exact wire
 // request) without a real sync worker anywhere in the loop.
 import { describe, expect, test } from 'vitest';
+import { env as workerEnv, runInDurableObject } from 'cloudflare:test';
 import { handleMcp, TOOLS } from '../src/mcp';
 import { scopeAllows, STREAM_READ_CAP_PER_DAY, leaseCapFor } from '../src/lease-auth';
 import { SYNC_READ_SECRET_HEADER } from 'julian-shared/gate-contract';
@@ -285,6 +286,45 @@ describe('the per-lease cap', () => {
     // The real per-lease cap still flows through to the governor on every
     // call, even though this stub enforces its own smaller cap for speed.
     for (const call of calls) expect(call[6]).toBe(STREAM_READ_CAP_PER_DAY);
+  });
+
+  test('stream verbs share one per-lease budget — 500 total, not 3×500 (#35)', async () => {
+    // Drives the real GovernorDO (as governor-leases.test.ts's "reserveLease
+    // caps" tests do), not the scripted stub — this is exactly the shared-
+    // counting behaviour the stub cannot exercise. 499 allowed reads are
+    // seeded directly into the ledger, split across two different stream
+    // verbs under one lease's sub, so the 500th reservation — under a THIRD
+    // verb — is the one that proves the budget is combined, not per-verb.
+    const ns = (workerEnv as { GOVERNOR: DurableObjectNamespace }).GOVERNOR;
+    const stub = ns.get(ns.idFromName(`stream-shared-budget-${crypto.randomUUID()}`));
+    await runInDurableObject(stub, async (g: GovernorDO) => {
+      const leaseId = 'l-shared-budget';
+      const sub = `lease:${leaseId}`;
+      const sql = (g as unknown as { sql: SqlStorage }).sql;
+      const now = (g as unknown as { now: () => number }).now();
+      for (let i = 0; i < 300; i++) {
+        sql.exec(
+          'INSERT INTO ledger (ts, sub, service, verb, detail, allowed) VALUES (?, ?, ?, ?, ?, ?)',
+          now, sub, 'stream', 'recent', 'seed', 1,
+        );
+      }
+      for (let i = 0; i < 199; i++) {
+        sql.exec(
+          'INSERT INTO ledger (ts, sub, service, verb, detail, allowed) VALUES (?, ?, ?, ?, ?, ?)',
+          now, sub, 'stream', 'search', 'seed', 1,
+        );
+      }
+      // 499 reads spent across recent+search. The 500th — under session, a
+      // third verb entirely — is still allowed: the budget is shared, and
+      // this is its last unit.
+      expect(g.reserveLease(leaseId, 'door:x', 'stream', 'session', 'd', null, STREAM_READ_CAP_PER_DAY))
+        .toEqual({ ok: true, count: 1, cap: null });
+      // The 501st — under yet another verb, `recent` — refuses, and the
+      // refusal names the COMBINED count across all three verbs (500), not
+      // `recent`'s own count (300). A per-verb budget would still have room.
+      expect(g.reserveLease(leaseId, 'door:x', 'stream', 'recent', 'd', null, STREAM_READ_CAP_PER_DAY))
+        .toEqual({ ok: false, refusedBy: 'lease', count: STREAM_READ_CAP_PER_DAY, cap: STREAM_READ_CAP_PER_DAY });
+    });
   });
 });
 

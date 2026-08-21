@@ -171,9 +171,11 @@ export const EXCHANGE_SESSION_CAP = 6;
  * shape is an answer to that: sixty seconds of life, one single use, and no
  * standing of its own (the ticket buys a lookup of the lease, never a scope).
  *
- * `TICKET_MINT_CAP` bounds how many may be live for one lease at once. Ten is
- * generous for a reconnect storm and small enough that a stolen access token
- * cannot quietly manufacture a drawer full of upgrade credentials.
+ * `TICKET_MINT_CAP` bounds how many may be *outstanding* for one lease at
+ * once — minted, unexpired, and not yet spent. Ten is generous for a reconnect
+ * storm and small enough that a stolen access token cannot quietly manufacture
+ * a drawer full of upgrade credentials. A ticket that has been spent is no
+ * longer a credential anyone can use, so it stops counting (#36).
  */
 export const TICKET_PREFIX = 'jst_';
 export const TICKET_TTL_SECONDS = 60;
@@ -417,14 +419,27 @@ export class GovernorDO extends DurableObject {
     );
   }
 
-  private countSince(dayStart: number, service: string, verb: string, sub: string | null): number {
-    const row = sub === null
-      ? this.sql.exec(
-        'SELECT COUNT(*) AS n FROM ledger WHERE service = ? AND verb = ? AND allowed = 1 AND ts >= ?',
-        service, verb, dayStart).one()
-      : this.sql.exec(
-        'SELECT COUNT(*) AS n FROM ledger WHERE sub = ? AND service = ? AND verb = ? AND allowed = 1 AND ts >= ?',
-        sub, service, verb, dayStart).one();
+  // `verb: null` means "the whole service shares one budget" (#35: stream
+  // reads draw one combined 500/day allowance across recent/session/search,
+  // rather than 500 apiece). Every other caller today passes a concrete verb
+  // and keeps its own independent bucket — mail.send, mail.list, and so on
+  // are unaffected.
+  private countSince(dayStart: number, service: string, verb: string | null, sub: string | null): number {
+    const row = verb === null
+      ? (sub === null
+        ? this.sql.exec(
+          'SELECT COUNT(*) AS n FROM ledger WHERE service = ? AND allowed = 1 AND ts >= ?',
+          service, dayStart).one()
+        : this.sql.exec(
+          'SELECT COUNT(*) AS n FROM ledger WHERE sub = ? AND service = ? AND allowed = 1 AND ts >= ?',
+          sub, service, dayStart).one())
+      : (sub === null
+        ? this.sql.exec(
+          'SELECT COUNT(*) AS n FROM ledger WHERE service = ? AND verb = ? AND allowed = 1 AND ts >= ?',
+          service, verb, dayStart).one()
+        : this.sql.exec(
+          'SELECT COUNT(*) AS n FROM ledger WHERE sub = ? AND service = ? AND verb = ? AND allowed = 1 AND ts >= ?',
+          sub, service, verb, dayStart).one());
     return Number(row.n);
   }
 
@@ -468,7 +483,8 @@ export class GovernorDO extends DurableObject {
     const storedCap = metered ? Number(lease.send_cap_per_day) : null;
     const effectiveLeaseCap = tighter(leaseCap, storedCap);
 
-    const leaseUsed = effectiveLeaseCap === null ? 0 : this.countSince(dayStart, service, verb, sub);
+    const leaseCountVerb = service === 'stream' ? null : verb; // #35: one budget across stream verbs
+    const leaseUsed = effectiveLeaseCap === null ? 0 : this.countSince(dayStart, service, leaseCountVerb, sub);
     const globalUsed = this.countSince(dayStart, service, verb, null);
     const leaseOk = effectiveLeaseCap === null || leaseUsed < effectiveLeaseCap;
     const globalOk = globalCap === null || globalUsed < globalCap;
@@ -901,7 +917,8 @@ export class GovernorDO extends DurableObject {
    * *ticket* rows go, and an access row — expired or not — is none of this
    * predicate's business. A spent ticket is kept until it expires, because a
    * deleted row answers `unknown` and `unknown` is exactly what a reuse must
-   * not be allowed to sound like.
+   * not be allowed to sound like — but it is kept as evidence only, and no
+   * longer occupies a slot under the cap (#36).
    *
    * A retried mint after a lost response is simply a second row. Two live
    * tickets for one session is not a fault; each is single-use, each dies in a
@@ -917,9 +934,15 @@ export class GovernorDO extends DurableObject {
     this.sql.exec(
       "DELETE FROM lease_tokens WHERE lease_id = ? AND kind = 'ticket' AND expires <= ?", leaseId, now,
     );
+    // Unspent only (#36): the cap bounds how many tickets are *outstanding*,
+    // and a ticket that has been spent is outstanding no longer — its slot is
+    // free the instant the socket takes it, not sixty seconds later. The spent
+    // row is still retained until it expires, because a deleted row answers
+    // `unknown` and a replay must sound like `reused`. Retention justifies the
+    // row; it does not justify holding the slot.
     const live = Number(
       this.sql.exec(
-        "SELECT COUNT(*) AS n FROM lease_tokens WHERE lease_id = ? AND kind = 'ticket'", leaseId,
+        "SELECT COUNT(*) AS n FROM lease_tokens WHERE lease_id = ? AND kind = 'ticket' AND used = 0", leaseId,
       ).one().n,
     );
     if (live >= TICKET_MINT_CAP) return { status: 'cap' };
@@ -983,10 +1006,25 @@ export class GovernorDO extends DurableObject {
     const burn = this.sql.exec('UPDATE lease_tokens SET used = 1 WHERE hash = ? AND used = 0', hash);
     burn.toArray();
     if (burn.rowsWritten === 0) {
-      this.ledger(
-        now, sub, 'stream', 'ticket-reused',
-        `door=${doorName} socket ticket presented twice token_id=${tokenId}`, false,
-      );
+      // One alarm per burned token (#37): the first re-presentation IS the
+      // theft signal, and a retry loop replaying the same burned ticket must
+      // not grow the ledger without bound. Detection never dulls — every
+      // replay still answers `reused`; only the volume collapses.
+      //
+      // The key is the access-token handle the ticket was minted against, so
+      // the collapse is per browser session rather than per ticket: a second,
+      // *different* burned ticket on the same session finds the alarm already
+      // raised and adds no row of its own.
+      const already = Number(this.sql.exec(
+        "SELECT COUNT(*) AS n FROM ledger WHERE sub = ? AND verb = 'ticket-reused' AND detail LIKE ?",
+        sub, `%token_id=${tokenId}%`,
+      ).one().n);
+      if (already === 0) {
+        this.ledger(
+          now, sub, 'stream', 'ticket-reused',
+          `door=${doorName} socket ticket presented twice token_id=${tokenId}`, false,
+        );
+      }
       return { ok: false, error: 'reused' };
     }
 

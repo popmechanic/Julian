@@ -236,7 +236,29 @@ describe('consumeTicket', () => {
       expect(await g.consumeTicket(t)).toEqual({ ok: false, error: 'reused' });
       expect(await g.consumeTicket(t)).toEqual({ ok: false, error: 'reused' });
       expect(kindsOf(g, s.leaseId, 'ticket')[0].used).toBe(1);
-      expect(g.entries(10).filter((e) => e.verb === 'ticket-reused')).toHaveLength(2);
+      // One alarm, not one per replay (#37): the first re-presentation is the
+      // theft signal, and the second adds volume without adding information.
+      expect(g.entries(10).filter((e) => e.verb === 'ticket-reused')).toHaveLength(1);
+    });
+  });
+
+  test('a burned ticket ledgers its reuse once, not once per replay (#37)', async () => {
+    await withGovernor(async (g) => {
+      const s = await session(g);
+      const t = await ticket(g, s);
+      expect(await g.consumeTicket(t)).toMatchObject({ ok: true }); // legitimate spend
+      const replay = () => g.consumeTicket(t);
+      expect((await replay()).ok).toBe(false); // first re-presentation: the theft signal
+      await replay();
+      await replay(); // a retry loop hammering the same burned ticket
+      const reuseRows = g.entries(200).filter((r) => r.verb === 'ticket-reused');
+      expect(reuseRows).toHaveLength(1); // one alarm, not a runaway ledger
+      // The one row is the whole theft signal it always was.
+      expect(reuseRows[0]).toMatchObject({ sub: `lease:${s.leaseId}`, service: 'stream', allowed: 0 });
+      expect(reuseRows[0].detail).toContain(`token_id=${s.tokenId}`);
+      // Detection never dulls: volume collapses, the answer does not.
+      expect(await replay()).toEqual({ ok: false, error: 'reused' });
+      expect(g.entries(200).filter((r) => r.verb === 'ticket-reused')).toHaveLength(1);
     });
   });
 
@@ -318,6 +340,28 @@ describe('the ticket table is kind-scoped in both directions', () => {
       expect(kindsOf(g, s.leaseId, 'ticket')).toHaveLength(1);
       // Untouched: reaping expired access rows is the exchange mint's business.
       expect(kindsOf(g, s.leaseId, 'access')).toHaveLength(1);
+    });
+  });
+
+  test('a spent ticket frees its mint slot before the TTL (#36)', async () => {
+    await withGovernor(async (g) => {
+      const s = await session(g);
+      // Fill the cap, consuming each ticket as it is minted: every slot is
+      // spent, none expired.
+      for (let i = 0; i < TICKET_MINT_CAP; i++) {
+        const t = await g.mintTicket(s.leaseId, s.tokenId);
+        expect(t.status).toBe('ok');
+        if (t.status !== 'ok') throw new Error('unreachable');
+        expect(await g.consumeTicket(t.ticket)).toMatchObject({ ok: true });
+      }
+      // With spent tickets freeing their slots, the eleventh mint succeeds;
+      // before #36 it answered 'cap' for the whole sixty-second TTL.
+      expect((await g.mintTicket(s.leaseId, s.tokenId)).status).toBe('ok');
+      // The spent rows are *kept*, not deleted: retention is what makes a
+      // replay sound like `reused` instead of `unknown`. Ten spent, one live.
+      const rows = kindsOf(g, s.leaseId, 'ticket');
+      expect(rows).toHaveLength(TICKET_MINT_CAP + 1);
+      expect(rows.filter((r) => r.used === 1)).toHaveLength(TICKET_MINT_CAP);
     });
   });
 
