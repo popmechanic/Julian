@@ -15,28 +15,40 @@ export const SYNC_AUTH_HEADER = 'X-Sync-Auth';
 export const INTROSPECT_SECRET_HEADER = 'X-Introspect-Secret';
 export const SYNC_READ_SECRET_HEADER = 'X-Sync-Read-Secret';
 
-// POST /introspect response shape — snake_case on the wire, `active` plus
-// the optional fields present on an active answer. `door_name` is present
-// in every active shape (even for an exchange lease, where it names a
-// session rather than a door — see memory/adapters/gate-ledger.md).
-export interface IntrospectionWire {
-  active: boolean;
-  lease_id?: string;
-  door_name?: string;
-  scope?: string;
-  principal?: string;
-  subject?: string;
-  flow?: string;
-  token_id?: string;
-  exp?: number;
-  // By-handle form ONLY, and only alongside `active:false`: the one sub-reason
-  // an inactive by-handle answer carries. A hibernating socket re-auths by
-  // handle and cannot otherwise tell "the lease died" (WS 4001, terminal) from
-  // "the minting access token simply aged out" (WS 4004, re-exchange and come
-  // back). `reason:'token-expired'` is that distinction and nothing else —
-  // absent means the lease itself is dead.
-  reason?: 'token-expired';
-}
+// POST /introspect response shape — snake_case on the wire. `active:true`
+// carries the whole identity that either introspection writer in
+// broker/src/as/admin.ts (`activeLease`, `activeLegacy`) ever sends:
+// `lease_id`, `door_name`, `scope`, `principal`, and `flow` are unconditional
+// on both, so this shape makes them required rather than aspirational.
+// `door_name` in particular is present in every active shape — even for an
+// exchange lease, where it names a session rather than a door — see
+// memory/adapters/gate-ledger.md. Only `subject`, `token_id`, and `exp` are
+// ever omitted (when the register holds none to give), so only those stay
+// optional.
+export type IntrospectionWire =
+  | {
+      active: true;
+      lease_id: string;
+      door_name: string;
+      scope: string;
+      principal: string;
+      flow: string;
+      subject?: string;
+      token_id?: string;
+      exp?: number;
+    }
+  | {
+      active: false;
+      // By-handle form ONLY: the one sub-reason an inactive by-handle answer
+      // carries. A hibernating socket re-auths by handle and cannot otherwise
+      // tell "the lease died" (WS 4001, terminal) from "the minting access
+      // token simply aged out" (WS 4004, re-exchange and come back).
+      // `reason:'token-expired'` is that distinction and nothing else —
+      // absent means the lease itself is dead. Structural now, not just
+      // documented: no producer ever sets `active:true` alongside a `reason`,
+      // so the shape itself enforces the by-handle-only rule.
+      reason?: 'token-expired';
+    };
 
 // The internal handoff the sync router hands to its DO after auth. Set once
 // by the router, stripped unconditionally from every inbound request as the
@@ -52,25 +64,37 @@ export interface SyncAuthPayload {
   exp?: number;
 }
 
-// POST /consume-ticket response shape.
-export interface ConsumeTicketWire {
-  ok: boolean;
-  lease_id?: string;
-  token_id?: string;
-  subject?: string;
-  scope?: string;
-  flow?: string;
-  principal?: string;
-  // Expiry (seconds since the epoch) of the ACCESS TOKEN that minted this
-  // ticket — not of the ticket, which is spent by the time anyone reads this.
-  // It rides through to the socket attachment so a hibernating exchange socket
-  // can tell an aged token (WS 4004, re-exchange) from a revoked lease (WS
-  // 4001, terminal) even when the gate's by-handle answer carries no reason.
-  // Optional on purpose: a gate that does not send it costs the socket
-  // nothing but that local fallback, so the two workers deploy in any order.
-  exp?: number;
-  error?: string;
-}
+// The closed set of refusals GovernorDO.consumeTicket returns — read off its
+// own return statements (broker/src/governor.ts), never guessed. Anything a
+// caller reads off `error` on a refused ticket is one of these three and
+// nothing else.
+export type ConsumeTicketError = 'unknown' | 'expired' | 'reused';
+
+// POST /consume-ticket response shape. `lease_id`, `token_id`, `scope`,
+// `flow`, and `principal` are unconditional on the ok answer — the one
+// writer in broker/src/as/admin.ts (`consumeTicket`) always sends them off
+// `ConsumeTicketResult`'s required fields. Only `subject` (nullable on the
+// result) and `exp` are ever omitted.
+export type ConsumeTicketWire =
+  | {
+      ok: true;
+      lease_id: string;
+      token_id: string;
+      subject?: string;
+      scope: string;
+      flow: string;
+      principal: string;
+      // Expiry (seconds since the epoch) of the ACCESS TOKEN that minted this
+      // ticket — not of the ticket, which is spent by the time anyone reads
+      // this. It rides through to the socket attachment so a hibernating
+      // exchange socket can tell an aged token (WS 4004, re-exchange) from a
+      // revoked lease (WS 4001, terminal) even when the gate's by-handle
+      // answer carries no reason. Optional on purpose: a gate that does not
+      // send it costs the socket nothing but that local fallback, so the two
+      // workers deploy in any order.
+      exp?: number;
+    }
+  | { ok: false; error: ConsumeTicketError };
 
 // POST <sync>/internal/read/{recent|session|search} request body.
 export interface InternalReadRequest {
