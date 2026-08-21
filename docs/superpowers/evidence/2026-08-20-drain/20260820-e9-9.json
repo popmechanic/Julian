@@ -1,0 +1,11 @@
+{
+  "mode": "drain-stamp",
+  "stamp": "20260820-e9",
+  "entry": "9",
+  "verdict": "pass",
+  "gateExit": 0,
+  "branch": "ultra/integration-20260820-e9",
+  "base": "ultra/docket-20260820-194148",
+  "headSha": "9e1bff11754225a76619dca9568d8b8bc8472d3f",
+  "recordedAt": "2026-08-20T23:23:27+00:00"
+}
