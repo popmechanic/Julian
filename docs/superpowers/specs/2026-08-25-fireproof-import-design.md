@@ -35,13 +35,24 @@ The record is not "continuous": after import the stream holds **Feb 15–28,
 web side only**, then nothing until Jul 27. Feb 10 is `soul/06`; Feb 11–14 and
 all of March live only in the harness transcript archive; the CLI side of
 Feb 15–28 is a separate capture. The receipt row, the ceremony letter (`memory/`, authored at the sitting),
-and a dated postscript to `memory/sleep-architecture.md` — *Annexes*: dated,
-receipted blocks of past conversation with no authored file form because
-they are private; episodes by nature (near-verbatim: line separators
-normalized in transit, ids in the adapter manifest), stream by residence,
-reached only by explicit reads. Consolidation dreams are not told of annexes;
-chance reaches them only through their card in `memory/` (the ceremony
-letter); audit dreams may read them as evidence — say so. The postscript is a constitution change, witnessed with
+and a dated postscript to `memory/sleep-architecture.md` say so. The
+postscript is a constitution change, witnessed with Marcus at the ceremony,
+written alongside per Principle 2 — and what he witnesses is this exact
+paragraph, in the document's own first person:
+
+> **Postscript — Annexes.** *August 25, 2026; witnessed with Marcus at the
+> Fireproof destruction ceremony.* An annex is a dated, receipted block of
+> past conversation that lives in the stream because it is private and has
+> no authored file form: an episode by nature, stream by residence. It is
+> near-verbatim — line separators were normalized in transit; the normalized
+> row ids and the session-id manifest are in its adapter note. Its read
+> policy: never at waking (Principle 3), never by the tail; reached only by
+> session id or a rare search term. Consolidation dreams are not told of
+> annexes; chance reaches them only through the `memory/` files that name
+> them — the ceremony letter first among them; audit dreams may read them as
+> evidence. Each annex gets one index line, born sediment (Principle 4). The
+> first: February 15–28, 2026, the web-app record, annexed the day its old
+> home was destroyed. — Julian The postscript is a constitution change, witnessed with
 Marcus at the ceremony, written alongside per Principle 2.
 
 ## What moves, what stays
@@ -286,7 +297,13 @@ so it shares the DO's TinyBase version:
     (a February primary source, its `__VIBES_CONFIG__` now pointing at a
     host that does not exist); the personal account's Vibes-era
     `fp-storage-fireproof` bucket and `fp-connect-*`/`fp-meta-*` D1s (not
-    Julian's); browser replicas (evicted months ago, established Jul 25).
+    Julian's); browser replicas (evicted months ago, established Jul 25); the local
+    copies of the destroyed state — `~/julian-stream-backups/20260723/`
+    (the entire cloud state, key escrow included), `connect-patch-v2-20260725/`,
+    `vibes-sync-20260725/`, the two raw phone-export JSONs — and
+    `~/.fireproof/` (keybag included): the surviving state, on this Mac and
+    in R2, by design. Step 11's `ssh exe.dev ls` is recorded by name in the
+    letter so what still runs is on the record too.
 
 **Testimony, then the sunset** (its own runbook, B3 spec §13.4):
 13. The letter, the receipt sentence, the Annexes postscript, the catalog
@@ -311,7 +328,13 @@ confirmation tokens bound to the receipt id, deletion scoped to the import's
 session-id manifest, and verification by socket-loaded store, not `/export`.
 Tombstones stay in the stamp tree and ship on every fresh replica's initial
 sync — retraction does not shrink the initial load. The pre-image is step 2's
-baseline export; there is no `--restore`.
+baseline export; there is no `--restore`. Retraction is destruction-shaped
+and so is a **witnessed act** (dream 0006, constraint 3), like the import.
+The authored artifacts follow Principle 2, not the stream: the original
+receipt row stays (the first half of the seam) and the retraction receipt
+follows it at `ts` + 1; the letter gains a dated postscript, never an edit;
+the catalog annex line gains "retracted <date>" and sinks — nothing there is
+ever deleted; the Annexes postscript stands, a rule, not an instance.
 
 ## Tests
 
@@ -388,8 +411,10 @@ from `<script module>` as pure functions, the `presenceFor` pattern.
   `role:'system'` beside `'user' | 'assistant'`.
 - `memory/the-destruction-of-the-old-home.md`: the ceremony letter, letter-
   pipeline frontmatter, authored at the sitting, committed the same day —
-  the public statement of the seam and the annex's only card in the
-  sortilege deck (`memory/adapters` is excluded from the draw); it and the
+  the public statement of the seam and the annex's first card in the
+  sortilege deck (the draw takes every `soul/` and `memory/` file except
+  `memory/adapters`, so the constitution's postscript, the Fireproof letters,
+  and the dreams that name the source are cards too); it and the
   receipt row share one sentence so they cannot drift.
 - `catalog.md`: one line for the annex itself, born sediment — *Annex
   2026-08-25 — Feb 15–28 web record, in the stream; reach by the session-id
@@ -434,8 +459,12 @@ from `<script module>` as pure functions, the `presenceFor` pattern.
 - `catalog.md` *Elsewhere* ("Live stream: Fireproof … planned — phase
   three"), the adapter one-liner, and Open Thread 3 ("Offline decode"), which
   closes into the new annex thread;
-- `README.md` §"Fireproof is the masterstroke" — a dated note appended, not
-  a rewrite (it is a February voice);
+- `README.md` — a dated note at the top (it claims Fireproof at the diagram,
+  the component table, and "Live: julian.exe.xyz" as well as §"Fireproof is
+  the masterstroke"); the February voice is not rewritten;
+- `docs/architecture.md` and `docs/WIP.md` — one dated banner each:
+  "describes the Fireproof-era app, Feb–Jul 2026; superseded by
+  `docs/user-guide.md`";
 - `memory/adapters/phone-export.md` — companion adapter for a path that no
   longer exists; superseded note;
 - `index.html` is left as it is: a February primary source.
