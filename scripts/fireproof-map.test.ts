@@ -126,3 +126,19 @@ describe('buildReceipt', () => {
     expect(r).toEqual({ id: 'fireproof-import-2026-08-25', sessionId: 'fireproof:import', role: 'system', speakerName: 'the record', text: 'Annexed.', ts: 10, kind: 'system' });
   });
 });
+
+describe('mapMessage — v3 composite createdAt (conversation-id prefix, no zone suffix)', () => {
+  test('extracts the ISO substring from a composite createdAt and treats it as UTC (ids 019c6303-b6b7-7a86-b2b2-1ecb696b3153, 019c6304-b4dc-7db9-b16c-913cb6918d66, 019c6304-c395-74b4-b91d-a6fb2217750e, ledger zLXGWrCwxUtrdugkz)', () => {
+    const row = mapMessage(dd({ _id: '019c6303-b6b7-7a86-b2b2-1ecb696b3153', type: 'message', role: 'user', text: 'x',
+      createdAt: 'conv-mlnlwbif-pd1je0:2026-02-15T20:35:13' }));
+    expect(row?.ts).toBe(Date.UTC(2026, 1, 15, 20, 35, 13));
+  });
+  test('an ordinary ISO createdAt with a zone suffix still parses identically to before', () => {
+    const row = mapMessage(dd({ _id: 'ord', type: 'message', role: 'user', text: 'x', createdAt: '2026-02-20T10:00:00.000Z' }));
+    expect(row?.ts).toBe(Date.parse('2026-02-20T10:00:00.000Z'));
+  });
+  test('a createdAt with no ISO substring at all yields a non-finite ts', () => {
+    const row = mapMessage(dd({ _id: 'nope', type: 'message', role: 'user', text: 'x', createdAt: 'conv-mlnlwbif-pd1je0' }));
+    expect(Number.isFinite(row?.ts)).toBe(false);
+  });
+});

@@ -21,6 +21,24 @@ export function normalizeStrings<T>(v: T): T {
 
 const asStr = (x: unknown): string => (typeof x === 'string' ? x : '');
 
+// Some v3-era docs carry a composite createdAt: a conversation id prefixed onto an
+// ISO-8601 stamp with no zone suffix, e.g. 'conv-mlnlwbif-pd1je0:2026-02-15T20:35:13'.
+// Date.parse(whole string) is NaN for that shape — seen on ids 019c6303-b6b7-7a86-b2b2-1ecb696b3153,
+// 019c6304-b4dc-7db9-b16c-913cb6918d66, 019c6304-c395-74b4-b91d-a6fb2217750e (ledger zLXGWrCwxUtrdugkz).
+// Extract the first ISO-8601 timestamp substring and parse that instead; a stamp with
+// no zone suffix is taken as UTC. If no ISO substring is found, ts stays NaN (refused
+// downstream by hardChecks' finite-ts check).
+const ISO_TS_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/;
+function parseCreatedAt(raw: string): number {
+  const whole = Date.parse(raw);
+  if (Number.isFinite(whole)) return whole;
+  const match = raw.match(ISO_TS_RE);
+  if (!match) return NaN;
+  const stamp = match[0];
+  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(stamp);
+  return Date.parse(hasZone ? stamp : `${stamp}Z`);
+}
+
 export function mapMessage(d: DecodedDoc): MappedRow | null {
   const doc = normalizeStrings(d.doc);
   const blocks = Array.isArray(doc.blocks) ? (doc.blocks as Array<Record<string, unknown>>) : [];
@@ -36,7 +54,7 @@ export function mapMessage(d: DecodedDoc): MappedRow | null {
     ? asStr(doc.text)
     : blocks.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text as string).join('\n');
   if (!text.trim()) return null;
-  const ts = typeof doc.createdAt === 'number' ? doc.createdAt : Date.parse(asStr(doc.createdAt));
+  const ts = typeof doc.createdAt === 'number' ? doc.createdAt : parseCreatedAt(asStr(doc.createdAt));
   const session = doc.serverSessionId == null || doc.serverSessionId === '' ? 'nosession' : String(doc.serverSessionId);
   const row: MappedRow = { id: String(doc._id), sessionId: `fireproof:${d.ledger.ledgerId}:${session}`, role, speakerName, text, ts, kind: 'chat' };
   if (role === 'assistant' && blocks.length) row.content = blocks;
