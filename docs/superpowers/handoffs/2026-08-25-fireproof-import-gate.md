@@ -3,7 +3,7 @@
 **Run:** ultrapowers stamp `20260825-111206`, three rounds (`wf_baf03f7f-0c4`,
 redirect `wf_b554c5bb-a25`, redirect `wf_3cfb9276-36e`), 59 agents, 0 agent errors.
 **Integration branch:** `ultra/integration-20260825-111206` @ `c42c21f` (30 commits
-over `main` @ `e06d427`; 26 files, +1,848/−22). **Not merged** — awaiting Marcus.
+over `main` @ `e06d427`; 26 files, +1,848/−22). **MERGED to `main` @ `26ab848`** on Marcus's word ("proceed with your recs", 2026-08-25): the three acks given, option (a) chosen — 1,086 text-bearing rows; the 560 tool-call records stay in the archive, recoverable by procedure. Merged-result suite green. Residuals filed as #47 (manifest check clean, 44 rows). Next: Task 10 deploy → the ceremony.
 **Gate receipt:** `.claude/ultrapowers/run-20260825-111206/gate-receipt.json` —
 `verdict: NEEDS_ACK`; checks report-parse, lock, clean-tree, wave-merges, head-match,
 git-verified, ancestry, deliverables all `ok`; acceptance `suite`, `exit 0`.
