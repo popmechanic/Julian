@@ -21,3 +21,12 @@ describe('presenceFor', () => {
     expect(presenceFor(false, 3).buttonLabel).toBe('WAKE JULIAN');
   });
 });
+
+import { rowKind } from './ChatView.svelte';
+describe('rowKind', () => {
+  test('system rows are dividers; chat and unmarked rows are messages', () => {
+    expect(rowKind({ kind: 'system' })).toBe('divider');
+    expect(rowKind({ kind: 'chat' })).toBe('message');
+    expect(rowKind({})).toBe('message');
+  });
+});

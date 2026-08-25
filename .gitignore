@@ -36,3 +36,11 @@ pallid-mask/
 
 # Design sources (large binaries; originals kept locally)
 assets/*.psd
+
+# Archives and databases are never committed (Fireproof archive, exports, fixtures)
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.tar.gz
+*.car
+*.ndjson

@@ -9,6 +9,10 @@
     // A rest offers RESUME; only a true boundary offers WAKE JULIAN (#26).
     return { divider: messageCount > 0, buttonLabel: resumable ? 'RESUME' : 'WAKE JULIAN' };
   }
+
+  export function rowKind(row: { kind?: string }): 'divider' | 'message' {
+    return row.kind === 'system' ? 'divider' : 'message';
+  }
 </script>
 
 <script lang="ts">
@@ -39,7 +43,11 @@
     <div class="messages" bind:this={scroller}>
       {#each messages.ids as id (id)}
         {@const m = rowOf(id)}
-        <MessageBubble role={m.role} speakerName={m.speakerName} text={m.text} ts={m.ts} />
+        {#if rowKind(m) === 'divider'}
+          <div class="record-divider" title={new Date(m.ts).toISOString()}>— {m.text} —</div>
+        {:else}
+          <MessageBubble role={m.role} speakerName={m.speakerName} text={m.text} ts={m.ts} />
+        {/if}
       {/each}
       {#if processing}
         <div class="thinking">
@@ -107,6 +115,14 @@
   .dot.d2 { animation-delay: 0.2s; }
   .dot.d3 { animation-delay: 0.4s; }
   .asleep-divider {
+    text-align: center;
+    font-size: 0.85rem;
+    letter-spacing: 0.08em;
+    color: var(--j-gray-555);
+    padding: 14px 8px 6px;
+    user-select: none;
+  }
+  .record-divider {
     text-align: center;
     font-size: 0.85rem;
     letter-spacing: 0.08em;
