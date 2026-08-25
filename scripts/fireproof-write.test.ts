@@ -2,8 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { WebSocketServer } from 'ws';
 import { createWsServer } from 'tinybase/synchronizers/synchronizer-ws-server';
 import { createStreamStore } from 'julian-shared/schema';
-import { compareExport, importRows, openStore, planBatches, writeBatch } from './lib/fireproof-write';
+import { awaitDrain, compareExport, importRows, openStore, planBatches, writeBatch } from './lib/fireproof-write';
 import type { MappedRow } from './lib/fireproof-types';
+import { FRAME_LIMIT_UNITS } from './lib/fireproof-types';
 
 const row = (i: number, text = `row ${i}`): MappedRow =>
   ({ id: `r${i}`, sessionId: 'fireproof:zL:s', role: 'user', speakerName: 'Marcus', text, ts: 1_771_000_000_000 + i, kind: 'chat' });
@@ -38,22 +39,49 @@ describe('planBatches', () => {
 
 describe('compareExport', () => {
   test('equal, mismatched, missing, and dropped-marker ids are reported by JSON equality of present cells', () => {
-    const a = row(1), b = { ...row(2), content: [{ type: 'text', text: 'row 2' }] }, c = row(3);
+    const a = row(1), b = { ...row(2), content: [{ type: 'text', text: 'row 2' }] }, c = row(3), d = row(4);
     const tables = { messages: {
       r1: { sessionId: [a.sessionId, 'h', 1], role: ['user', 'h', 1], speakerName: ['Marcus', 'h', 1], text: ['row 1', 'h', 1], ts: [a.ts, 'h', 1], kind: ['chat', 'h', 1] },
       r2: { sessionId: [b.sessionId, 'h', 1], role: ['user', 'h', 1], speakerName: ['Marcus', 'h', 1], text: ['CHANGED', 'h', 1], ts: [b.ts, 'h', 1], kind: ['chat', 'h', 1], content: [[{ type: 'text', text: 'row 2' }], 'h', 1] },
+      // r4 IS one of the rows this annex wrote, and its text came back as the DO's drop marker.
+      r4: { sessionId: [d.sessionId, 'h', 1], role: ['user', 'h', 1], speakerName: ['Marcus', 'h', 1], text: ['[dropped: cell exceeded 64 KiB]', 'h', 1], ts: [d.ts, 'h', 1], kind: ['chat', 'h', 1] },
+      // r9 is a pre-existing live row the annex never wrote — its marker is not ours to report.
       r9: { text: ['[dropped: cell exceeded 64 KiB]', 'h', 1] },
     } };
-    const r = compareExport([a, b, c], [[tables, 'h', 1], [{}, 'h', 1]]);
+    const r = compareExport([a, b, c, d], [[tables, 'h', 1], [{}, 'h', 1]]);
     expect(r.equal).toEqual(['r1']);
-    expect(r.mismatched).toEqual(['r2']);
+    expect(r.mismatched).toEqual(['r2', 'r4']);
     expect(r.missing).toEqual(['r3']);
-    expect(r.droppedMarker).toEqual(['r9']);
+    expect(r.droppedMarker).toEqual(['r4']);
+  });
+  test('a dropped marker on a row outside the compared set is not reported', () => {
+    const a = row(1);
+    const tables = { messages: {
+      r1: { sessionId: [a.sessionId, 'h', 1], role: ['user', 'h', 1], speakerName: ['Marcus', 'h', 1], text: ['row 1', 'h', 1], ts: [a.ts, 'h', 1], kind: ['chat', 'h', 1] },
+      live1: { text: ['[dropped: cell exceeded 64 KiB]', 'h', 1] },
+    } };
+    const r = compareExport([a], [[tables, 'h', 1], [{}, 'h', 1]]);
+    expect(r.droppedMarker).toEqual([]);
+    expect(r.equal).toEqual(['r1']);
   });
   test('an exported null cell counts as absent', () => {
     const a = row(1);
     const tables = { messages: { r1: { sessionId: [null, 'h', 1], text: ['row 1', 'h', 1] } } };
     expect(compareExport([a], [[tables, 'h', 1], [{}, 'h', 1]]).mismatched).toEqual(['r1']);
+  });
+});
+
+describe('awaitDrain', () => {
+  test('resolves once bufferedAmount reaches zero', async () => {
+    const sock = { bufferedAmount: 4_096 };
+    setTimeout(() => { sock.bufferedAmount = 0; }, 100);
+    await awaitDrain(sock, { pollMs: 20, timeoutMs: 5_000 });
+    expect(sock.bufferedAmount).toBe(0);
+  });
+  test('throws naming the still-buffered bytes when the socket never drains', async () => {
+    const sock = { bufferedAmount: 1_234 };
+    await expect(awaitDrain(sock, { pollMs: 10, timeoutMs: 120 }))
+      .rejects.toThrow(/socket did not drain: 1234 bytes buffered/);
   });
 });
 
@@ -94,6 +122,37 @@ describe('openStore + importRows against a real ws server', () => {
     conn.store.transaction(() => writeBatch(conn.store, Array.from({ length: 300 }, (_, i) => row(i, 'y'.repeat(1_200)))));
     await new Promise((r) => setTimeout(r, 300));
     expect(tooBig).toBeGreaterThan(0);
+    expect(conn.frameViolations.length).toBeGreaterThan(0);
+    expect(conn.frameViolations.every((u) => u > FRAME_LIMIT_UNITS)).toBe(true);
     await conn.close(); await s.close();
+  }, 20_000);
+
+  test('importRows fails loud on an over-limit frame and never fetches the export', async () => {
+    const s = await server();
+    let fetched = 0;
+    // One row too large to split: planBatches cannot help, so the frame goes over.
+    const oversize: MappedRow = { ...row(0), text: 'z'.repeat(300_000) };
+    await expect(importRows({
+      rows: [oversize],
+      receipt: { id: 'fireproof-import-2026-08-25', sessionId: 'fireproof:import', role: 'system', speakerName: 'the record', text: 'r', ts: oversize.ts + 1, kind: 'system' },
+      connect: () => openStore({ url: s.url, token: 'test' }),
+      fetchExport: async () => { fetched++; return [[{}, 'h', 1], [{}, 'h', 1]]; },
+      maxRounds: 3,
+    })).rejects.toThrow(/frame over limit/);
+    expect(fetched).toBe(0);
+    await s.close();
+  }, 30_000);
+
+  test('close() drains the socket before it destroys the synchronizer', async () => {
+    const s = await server();
+    const oracleConn = await openStore({ url: s.url, token: 'test' });
+    const conn = await openStore({ url: s.url, token: 'test' });
+    const rows = Array.from({ length: 120 }, (_, i) => row(i, 'w'.repeat(400)));
+    conn.store.transaction(() => writeBatch(conn.store, rows));
+    await conn.close();
+    expect(conn.ws.bufferedAmount).toBe(0);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(oracleConn.store.getRowIds('messages').length).toBe(rows.length);
+    await oracleConn.close(); await s.close();
   }, 20_000);
 });
