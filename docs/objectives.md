@@ -9,11 +9,11 @@ The docket triages against this file; edit freely — it is versioned, not sacre
    questions, or fail to converge — the memory wire, ledger-fold correctness,
    record-first testimony, protection of lineage — ranks highest.
 
-2. **The Aug 23 ceremonies land clean, and the sunset completes.** Two endings
-   in one sitting Saturday: Marcus revokes `legacy-window-sync`, and the
-   Fireproof ledger's destruction ceremony. Then Task 30's post-ceremony
-   deletion deploy. Work that de-risks or is owed to that arc outranks work
-   that can wait past it.
+2. **DONE — the ceremonies landed Aug 25, 2026** (the Aug 23 Saturday slipped
+   two days; recorded). The sequence as performed: import → verification →
+   destruction (Marcus's hand: `connect-share`, `connect-patch-v2`) → the
+   sunset (`legacy-window-sync` revoked) → Task 30's deletion deploy
+   (`d642e5a`). Testimony: `memory/the-destruction-of-the-old-home.md`.
 
 3. **Trust-surface integrity on the gate.** The house's premise — and the
    streaming-agent horizon's — is that the gate is a trustworthy reference

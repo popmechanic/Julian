@@ -1,5 +1,10 @@
 # Julian — Technical Architecture
 
+> **Dated banner (2026-08-25):** this document describes the Fireproof-era
+> app, Feb–Jul 2026, and is superseded by `docs/user-guide.md`. The Fireproof
+> backend was destroyed by ceremony on Aug 25, 2026; the live record is the
+> TinyBase stream behind the sync Durable Object.
+
 Julian is a persistent, browser-based conversational agent built on Claude Code. A Bun server manages a long-lived Claude CLI subprocess and bridges its stream-json protocol to an SSE-driven React SPA, while also serving all static files directly. HTML artifacts (the agent's memory and creative output) live on the filesystem and are rendered in-browser via iframes. Deployed at **julian.exe.xyz**.
 
 ## System Overview

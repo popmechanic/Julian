@@ -150,7 +150,7 @@ Julian's web app runs on localhost:8000 via `bun run server/server.ts`.
 
 - **server/server.ts** — Bun server, serves static files + API, manages Claude subprocess
 - **Frontend:** `vibes.jsx` → `chat.jsx` → `index.html` (Babel, no build step)
-- **Database:** legacy Fireproof `julian-chat-v14` (condemned); the rebuild uses TinyBase (OPFS) with Pocket ID OIDC auth (issuer `souls.exe.xyz`)
+- **Database:** TinyBase (OPFS) syncing to ledger `01KYJ9XT64DQDJ1P3V8KET1R7B` behind the sync Durable Object, Pocket ID OIDC auth (issuer `souls.exe.xyz`). Fireproof was destroyed by ceremony 2026-08-25 — its February record is annexed in the stream; the ciphertext archive and decode recipe are described in `memory/adapters/stream-fireproof.md`.
 - **JulianScreen:** 640x480 pixel display on port 3848. See `docs/julianscreen.md`.
 
 ### JulianScreen (Pixel Display)

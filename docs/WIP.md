@@ -1,5 +1,8 @@
 # Work in Progress — PWA Parity Audit
 
+> **Dated banner (2026-08-25):** describes the Fireproof-era app, Feb–Jul
+> 2026; superseded by `docs/user-guide.md`.
+
 Service worker (`sw.js`) is active and registered, but the installed PWA version can diverge from the browser URL version. This documents the gaps and what needs to change.
 
 ---

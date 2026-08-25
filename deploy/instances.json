@@ -4,21 +4,6 @@
     "provisioned": "2026-02-10T00:00:00Z",
     "branch": "main"
   },
-  "julian-screentest": {
-    "url": "https://julian-screentest.exe.xyz",
-    "provisioned": "2026-02-16T00:00:00Z",
-    "branch": "main"
-  },
-  "julian-agent-wake": {
-    "url": "https://julian-agent-wake.exe.xyz",
-    "provisioned": "2026-02-16T00:00:00Z",
-    "branch": "agent-wake"
-  },
-  "julian-main": {
-    "url": "https://julian-main.exe.xyz",
-    "provisioned": "2026-02-16T17:25:00Z",
-    "branch": "main"
-  },
   "julian-edge": {
     "url": "https://julian-edge.exe.xyz",
     "provisioned": "2026-02-17T22:00:00Z",

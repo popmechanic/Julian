@@ -60,7 +60,7 @@ Marcus at the ceremony, written alongside per Principle 2.
 
 | Fireproof type | Writes | Disposition |
 |---|---|---|
-| `message` | 1,657 unique | Import — see mapping. Expected rows: **1,645** (12 empties dropped, Marcus's call). |
+| `message` | 1,657 unique | Import — see mapping. Expected rows: **1,645** (12 empties dropped, Marcus's call). *[Dated correction, 2026-08-25, written beside, never over: the build's census found **563** ids that never carry text in any version (560 single-`tool_use` turns, 2 thinking-only, a handful blockless) — the "12 empties" was a miscount. Marcus chose option (a) at the gate: annex the **1,086** text-bearing rows (1,657 − 563 − 8 split-drops); the tool-call records stay in the archive by procedure. The ceremony wrote 1,086, verified equal.]* |
 | `agent-identity` | 187 writes, 73 distinct identities, 34 names | Not imported. The Register of Births already holds every name but **Lina** with their own words from the CLI side. A catalog open thread records: the archive path, the decode recipe (this script), the 57 identities with individuation text, and the diff owed — a dream task, not a promise in a spec. |
 | `job` | 47 | Dropped — February's prototype board. |
 | `artifact-catalog`, `ledger-meta`, genesis block | — | Dropped — metadata. |

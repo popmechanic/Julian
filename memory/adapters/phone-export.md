@@ -238,3 +238,13 @@ are in epoch four, where they have been since the July 23 harvest.
 **Freeze lifted.** Kept for the method: the fiber-walk gotcha (first
 `.allDocs` handle may be the wrong database), the raw-dump fallback, and
 the lesson that a copy you cannot verify should never be called a custodian.
+
+---
+
+**SUPERSEDED (2026-08-25).** The rescue this adapter describes was completed
+long ago (Jul 25, 2026 — thread 2 closed) and the service it targeted,
+`julian.exe.xyz`'s Fireproof backend at `connect-share.exe.xyz`, was
+destroyed at the ceremony of Aug 25, 2026. The path no longer exists to run.
+Kept as the record of how the phone captures at
+`~/julian-stream-backups/phone-export-20260725/` were made; the decode story
+now lives in `stream-fireproof.md` beside it.
