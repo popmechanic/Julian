@@ -192,8 +192,10 @@ so it shares the DO's TinyBase version:
    stamps and hashes (the import writes no `undefined`, so plain
    `JSON.stringify` reproduces the decision exactly). Batches are sized
    **before commit**: each is built in a scratch `MergeableStore`, measured as
-   `JSON.stringify(scratch.getTransactionMergeableChanges()).length`, and
-   capped at ~128K units for margin; the synchronizer's `onSend` hook (4th
+   `JSON.stringify(scratch.getTransactionMergeableChanges()).length` **inside
+   the transaction (or a did-finish listener — after it returns the changes
+   are empty and the cap would be vacuous)**, and capped at ~128K units for
+   margin (~600 units per row with stamps → roughly eight batches); the synchronizer's `onSend` hook (4th
    argument; it receives the body object, after commit) is the assertion that
    fails the run if any real frame exceeded 262,144 units. `onIgnoredError`
    aborts the run. Before `--write`, the app changes below are **deployed to both VMs and
@@ -258,7 +260,7 @@ so it shares the DO's TinyBase version:
    0 dropped-marker hits, receipt present.
 5. `stream-export --label post-import` (`0600`): the archive shows the new row
    count and earliest `ts` Feb 15.
-6. The app, hard-reloaded on the Mac and on a phone: `streamDebug().messageCount`
+6. The app, hard-reloaded on the Mac and on a phone: `window.julianStream().messageCount`
    on the phone equals the server count (a fresh device's initial sync of a
    ~3 MB store crosses ~12 fragments through the same one-second-gap
    receiver; the pill would say synced after a silent drop — count, don't
@@ -291,21 +293,25 @@ so it shares the DO's TinyBase version:
     lines, the adapter note, the stale-document sweep below — one commit,
     pushed while Marcus is present.
 
-**Undo.** The annex is retractable, not irreversible: a full-house socket may
-`delRow`, and the gate ledger cannot tell a retract from a write, so the
-script must carry its own attribution and its own brake. `--retract` requires
-two independent tokens — `--confirm <receipt-id>` and env
-`FP_RETRACT=<receipt-id>` — both equal to the receipt row id read from
-`/export` (one import, one act; a typo refuses). Order: write the retraction
-receipt **first** ("retracting N rows of <receipt-id>"), then delete the rows
-of that import's session-id manifest (never the bare `fireproof:` prefix — a
-later annex under the same convention must not be swept), in the same
-batched frames as the write, then verify by `/export` that none remain and
-finish the receipt text — a crash mid-way leaves evidence, not a
-half-deleted annex with no note. There is no `--restore`; the pre-image
-restores only by a fresh import from the baseline file. Tested. Tombstones stay in the DO's stamp tree and the post-import export
-archives keep the plaintext — retraction removes the annex from the record's
-surface, not from history. The pre-image is step 2's baseline export.
+**Undo — designed, not built.** The annex is retractable in principle (a
+full-house socket may `delRow`), but the undo cannot be *verified* today:
+the DO's HTTP `/export` serializes a deleted cell `[undefined, hlc, hash]` as
+`null`, which the export's own round-trip reads back as a live row with
+schema defaults — reproduced on 9.2.0: ten deleted rows return as ten
+phantoms, `stream-export` would print them as messages, a restore from any
+post-deletion archive would resurrect them, and the foreign-id collision
+check would refuse the re-import the undo exists for. That is a pre-existing
+bug in the export path, filed as its own issue (export must emit tombstones
+distinguishably — the wire protocol's undefined marker, or a `deleted` list —
+and `stream-export`/`compareExport` must honor it). Until it is fixed,
+retraction is a **documented manual procedure**, not a mode: the same
+batched frames as the write (a 1,646-row delete is ~420K units — over the
+fragment threshold), a retraction receipt written first, two independent
+confirmation tokens bound to the receipt id, deletion scoped to the import's
+session-id manifest, and verification by socket-loaded store, not `/export`.
+Tombstones stay in the stamp tree and ship on every fresh replica's initial
+sync — retraction does not shrink the initial load. The pre-image is step 2's
+baseline export; there is no `--restore`.
 
 ## Tests
 
@@ -314,9 +320,9 @@ Runner: **`bun test`**, chained in `scripts/package.json` beside
 `bun:sqlite` and `Bun.*` are unavailable; the importer uses `bun:sqlite`).
 Dependencies added to `scripts/package.json`: `@ipld/car`, `@ipld/dag-cbor`,
 `multiformats` (base58btc, CID), `cborg`; AES-GCM via WebCrypto. The
-importer is one file exporting pure functions (`decryptLedger`, `mapMessage`,
-`selectVersions`, `collapseSplits`, `hardChecks`, `planBatches`, `compareExport`)
-with a thin CLI.
+importer is one file exporting pure functions (`decryptLedger`, `filterDocs`,
+`mapMessage`, `selectVersions`, `collapseSplits`, `hardChecks`, `buildReceipt`,
+`planBatches`, `compareExport`) with a thin CLI.
 
 `scripts/stream-import-fireproof.test.ts`, fixtures generated in-test (a key
 from `crypto.getRandomValues`, a synthetic CAR encrypted the same way — never
@@ -344,9 +350,13 @@ source constant):
 - the whole mapped batch round-trips through `createStreamStore()` with
   `getMergeableContent()` succeeding;
 - per-id equality report logic against a simulated export;
-- `--retract` removes exactly the `fireproof:` rows and the receipt and
-  writes a retraction receipt;
-- `stream-export` refuses to overwrite and honors `--label`.
+- the write path (batching, `onSend` assertion, retry from a fresh store)
+  against an in-process `createWsServer` harness — not pure, but real;
+- cleanup on the refusal path, as a subprocess test.
+
+Not covered by tests, verified by hand in the runbook: `stream-export`'s
+overwrite refusal and `--label` (the script is top-level with no argv
+parsing; refactoring it is not this change), and the destruction steps.
 
 ## App changes in the same change (small, tested)
 
@@ -363,6 +373,12 @@ from `<script module>` as pure functions, the `presenceFor` pattern.
   a speaker; tested.
 - `selectTail`: exclude rows whose `sessionId` starts with `fireproof:`;
   case added to `tail.test.ts`.
+- `store.ts`: the app's `createWsSynchronizer` request timeout rises from 5 s
+  to ≥ 60 s and `onIgnoredError` logs — a fresh device's initial sync of the
+  larger store (~1.1M UTF-16 units of row diff) must finish inside one
+  request, the client rejects on the total timeout regardless of fragment
+  progress, and the pill turns green on socket open; the importer's
+  synchronizer uses the same timeout.
 - `scripts/stream-export.ts`: write exports `0600`, directory `0700`.
 
 ## Housekeeping in the same change
