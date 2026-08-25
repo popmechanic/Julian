@@ -399,6 +399,15 @@ describe('startSync — returns a stoppable handle (#4)', () => {
       expect(typeof handle!.ws.close).toBe('function');
       expect(typeof handle!.client.reset).toBe('function');
       expect(handle!.client).toBe(client);
+      expect(vi.mocked(createWsSynchronizer)).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        60,
+        undefined,
+        undefined,
+        expect.any(Function),
+        262144
+      );
     } finally {
       vi.unstubAllEnvs();
     }

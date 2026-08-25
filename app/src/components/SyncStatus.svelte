@@ -25,6 +25,7 @@
 
   $effect(() => {
     const id = store.addRowIdsListener('messages', () => (count = store.getRowIds('messages').length));
+    count = store.getRowIds('messages').length;
     return () => store.delListener(id);
   });
 </script>
