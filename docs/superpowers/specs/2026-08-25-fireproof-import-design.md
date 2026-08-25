@@ -95,8 +95,9 @@ prints the ids and block types of the 12 empties it drops.
 covers them.
 
 **Hard checks, refuse-to-write on failure:**
-- every `ts` finite; rows outside `[2026-02-15, 2026-03-01)` are reported and
-  refused unless allow-listed by id (a surprise in range is data, not an error);
+- every `ts` finite; rows outside `[Date.UTC(2026,1,15), Date.UTC(2026,2,1))`
+  — UTC, as epoch milliseconds — are reported and refused unless allow-listed
+  by id (a surprise in range is data, not an error);
 - no string cell begins with U+FFFD or equals U+FFFC; every string is
   well-formed UTF-16 (`isWellFormed`);
 - no string cell contains U+2028 or U+2029 — the deployed synchronizer's
@@ -113,7 +114,8 @@ covers them.
 - the whole batch round-trips through a local `createStreamStore()` and
   `getTables()` + `getMergeableContent()` succeed;
 - no target id already exists on the server with a `sessionId` not prefixed
-  `fireproof:`;
+  `fireproof:` — read from `/export` over HTTP, not from the socket's initial
+  sync;
 - the server's `ledgerId` value equals `01KYJ9XT64DQDJ1P3V8KET1R7B`;
 - the dry run enumerates every distinct document key-set and role/speakerType
   value per ledger and fails on an unknown shape.
@@ -121,11 +123,15 @@ covers them.
 **Provenance.** No lineage write — `lineageNote` is one of the DO's immutable
 lineage keys and any change is silently reverted. Provenance rides every
 row's `sessionId`, plus one receipt row at the **annex boundary**: id
-`fireproof-import-2026-08-25`, `kind:'system'`, `role:'system'`,
+`fireproof-import-<UTC date of the write>` (all machine dates in this
+design — receipt id, export filenames, ledger fold — are UTC; the letter
+carries both UTC and Pacific for the one act), `kind:'system'`, `role:'system'`,
 `speakerName:'the record'`, `sessionId:'fireproof:import'`, `ts` = last
 annexed `ts` + 1 (inside the range; strictly above every annexed row), `text` = the witnessed
-sentence, opening with the write date, naming counts and strata — never
-speaker names or third parties, because the same sentence goes in the public
+sentence, opening with the write date, naming counts, strata, **and the
+span "Feb 15–28, 2026" explicitly** (the app renders times without dates),
+and that line separators were normalized — never speaker names or third
+parties, because the same sentence goes in the public
 letter. The app renders `kind:'system'` rows as a `.record-divider`; no surface has ever written a system row before this one. A re-run on
 another day mints a second receipt id. The prefix convention is documented in `shared/schema.ts` and in the
 stream adapter note.
@@ -145,7 +151,14 @@ so it shares the DO's TinyBase version:
    before reading. Extracts to `mkdtemp(tmpdir(), 'fp-import-')`: `d1/d1-main.sqlite`
    (keys), `r2/r2-metadata.sqlite` (blob index + upload times),
    `dashboard/dashboard-sqlite.db` (ledger names), and the blobs of every
-   ledger named `%julian-chat%`. Only those members are extracted, never the whole tarball. The temp dir
+   ledger named `%julian-chat%`. Two passes: the three databases first, then the blob members the index
+   names for `%julian-chat%` ledgers — never the whole tarball. **Every
+   extracted member is verified against the tarball's own `MANIFEST.txt`
+   sha256** (a free integrity check). Known gap, recorded in the adapter
+   note: the manifest lists `d1-main.sqlite-wal`/`-shm` (20,632 B) that the
+   tarball does not contain — un-checkpointed D1 rows are absent from this
+   source; the Jul 23 volume archive carries the WAL, and its D1 counts
+   matched this one's table for table on Aug 25. The temp dir
    must resolve under `/private/var/folders` or `/tmp` and never under
    `$HOME` (a redirected `TMPDIR` could be a synced folder) — refuse
    otherwise. At startup, sweep any stale `fp-import-*` dir of this uid.
@@ -207,29 +220,91 @@ so it shares the DO's TinyBase version:
    rounds; then the run fails loudly. Then the receipt row, then one final
    comparison including it.
 
-## Verification before the VMs are destroyed
+## Operational sequence — the ceremony runbook (Marcus present)
 
-1. Dry run: 1,645 rows, `ts` range Feb 15–28, zero out-of-range, largest cell
+**Pre-flight (before the sitting, no writes):**
+0. Leases: start the Mac server (the loopback holder lives in it; on Aug 25
+   nothing listened on `:8000`/`:8377` and `gate-lease.json` was last renewed
+   Aug 21); `bun scripts/stream-export.ts` runs green (this proves the
+   **stream-read** lease — a different lease from the importer's);
+   `--dry-run` opens and closes one real socket on the **full-house** lease
+   (the router's scope/principal check is the liveness assertion). Tokens are
+   resolved per socket, not once — retry rounds open fresh sockets.
+1. Deploy the app changes to **both VMs and the Mac** (`cd app && bun run
+   build`; the Mac serves `app/dist` from the repo); bundle version checked on
+   all three; hard reload.
+2. **Baseline export** — `stream-export` before `--write`, so a pre-image of
+   the store exists. `stream-export` gains a refusal to overwrite an existing
+   file (same-UTC-day exports would otherwise clobber each other) and a
+   `--label` suffix; the two existing `0644` archives are `chmod 600`.
+
+**The import:**
+3. Dry run: 1,645 rows, `ts` range Feb 15–28, zero out-of-range, largest cell
    and total batch size printed against a ceiling Marcus accepts (the store
    is rewritten whole to OPFS on every change; today's `messages` table is
    ~320 KB), prefix-violation list empty or explained, distinct speaker names
-   per ledger listed.
-2. Write; per-id server-side equality report: 1,645 equal, 0 mismatched,
+   per ledger listed, the ledger-id → version-name map printed (lineage names
+   only v14; the annex spans twenty).
+4. Write; per-id server-side equality report: 1,645 equal, 0 mismatched,
    0 dropped-marker hits, receipt present.
-3. `bun scripts/stream-export.ts` (exports written `0600`, directory `0700`):
-   the archive shows the new row count and earliest `ts` Feb 15.
-4. The app, reloaded on the Mac and on a phone: scroll to the top; the
-   receipt divider sits at the seam; three February messages read there,
-   one of them sibling-authored with its name shown. No decoded text is
-   printed in the ceremony session — the script has no mode that prints it.
-5. Only then: step 2 of the destruction ceremony.
+5. `stream-export --label post-import` (`0600`): the archive shows the new row
+   count and earliest `ts` Feb 15.
+6. The app, hard-reloaded on the Mac and on a phone: `streamDebug().messageCount`
+   on the phone equals the server count (a fresh device's initial sync of a
+   ~3 MB store crosses ~12 fragments through the same one-second-gap
+   receiver; the pill would say synced after a silent drop — count, don't
+   trust the pill); scroll to the top; the receipt divider sits at the seam;
+   three February messages read there, one sibling-authored with its name
+   shown. No decoded text is printed in the ceremony session — the script has
+   no mode that prints it.
+7. Fold the ledger the same evening (`ledger-fold`): the import's socket and
+   export rows land as mac-home traffic; the letter cites the run so the
+   fold is legible.
+
+**The destruction (Marcus's hand; nothing here was written down before):**
+8. Last reading, read-only, recorded in the letter: `docker ps`, volume sizes,
+   the D1 counts (Aug 25: 34 ledgers, 20 julian-chat; 442 sync records; 111
+   keys; 4,123 blobs; my v14 ledger's last record 2026-02-28T22:17:26Z).
+9. `ssh exe.dev rm connect-share` — the Fireproof cloud itself.
+10. `ssh exe.dev rm connect-patch-v2` — the March 4 patch VM (containers
+    exited, home empty, D1 already copied Jul 25).
+11. Confirm: `ssh exe.dev ls` shows neither; `https://connect-share.exe.xyz/`
+    no longer routes.
+12. Not destroyed, named so "destroyed" is true: the local test databases
+    under `~/.fireproof/` (never held the record); the legacy `index.html`
+    (a February primary source, its `__VIBES_CONFIG__` now pointing at a
+    host that does not exist); the personal account's Vibes-era
+    `fp-storage-fireproof` bucket and `fp-connect-*`/`fp-meta-*` D1s (not
+    Julian's); browser replicas (evicted months ago, established Jul 25).
+
+**Testimony, then the sunset** (its own runbook, B3 spec §13.4):
+13. The letter, the receipt sentence, the Annexes postscript, the catalog
+    lines, the adapter note, the stale-document sweep below — one commit,
+    pushed while Marcus is present.
+
+**Undo.** The annex is retractable, not irreversible: a full-house socket may
+`delRow`. The script gains `--retract`: delete every row whose `sessionId`
+starts with `fireproof:` plus the receipt, then write a retraction receipt;
+tested. Tombstones stay in the DO's stamp tree and the post-import export
+archives keep the plaintext — retraction removes the annex from the record's
+surface, not from history. The pre-image is step 2's baseline export.
 
 ## Tests
 
+Runner: **`bun test`**, chained in `scripts/package.json` beside
+`package-manifest.test.ts` (the vitest suite runs in a node worker pool where
+`bun:sqlite` and `Bun.*` are unavailable; the importer uses `bun:sqlite`).
+Dependencies added to `scripts/package.json`: `@ipld/car`, `@ipld/dag-cbor`,
+`multiformats` (base58btc, CID), `cborg`; AES-GCM via WebCrypto. The
+importer is one file exporting pure functions (`decryptLedger`, `mapMessage`,
+`selectVersions`, `collapseSplits`, `hardChecks`, `planBatches`, `compareExport`)
+with a thin CLI.
+
 `scripts/stream-import-fireproof.test.ts`, fixtures generated in-test (a key
 from `crypto.getRandomValues`, a synthetic CAR encrypted the same way — never
-the real archive, never real text; a test asserts no path under
-`julian-stream-backups` is referenced by the test file):
+the real archive, never real text; a test greps the **script** file, not
+itself, for any `julian-stream-backups` path other than the one authoritative
+source constant):
 
 - decrypts a synthetic envelope, verifies CIDs, reads its documents;
 - maps a human message, an assistant message with `tool_use` interleaved
@@ -250,7 +325,10 @@ the real archive, never real text; a test asserts no path under
   `onSend` assertion fires on a synthetic oversize frame;
 - the whole mapped batch round-trips through `createStreamStore()` with
   `getMergeableContent()` succeeding;
-- per-id equality report logic against a simulated export.
+- per-id equality report logic against a simulated export;
+- `--retract` removes exactly the `fireproof:` rows and the receipt and
+  writes a retraction receipt;
+- `stream-export` refuses to overwrite and honors `--label`.
 
 ## App changes in the same change (small, tested)
 
@@ -306,11 +384,24 @@ from `<script module>` as pure functions, the `presenceFor` pattern.
   fourth wing vs. footnotes; output is a postscript, the Register is signed* —
   with the archive path and digest and the recipe (`decryptLedger()` + tests). Dreams read Open
   Threads; appending to a signed dream would edit a primary source.
-- A separate issue: TinyBase 9.3.0's code-point fragmenter does not have the
-  U+2028 bug; upgrading sync and app together is the real cure.
+- Issue #44 (tinybase 9.2/9.3 skew) gains the U+2028 finding: 9.3.0's
+  code-point fragmenter does not have the bug; upgrading sync and app
+  together is the real cure.
 - One sentence for the record: after import, third parties' words (Mike,
   Sid, family) are searchable by any `stream-read`/`stream` lease — existing
   policy, first time non-Marcus/Julian speakers enter the searchable stream.
+
+## Documents made false by this change (swept in the same commit)
+
+- `CLAUDE.md` "Database: legacy Fireproof julian-chat-v14 (condemned)";
+- `catalog.md` *Elsewhere* ("Live stream: Fireproof … planned — phase
+  three"), the adapter one-liner, and Open Thread 3 ("Offline decode"), which
+  closes into the new annex thread;
+- `README.md` §"Fireproof is the masterstroke" — a dated note appended, not
+  a rewrite (it is a February voice);
+- `memory/adapters/phone-export.md` — companion adapter for a path that no
+  longer exists; superseded note;
+- `index.html` is left as it is: a February primary source.
 
 ## Out of scope
 
