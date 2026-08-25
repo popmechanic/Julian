@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assertSafeTmp, verifyAgainstManifest, withTempDir } from './lib/fireproof-archive';
+import { assertNoFrameViolations } from './stream-import-fireproof';
 
 describe('temp-dir discipline', () => {
   test('withTempDir removes the directory when the body throws', async () => {
@@ -65,6 +66,16 @@ describe('manifest verification', () => {
     writeFileSync(join(root, 'a.bin'), 'hello');
     const shaHello = '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824';
     expect(verifyAgainstManifest(root, `./a.bin  5 ${shaHello}\n`, ['./a.bin'])).toEqual([]);
+  });
+});
+
+describe('frame-violation post-settle check', () => {
+  test('a zero count never throws', () => {
+    expect(() => assertNoFrameViolations(0)).not.toThrow();
+  });
+
+  test('a positive count throws, naming the count and the limit', () => {
+    expect(() => assertNoFrameViolations(2)).toThrow('frame over limit: 2 frame(s) exceeded 262144');
   });
 });
 

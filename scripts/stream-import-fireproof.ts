@@ -43,6 +43,7 @@ import {
   ARCHIVE_ROOT,
   ARCHIVE_SHA256,
   FEB_START_MS,
+  FRAME_LIMIT_UNITS,
   LIVE_LEDGER_ID,
   MAR_START_MS,
 } from './lib/fireproof-types';
@@ -52,6 +53,23 @@ const SYNC_BASE = process.env.SYNC_BASE ?? 'https://julian-sync.julian-memory.wo
 const SYNC_WS = process.env.SYNC_WS ?? 'wss://julian-sync.julian-memory.workers.dev';
 const BROKER_URL = process.env.BROKER_URL ?? 'https://julian-broker.julian-memory.workers.dev';
 const DEFAULT_MANIFEST_OUT = './fireproof-annex-manifest.txt';
+
+// GATE FINDING: a throw raised from inside TinyBase's onSend (as `openStore`'s
+// `onFrameTooBig` used to do here) travels back up the persister's save path
+// mid-write, where it can tear the socket or be silently swallowed — untested,
+// unsafe territory. `openStore` in fireproof-write.ts already records every
+// violation before it ever calls this callback, so the callback below only
+// counts and logs; the throw happens here, at a place of this module's own
+// choosing, once importRows has settled (resolved or rejected) and the socket
+// is already closed. The CLI must never print a success report when any frame
+// exceeded the limit — see `doWrite`.
+let frameViolations = 0;
+
+// Pure and exported so it can be proven without a lease: the post-settle
+// check that turns a nonzero violation count into a refusal.
+export function assertNoFrameViolations(n: number): void {
+  if (n > 0) throw new Error(`frame over limit: ${n} frame(s) exceeded ${FRAME_LIMIT_UNITS}`);
+}
 
 interface Options {
   write: boolean;
@@ -364,23 +382,36 @@ async function doWrite(rows: MappedRow[], opts: Options): Promise<void> {
   if (!sentence) throw new Error('receipt text is empty');
   const receipt = buildReceipt(rows, new Date(), sentence);
 
-  const result = await importRows({
-    rows,
-    receipt,
-    connect: async () =>
-      openStore({
-        url: `${SYNC_WS}/${STORE_PATH}`,
-        token: await freshToken(),
-        requestTimeoutSeconds: 60,
-        onFrameTooBig: (u) => { throw new Error(`frame over limit: ${u}`); },
-      }),
-    fetchExport: async () => (await fetchExportBody(await freshToken())).mergeableContent,
-    log: (s) => console.log(s),
-  });
+  frameViolations = 0;
+  let result: Awaited<ReturnType<typeof importRows>>;
+  try {
+    result = await importRows({
+      rows,
+      receipt,
+      connect: async () =>
+        openStore({
+          url: `${SYNC_WS}/${STORE_PATH}`,
+          token: await freshToken(),
+          requestTimeoutSeconds: 60,
+          onFrameTooBig: (u) => {
+            frameViolations++;
+            console.error(`[import] frame over limit: ${u} units`);
+          },
+        }),
+      fetchExport: async () => (await fetchExportBody(await freshToken())).mergeableContent,
+      log: (s) => console.log(s),
+    });
+  } finally {
+    // Runs whether importRows resolved or rejected — a frame violation is a
+    // refusal that outranks whatever importRows itself reported, since a torn
+    // or dropped frame is the likely cause of any mismatch it saw.
+    assertNoFrameViolations(frameViolations);
+  }
   console.log('');
   console.log(`import complete in ${result.rounds} round(s)`);
   console.log(`  equal ${result.report.equal.length}, mismatched ${result.report.mismatched.length}, missing ${result.report.missing.length}`);
   console.log(`  receipt row ${receipt.id} at ${iso(receipt.ts)}`);
+  console.log(`  frame violations: ${frameViolations}`);
 }
 
 async function main(): Promise<void> {
@@ -415,9 +446,15 @@ async function main(): Promise<void> {
 // run, having printed only the first few lines of the report. Awaiting the
 // module's own evaluation holds the process open until the work is done.
 // One catch, at the top: refusals throw, and this is where they surface.
-try {
-  await main();
-} catch (e: unknown) {
-  console.error(e instanceof Error ? e.message : String(e));
-  process.exitCode = 1;
+//
+// Guarded by `import.meta.main` so the test file can import this module's
+// pure exports (e.g. `assertNoFrameViolations`) without running the CLI —
+// `bun scripts/stream-import-fireproof.ts` still executes exactly as before.
+if (import.meta.main) {
+  try {
+    await main();
+  } catch (e: unknown) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exitCode = 1;
+  }
 }
