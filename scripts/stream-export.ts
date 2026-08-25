@@ -6,7 +6,7 @@
 // schema'd store, then archives it (JSON + .sha256) under the ledger's folder.
 import { getHash } from 'tinybase';
 import { createStreamStore, STORE_PATH } from 'julian-shared/schema';
-import { mkdirSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { resolveAccessToken } from './lib/lease-client';
@@ -58,11 +58,14 @@ const probe = createStreamStore('export-probe');
 probe.setMergeableContent(body.mergeableContent as never);
 const messageCount = probe.getRowIds('messages').length;
 
+const label = (() => { const i = process.argv.indexOf('--label'); return i >= 0 ? process.argv[i + 1] : ''; })();
+if (label && !/^[a-z0-9-]{1,32}$/.test(label)) { console.error('EXPORT FAILED: --label must match [a-z0-9-]{1,32}'); process.exit(1); }
 const dir = `${process.env.EXPORT_DIR ?? `${process.env.HOME}/julian-stream-backups/tinybase`}/${body.ledgerId ?? 'unborn'}`;
-mkdirSync(dir, { recursive: true });
-const file = `${dir}/${body.exportedAt.slice(0, 10)}.json`;
+mkdirSync(dir, { recursive: true, mode: 0o700 });
+const file = `${dir}/${body.exportedAt.slice(0, 10)}${label ? `-${label}` : ''}.json`;
+if (existsSync(file)) { console.error(`EXPORT REFUSED: ${file} exists — pass --label to write a second export today`); process.exit(1); }
 const payload = JSON.stringify(body, null, 2);
-await Bun.write(file, payload);
+writeFileSync(file, payload, { mode: 0o600 });
 const sha = new Bun.CryptoHasher('sha256').update(payload).digest('hex');
-await Bun.write(`${file}.sha256`, `${sha}  ${file.split('/').pop()}\n`);
+writeFileSync(`${file}.sha256`, `${sha}  ${file.split('/').pop()}\n`, { mode: 0o600 });
 console.log(`VERIFIED export: ${messageCount} messages, hash ${body.contentHash}, → ${file}`);
