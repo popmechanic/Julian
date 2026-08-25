@@ -63,12 +63,20 @@ describe('fireproof decode', () => {
     const key = rawKey();
     const dir = mkdtempSync(join(tmpdir(), 'fp-decode-'));
     writeFileSync(join(dir, 'runt'), (await buildEncryptedCar([docs[0]], key)).slice(0, 40));
+    // Collect the callback rather than asserting inside it: an assertion that only runs
+    // from within onSkip is verified by accident — it passes vacuously if onSkip never fires.
+    const skips: Array<[string, string]> = [];
     const out = await decryptLedger({
       blobsDir: dir, blobs: [{ blobId: 'runt', uploaded: 1 }],
       keys: await importKeys([base58btc.encode(key)]),
       ledger: { ledgerId: 'z', name: 'n', tenantId: 't' },
-      onSkip: (blobId, reason) => { expect(blobId).toBe('runt'); expect(reason).toMatch(/truncated|end of data|not enough data/i); },
+      onSkip: (blobId, reason) => { skips.push([blobId, reason]); },
     });
     expect(out).toEqual([]);
+    expect(skips.length).toBe(1);
+    expect(skips[0][0]).toBe('runt');
+    // cborg's truncation message, observed rather than assumed (the plan guessed
+    // "Unexpected end of data"); asserted exactly so a reworded upstream is not silently absorbed.
+    expect(skips[0][1]).toBe('CBOR decode error: not enough data for type');
   });
 });
