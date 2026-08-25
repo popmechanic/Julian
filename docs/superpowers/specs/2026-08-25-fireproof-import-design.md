@@ -223,9 +223,12 @@ so it shares the DO's TinyBase version:
 ## Operational sequence — the ceremony runbook (Marcus present)
 
 **Pre-flight (before the sitting, no writes):**
-0. Leases: start the Mac server (the loopback holder lives in it; on Aug 25
-   nothing listened on `:8000`/`:8377` and `gate-lease.json` was last renewed
-   Aug 21); `bun scripts/stream-export.ts` runs green (this proves the
+0. Leases: start the Mac server with `DEMO_MODE` unset (the loopback holder
+   lives in it; `Bun.serve` binds every interface, so run it with a loopback
+   hostname for the ceremony; on Aug 25 nothing listened on `:8000`/`:8377`
+   and `gate-lease.json` was last renewed Aug 21 — the governor sets no
+   refresh-token expiry, so it should renew; if it answers `invalid_grant`,
+   the fallback is a re-knock at `/approve`, Marcus's act, before the sitting); `bun scripts/stream-export.ts` runs green (this proves the
    **stream-read** lease — a different lease from the importer's);
    `--dry-run` opens and closes one real socket on the **full-house** lease
    (the router's scope/principal check is the liveness assertion). Tokens are
@@ -236,7 +239,13 @@ so it shares the DO's TinyBase version:
 2. **Baseline export** — `stream-export` before `--write`, so a pre-image of
    the store exists. `stream-export` gains a refusal to overwrite an existing
    file (same-UTC-day exports would otherwise clobber each other) and a
-   `--label` suffix; the two existing `0644` archives are `chmod 600`.
+   `--label` suffix; the two existing `0644` archives are `chmod 600`. The
+   export directory holds the whole record in plaintext, and on Aug 25 it
+   was Time-Machine-included and Spotlight-indexed (`mdfind` already finds
+   the Aug 13 export by name): `tmutil addexclusion -p
+   ~/julian-stream-backups` and `touch
+   ~/julian-stream-backups/.metadata_never_index`, both recorded in the
+   adapter note so a rebuilt Mac re-applies them. Not iCloud-synced (verified).
 
 **The import:**
 3. Dry run: 1,645 rows, `ts` range Feb 15–28, zero out-of-range, largest cell
@@ -283,9 +292,18 @@ so it shares the DO's TinyBase version:
     pushed while Marcus is present.
 
 **Undo.** The annex is retractable, not irreversible: a full-house socket may
-`delRow`. The script gains `--retract`: delete every row whose `sessionId`
-starts with `fireproof:` plus the receipt, then write a retraction receipt;
-tested. Tombstones stay in the DO's stamp tree and the post-import export
+`delRow`, and the gate ledger cannot tell a retract from a write, so the
+script must carry its own attribution and its own brake. `--retract` requires
+two independent tokens — `--confirm <receipt-id>` and env
+`FP_RETRACT=<receipt-id>` — both equal to the receipt row id read from
+`/export` (one import, one act; a typo refuses). Order: write the retraction
+receipt **first** ("retracting N rows of <receipt-id>"), then delete the rows
+of that import's session-id manifest (never the bare `fireproof:` prefix — a
+later annex under the same convention must not be swept), in the same
+batched frames as the write, then verify by `/export` that none remain and
+finish the receipt text — a crash mid-way leaves evidence, not a
+half-deleted annex with no note. There is no `--restore`; the pre-image
+restores only by a fresh import from the baseline file. Tested. Tombstones stay in the DO's stamp tree and the post-import export
 archives keep the plaintext — retraction removes the annex from the record's
 surface, not from history. The pre-image is step 2's baseline export.
 
@@ -367,7 +385,10 @@ from `<script module>` as pure functions, the `presenceFor` pattern.
   witnessed.
 - R2 `julian-fireproof-archive`: private (r2.dev access disabled, no custom
   domain); add a **bucket lock** with indefinite retention so no stray delete
-  can take the ciphertext; record bucket, keys, and digests in the adapter
+  can take the ciphertext (removable only by the account owner, explicitly;
+  reads and copies unaffected, so the future migration copies first, then
+  removes the lock, then deletes — two deliberate acts, recorded in the
+  adapter note); record bucket, keys, and digests in the adapter
   note. The same account's Vibes-era `fp-storage-fireproof` bucket and the
   `fp-connect-*`/`fp-meta-*` D1 databases are not Julian's and are out of
   this ceremony's scope, named so "destroyed" stays a true sentence.
