@@ -1,12 +1,6 @@
 <!-- app/src/components/SyncStatus.svelte -->
 <!-- Dot + label reflecting the stream sync phase (Task 6's syncPhase/onSyncPhase). -->
-<script lang="ts">
-  import { syncPhase, onSyncPhase } from '../lib/store';
-
-  let phase = $state(syncPhase());
-
-  $effect(() => onSyncPhase((p) => (phase = p)));
-
+<script module lang="ts">
   const labels = {
     idle: 'local',
     connecting: 'connecting',
@@ -15,9 +9,27 @@
     revoked: 'access revoked — a standing act is needed',
     stale: 'reload for the new Julian',
   } as const;
+
+  export function pillTitle(phase: string, count: number): string {
+    return `stream: ${labels[phase as keyof typeof labels] ?? phase} · ${count} rows`;
+  }
 </script>
 
-<span class="status {phase}" title={`stream: ${labels[phase]}`}>
+<script lang="ts">
+  import { store, syncPhase, onSyncPhase } from '../lib/store';
+
+  let phase = $state(syncPhase());
+  let count = $state(store.getRowIds('messages').length);
+
+  $effect(() => onSyncPhase((p) => (phase = p)));
+
+  $effect(() => {
+    const id = store.addRowIdsListener('messages', () => (count = store.getRowIds('messages').length));
+    return () => store.delListener(id);
+  });
+</script>
+
+<span class="status {phase}" title={pillTitle(phase, count)}>
   <span class="dot"></span>{labels[phase]}
 </span>
 
