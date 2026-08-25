@@ -5,10 +5,13 @@ import type { MergeableStore } from 'tinybase/mergeable-store';
 export const STORE_PATH = 'julian/chat';
 
 // Tables: messages keyed by harness message id / `evt-<id>`; artifacts keyed by relative filename.
+// Annex rows (Fireproof import, 2026-08-25) keep their Fireproof `_id` as the row id and carry
+// provenance in sessionId as `fireproof:<ledgerId>:<serverSessionId>`; the import receipt row is
+// `kind:'system'`, `role:'system'`, `speakerName:'the record'`, `sessionId:'fireproof:import'`.
 export const TABLES_SCHEMA = {
   messages: {
     sessionId: { type: 'string' },
-    role: { type: 'string' },          // 'user' | 'assistant'
+    role: { type: 'string' },          // 'user' | 'assistant' | 'system' (receipt rows only)
     speakerName: { type: 'string' },
     content: { type: 'array' },        // content blocks, write-once — whole-cell LWW is correct
     text: { type: 'string', default: '' },
