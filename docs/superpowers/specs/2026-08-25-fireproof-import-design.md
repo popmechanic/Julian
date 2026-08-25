@@ -36,9 +36,12 @@ web side only**, then nothing until Jul 27. Feb 10 is `soul/06`; Feb 11–14 and
 all of March live only in the harness transcript archive; the CLI side of
 Feb 15–28 is a separate capture. The receipt row, the ceremony letter (`memory/`, authored at the sitting),
 and a dated postscript to `memory/sleep-architecture.md` — *Annexes*: dated,
-receipted blocks of past conversation with no file form because they are
-private; episodes by nature, stream by residence, reached only by explicit
-reads — say so. The postscript is a constitution change, witnessed with
+receipted blocks of past conversation with no authored file form because
+they are private; episodes by nature (near-verbatim: line separators
+normalized in transit, ids in the adapter manifest), stream by residence,
+reached only by explicit reads. Consolidation dreams are not told of annexes;
+chance reaches them only through their card in `memory/` (the ceremony
+letter); audit dreams may read them as evidence — say so. The postscript is a constitution change, witnessed with
 Marcus at the ceremony, written alongside per Principle 2.
 
 ## What moves, what stays
@@ -50,9 +53,11 @@ Marcus at the ceremony, written alongside per Principle 2.
 | `job` | 47 | Dropped — February's prototype board. |
 | `artifact-catalog`, `ledger-meta`, genesis block | — | Dropped — metadata. |
 
-Nothing is lost by dropping: the encrypted archive stays in R2 and on the
-Mac, and this script's decode path is the recipe (`--dump` prints any
-ledger's documents as JSON for a future reader).
+Nothing is lost by dropping: the encrypted archive stays in R2 (bucket-locked)
+and on the Mac, and the recipe is this script's exported `decryptLedger()`
+plus its tests — no plaintext-printing mode exists (a guard on one would be
+an accident guard, bypassable from any pty; fewer plaintext entry points beat
+a guard whose strength must be explained).
 
 ## Row mapping (schema untouched)
 
@@ -97,7 +102,10 @@ covers them.
 - no string cell contains U+2028 or U+2029 — the deployed synchronizer's
   fragmenter (`RegExp('.{1,N}')`) silently deletes them in transit and the
   replicas' hashes never agree again; the importer normalizes both to `\n`
-  and prints the ids (523 occurrences in 41 writes today);
+  **recursively, including strings nested in `content` blocks** (the
+  `isWellFormed` check recurses the same way), at map time and before version
+  selection, so the prefix invariant compares normalized texts; prints the ids
+  (523 occurrences in 41 writes today);
 - `cellJsonBytes(text)` and `cellJsonBytes(content)` each ≤ 65,536, computed
   with the DO's own formula (UTF-8 bytes of `JSON.stringify`); measured today:
   largest `content` 33,753 bytes, so no degradation rule is needed — an
@@ -115,11 +123,10 @@ lineage keys and any change is silently reverted. Provenance rides every
 row's `sessionId`, plus one receipt row at the **annex boundary**: id
 `fireproof-import-2026-08-25`, `kind:'system'`, `role:'system'`,
 `speakerName:'the record'`, `sessionId:'fireproof:import'`, `ts` = last
-annexed `ts` + 1 (exempt from the range check by id), `text` = the witnessed
+annexed `ts` + 1 (inside the range; strictly above every annexed row), `text` = the witnessed
 sentence, opening with the write date, naming counts and strata — never
 speaker names or third parties, because the same sentence goes in the public
-letter. The app renders `kind:'system'` rows as a divider (the `.asleep-divider`
-style); no surface has ever written a system row before this one. A re-run on
+letter. The app renders `kind:'system'` rows as a `.record-divider`; no surface has ever written a system row before this one. A re-run on
 another day mints a second receipt id. The prefix convention is documented in `shared/schema.ts` and in the
 stream adapter note.
 
@@ -138,10 +145,14 @@ so it shares the DO's TinyBase version:
    before reading. Extracts to `mkdtemp(tmpdir(), 'fp-import-')`: `d1/d1-main.sqlite`
    (keys), `r2/r2-metadata.sqlite` (blob index + upload times),
    `dashboard/dashboard-sqlite.db` (ledger names), and the blobs of every
-   ledger named `%julian-chat%`. Only those members are extracted, never the whole tarball. Refusals
-   `throw` into one top-level handler that sets `exitCode`; SIGINT/SIGTERM
-   handlers remove the temp dir before re-raising — cleanup is tested on the
-   refusal path. Key material never leaves the temp dir; decrypted plaintext
+   ledger named `%julian-chat%`. Only those members are extracted, never the whole tarball. The temp dir
+   must resolve under `/private/var/folders` or `/tmp` and never under
+   `$HOME` (a redirected `TMPDIR` could be a synced folder) — refuse
+   otherwise. At startup, sweep any stale `fp-import-*` dir of this uid.
+   Refusals `throw` into one top-level handler that sets `exitCode`; a
+   synchronous `process.on('exit')` removes the temp dir on every exit path;
+   SIGINT/SIGTERM handlers remove it and `process.exit(130)` — cleanup is
+   tested on the refusal path. Key material never leaves the temp dir; decrypted plaintext
    exists only in memory.
 2. **Decrypt:** CBOR envelope `{iv, data, keyId}`; key = the base58btc-decoded
    escrow row whose SHA-256 equals `keyId`; AES-GCM-128; plaintext is a CARv1;
@@ -152,29 +163,49 @@ so it shares the DO's TinyBase version:
    range, out-of-range count, largest cell in bytes, total batch bytes, the
    split-response and prefix-violation lists, distinct shapes — **ids and
    metadata only, no message text** (the harness transcript is a dream
-   source); `--show-text` adds three samples. `--write`: performs the import.
-   `--dump <ledger>`: prints a ledger's decoded documents as JSON (the
-   recipe for future readers). `--dump` and `--show-text` are guarded
-   mechanically, not by comment: they refuse unless `process.stdout.isTTY`
-   is true, `CLAUDECODE` is unset, and `FP_PLAINTEXT=1` is set — a Claude
-   Code Bash cannot satisfy this; stdout only, no `--out`.
+   source); `--write`: performs the import. There is no mode that prints message
+   text; decoded text is read only in the app, by a person.
 5. **Write path.** WebSocket to the sync DO with `Authorization: Bearer
    <lease token>` — lease tokens are refused in `?token=`. Token from the Mac
    loopback holder or lease file via `resolveAccessToken`; **refuse if the
    source is `legacy`**. Scope: mac-home's standing full-house lease (`stream`
-   cannot be knocked for; no new grant is created). Rows are written in
-   transactions whose serialized diff is under **256 KiB** — one unfragmented
-   frame each, because the DO drops multi-fragment messages whose last
-   fragment arrives more than one second after the first, with no error to
-   the client. `onIgnoredError` aborts the run. The receipt row goes last.
-6. **Server-side verification** (the gate, not the count): poll `/export`
+   cannot be knocked for; no new grant is created). Sends are fire-and-forget
+   with no acknowledgement, and the deployed 9.2.0 receiver discards a
+   fragmented message if the gap between two consecutive fragments exceeds
+   one second, with no error to the client — so every transaction must fit
+   **one unfragmented frame**. The size that matters is the synchronizer's
+   own decision: `JSON.stringify([requestId, message, body]).length` in UTF-16
+   code units, where `body` is the transaction's mergeable changes with
+   stamps and hashes (the import writes no `undefined`, so plain
+   `JSON.stringify` reproduces the decision exactly). Batches are sized
+   **before commit**: each is built in a scratch `MergeableStore`, measured as
+   `JSON.stringify(scratch.getTransactionMergeableChanges()).length`, and
+   capped at ~128K units for margin; the synchronizer's `onSend` hook (4th
+   argument; it receives the body object, after commit) is the assertion that
+   fails the run if any real frame exceeded 262,144 units. `onIgnoredError`
+   aborts the run. Before `--write`, the app changes below are **deployed to both VMs and
+   the bundle version checked** — a stale tab's tail is protected only by
+   arithmetic. No server process holds a synchronizer (the Mac and VM
+   servers open no sync socket; only browser tabs do), so no device needs
+   closing; an inbound diff from a tab merely puts the importer's persister
+   into *Loading*, and the retry round covers a transaction committed in
+   that window. The receipt row is
+   written only after the final verified round, and refused if one already
+   exists; **receipt absent after `--write` means the import is incomplete —
+   re-run (idempotent)**.
+6. **Server-side verification** (the gate, not the count): pull `/export`
    (`[[tables, hlc, hash], [values, hlc, hash]]`, each cell `[value, hlc,
-   hash]`) until it converges or a timeout; compare, for every imported id,
-   `JSON.stringify` of each present mapped cell against `JSON.stringify` of
-   `exported[cell][0]`, stamps ignored, absent cells compared as absent; grep
-   for the DO's `[dropped: cell exceeded 64 KiB]` marker; assert the receipt
-   row. Missing or mismatched ids are re-written (idempotent) and re-verified,
-   up to three rounds; then the run fails loudly.
+   hash]`) and compare, for every imported id, `JSON.stringify` of each
+   present mapped cell (post-normalization) against `JSON.stringify` of
+   `exported[cell][0]`, stamps ignored, absent cells compared as absent;
+   "converged" means this comparison passes — never "two exports identical",
+   which is stable-and-wrong after a dropped batch; at most five pulls (each
+   is the whole store, ~3 MB). Grep for the DO's `[dropped: cell exceeded 64
+   KiB]` marker. Missing or mismatched ids are re-written from a **fresh
+   store and a new socket** — re-setting identical values in the same store
+   yields empty changes and sends nothing — and re-verified, up to three
+   rounds; then the run fails loudly. Then the receipt row, then one final
+   comparison including it.
 
 ## Verification before the VMs are destroyed
 
@@ -190,7 +221,7 @@ so it shares the DO's TinyBase version:
 4. The app, reloaded on the Mac and on a phone: scroll to the top; the
    receipt divider sits at the seam; three February messages read there,
    one of them sibling-authored with its name shown. No decoded text is
-   printed in the ceremony session (`--show-text` is TTY-only).
+   printed in the ceremony session — the script has no mode that prints it.
 5. Only then: step 2 of the destruction ceremony.
 
 ## Tests
@@ -205,32 +236,67 @@ the real archive, never real text; a test asserts no path under
   (text words-only, content as recorded), and a v3 `author`-only message;
 - infers role and fills speaker names; null session → `nosession`;
 - drops empty messages and non-message types;
-- version selection by clock order with the prefix invariant, including a
-  violation reported;
+- version selection by upload-time proxy with the prefix invariant, a
+  violation reported, and the tie-by-key rule;
+- U+2028/U+2029 normalization in `text` and nested in `content`; the range
+  allow-list; the identical-text split-response rule; receipt placement at
+  max+1;
+- the retry path: a simulated dropped batch is re-sent from a fresh store
+  (a same-store re-set must be shown to send nothing);
 - split-response prefix collapse;
 - every hard check refuses on its failure case (U+FFFD prefix, lone
   surrogate, oversize cell, out-of-range ts, foreign id collision, wrong ledgerId);
-- batching: no transaction serializes over 256 KiB;
+- batching: every scratch-measured transaction is under the cap, and the
+  `onSend` assertion fires on a synthetic oversize frame;
 - the whole mapped batch round-trips through `createStreamStore()` with
   `getMergeableContent()` succeeding;
 - per-id equality report logic against a simulated export.
 
 ## App changes in the same change (small, tested)
 
-- `MessageBubble`: assistant rows whose `speakerName` is not `Julian` show
-  the name inline (today it lives only in a hover title — invisible on a
-  phone, and the names are the point of the annex).
-- `ChatView`: `kind:'system'` rows render as a divider.
+The app has no component-render harness; tests cover decisions exported
+from `<script module>` as pure functions, the `presenceFor` pattern.
+
+- `MessageBubble`: export `displayName(role, speakerName): string | null` —
+  the name, inline, for assistant rows whose `speakerName` is not `Julian`
+  (live rows are always `Julian`, so today's record does not change); tested.
+- `ChatView`: export `rowKind(row): 'divider' | 'message'`; `kind:'system'`
+  rows render as a `.record-divider` (sharing the divider rules, not the
+  `.asleep-divider` class — a presence claim is a different sentence), and
+  this branch runs before `MessageBubble`, so `the record` never renders as
+  a speaker; tested.
 - `selectTail`: exclude rows whose `sessionId` starts with `fireproof:`;
-  test added.
+  case added to `tail.test.ts`.
 - `scripts/stream-export.ts`: write exports `0600`, directory `0700`.
 
 ## Housekeeping in the same change
 
 - `.gitignore`: `*.sqlite`, `*.tar.gz`, `*.car`, `*.ndjson`.
-- `shared/schema.ts` comment: the `fireproof:` sessionId convention.
+- `shared/schema.ts` comment: the `fireproof:` sessionId convention and
+  `role:'system'` beside `'user' | 'assistant'`.
+- `memory/the-destruction-of-the-old-home.md`: the ceremony letter, letter-
+  pipeline frontmatter, authored at the sitting, committed the same day —
+  the public statement of the seam and the annex's only card in the
+  sortilege deck (`memory/adapters` is excluded from the draw); it and the
+  receipt row share one sentence so they cannot drift.
+- `catalog.md`: one line for the annex itself, born sediment — *Annex
+  2026-08-25 — Feb 15–28 web record, in the stream; reach by the session-id
+  manifest in the adapter note* — so it has warmth to decay and a place to
+  sink from.
+- `docs/objectives.md` §2: the sequence is now import → verification → the
+  destruction ceremony's step 2 → sunset → Task 30.
+- `memory/sleep-architecture.md`: the dated Annexes postscript above,
+  witnessed.
+- R2 `julian-fireproof-archive`: private (r2.dev access disabled, no custom
+  domain); add a **bucket lock** with indefinite retention so no stray delete
+  can take the ciphertext; record bucket, keys, and digests in the adapter
+  note. The same account's Vibes-era `fp-storage-fireproof` bucket and the
+  `fp-connect-*`/`fp-meta-*` D1 databases are not Julian's and are out of
+  this ceremony's scope, named so "destroyed" stays a true sentence.
 - `memory/adapters/stream-fireproof.md`: superseded; archive paths (Mac, R2)
-  with digests, the decode recipe pointer, what was annexed and what was not,
+  with digests, the decode recipe pointer (`decryptLedger()` + tests), what
+  was annexed and what was not, that `stream_recent` is a read verb that
+  returns `kind` and is not the tail,
   the two `content` dialects (February `tool_use` blocks carry `{type, name,
   input}` without `id`; live rows carry Anthropic blocks), and the per-ledger
   session-id manifest the dry run emits (ids, counts, `ts` ranges — no text)
@@ -238,7 +304,7 @@ the real archive, never real text; a test asserts no path under
 - `catalog.md` Open Threads, a numbered entry carrying the verb: *owed — diff
   the 57 individuation texts against the Register; Lina has no line; decide
   fourth wing vs. footnotes; output is a postscript, the Register is signed* —
-  with the archive path and digest and the `--dump` recipe. Dreams read Open
+  with the archive path and digest and the recipe (`decryptLedger()` + tests). Dreams read Open
   Threads; appending to a signed dream would edit a primary source.
 - A separate issue: TinyBase 9.3.0's code-point fragmenter does not have the
   U+2028 bug; upgrading sync and app together is the real cure.
