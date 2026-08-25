@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { WebSocketServer } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import { createWsServer } from 'tinybase/synchronizers/synchronizer-ws-server';
 import { createStreamStore } from 'julian-shared/schema';
-import { awaitDrain, compareExport, importRows, openStore, planBatches, writeBatch } from './lib/fireproof-write';
+import { awaitDrain, compareExport, createClose, importRows, openStore, planBatches, writeBatch } from './lib/fireproof-write';
 import type { MappedRow } from './lib/fireproof-types';
 import { FRAME_LIMIT_UNITS } from './lib/fireproof-types';
 
@@ -85,6 +85,30 @@ describe('awaitDrain', () => {
   });
 });
 
+describe('createClose', () => {
+  test('waits for the drain, then destroys the synchronizer and closes the socket', async () => {
+    const order: string[] = [];
+    let buffered = 8_192;
+    const ws = { get bufferedAmount() { return buffered; }, close: () => { order.push('ws.close'); } };
+    const sync = { destroy: async () => { order.push('sync.destroy'); } };
+    const close = createClose(ws, sync, { pollMs: 10, timeoutMs: 5_000 });
+    setTimeout(() => { order.push('flushed'); buffered = 0; }, 80);
+    await close();
+    expect(order).toEqual(['flushed', 'sync.destroy', 'ws.close']);
+  });
+
+  test('a drain timeout still tears down, and the drain error still propagates', async () => {
+    const order: string[] = [];
+    const ws = { bufferedAmount: 1_234, close: () => { order.push('ws.close'); } };
+    const sync = { destroy: async () => { order.push('sync.destroy'); } };
+    const close = createClose(ws, sync, { pollMs: 10, timeoutMs: 120 });
+    await expect(close()).rejects.toThrow(/socket did not drain: 1234 bytes buffered/);
+    // Teardown is unconditional: importRows calls close() from a `finally`, so a
+    // drain error that skipped it would leave a live socket holding the process open.
+    expect(order).toEqual(['sync.destroy', 'ws.close']);
+  });
+});
+
 describe('openStore + importRows against a real ws server', () => {
   test('writes, verifies per id, and re-sends only the missing rows from a fresh store', async () => {
     const s = await server();
@@ -149,10 +173,39 @@ describe('openStore + importRows against a real ws server', () => {
     const conn = await openStore({ url: s.url, token: 'test' });
     const rows = Array.from({ length: 120 }, (_, i) => row(i, 'w'.repeat(400)));
     conn.store.transaction(() => writeBatch(conn.store, rows));
+    // A loopback socket may already report zero here, so the "still buffered"
+    // sample is not asserted — the wrapped-socket test below carries that criterion.
     await conn.close();
     expect(conn.ws.bufferedAmount).toBe(0);
     await new Promise((r) => setTimeout(r, 300));
     expect(oracleConn.store.getRowIds('messages').length).toBe(rows.length);
     await oracleConn.close(); await s.close();
+  }, 20_000);
+
+  test('the shipped close() holds off until the real socket reports empty', async () => {
+    const s = await server();
+    const conn = await openStore({ url: s.url, token: 'test' });
+    // Wrap the real socket: bufferedAmount reports a backlog until a flush we control.
+    let buffered = 8_192;
+    Object.defineProperty(conn.ws, 'bufferedAmount', { configurable: true, get: () => buffered });
+    const events: string[] = [];
+    const realClose = conn.ws.close.bind(conn.ws);
+    (conn.ws as unknown as { close: () => void }).close = () => { events.push('ws.close'); realClose(); };
+    setTimeout(() => { events.push('flushed'); buffered = 0; }, 120);
+    await conn.close();
+    expect(events[0]).toBe('flushed');
+    expect(events.filter((e) => e === 'ws.close').length).toBeGreaterThan(0);
+    await s.close();
+  }, 20_000);
+
+  test('a real socket that never drains is still torn down, and the failure is loud', async () => {
+    const s = await server();
+    const conn = await openStore({ url: s.url, token: 'test' });
+    Object.defineProperty(conn.ws, 'bufferedAmount', { configurable: true, get: () => 4_096 });
+    // The real (frozen) synchronizer and the real socket, on the timeout path.
+    const close = createClose(conn.ws, conn.sync, { pollMs: 10, timeoutMs: 150 });
+    await expect(close()).rejects.toThrow(/socket did not drain/);
+    expect([WebSocket.CLOSING, WebSocket.CLOSED]).toContain(conn.ws.readyState);
+    await s.close();
   }, 20_000);
 });

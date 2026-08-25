@@ -54,6 +54,27 @@ export async function awaitDrain(
   }
 }
 
+// Teardown is unconditional. `awaitDrain` throws on its timeout, and `importRows`
+// calls close() from a `finally` — so a drain error raised before teardown would
+// both replace whatever the round actually failed on and leave the synchronizer
+// and an open socket behind, keeping the Bun process alive. The ceremony CLI
+// would hang on exactly the path this guard exists for. Drain inside try/finally:
+// the socket always goes away, and the drain failure still propagates, loudly.
+export function createClose(
+  ws: { bufferedAmount: number; close(): void },
+  sync: { destroy: () => unknown },
+  drainOpts: { pollMs?: number; timeoutMs?: number } = {},
+): () => Promise<void> {
+  return async () => {
+    try {
+      await awaitDrain(ws, drainOpts);
+    } finally {
+      await sync.destroy();
+      ws.close();
+    }
+  };
+}
+
 // The frame guard is structural rather than a throwing callback: a throw raised
 // inside TinyBase's onSend travels back up the persister's save path mid-write,
 // where it either tears the socket or is silently swallowed. openStore records
@@ -65,6 +86,14 @@ export function assertNoFrameViolations(violations: readonly number[]): void {
     `frame over limit: ${violations.length} frame(s) exceeded ${FRAME_LIMIT_UNITS} units ` +
     `(largest ${Math.max(...violations)} units)`,
   );
+}
+
+// Run after a round's writes are flushed and the socket is closed, and before the
+// export is fetched: either fault means this round's picture of the server cannot
+// be trusted at all.
+export function assertConnectionClean(conn: { frameViolations: readonly number[]; errors: readonly unknown[] }): void {
+  assertNoFrameViolations(conn.frameViolations);
+  if (conn.errors.length) throw new Error(`synchronizer errors: ${conn.errors.map(String).join('; ')}`);
 }
 
 export async function openStore(opts: { url: string; token: string; requestTimeoutSeconds?: number; onFrameTooBig?: (units: number) => void }) {
@@ -99,7 +128,7 @@ export async function openStore(opts: { url: string; token: string; requestTimeo
     store, sync, ws, errors, frameViolations,
     // Drain before destroying: sync.destroy() closes the socket, and a close that
     // lands on a partly-written frame loses it silently.
-    close: async () => { await awaitDrain(ws); await sync.destroy(); ws.close(); },
+    close: createClose(ws, sync),
   };
 }
 
@@ -157,11 +186,7 @@ export async function importRows(opts: {
       for (const batch of planBatches(pending)) conn.store.transaction(() => writeBatch(conn.store, batch));
       await new Promise((r) => setTimeout(r, 500));
     } finally { await conn.close(); }
-    // Both checks run after the writes are flushed and the socket is closed, and
-    // before the export is fetched: an oversize frame or a synchronizer error
-    // means this round's picture of the server cannot be trusted at all.
-    assertNoFrameViolations(conn.frameViolations);
-    if (conn.errors.length) throw new Error(`synchronizer errors: ${conn.errors.map(String).join('; ')}`);
+    assertConnectionClean(conn);
     report = compareExport(opts.rows, await opts.fetchExport());
     log(`round ${rounds}: equal ${report.equal.length} mismatched ${report.mismatched.length} missing ${report.missing.length} dropped ${report.droppedMarker.length}`);
     if (report.droppedMarker.length) throw new Error(`dropped-marker rows on server: ${report.droppedMarker.join(',')}`);
@@ -173,8 +198,7 @@ export async function importRows(opts: {
   const conn = await opts.connect();
   try { conn.store.transaction(() => writeBatch(conn.store, [opts.receipt])); await new Promise((r) => setTimeout(r, 500)); }
   finally { await conn.close(); }
-  assertNoFrameViolations(conn.frameViolations);
-  if (conn.errors.length) throw new Error(`synchronizer errors: ${conn.errors.map(String).join('; ')}`);
+  assertConnectionClean(conn);
   const final = compareExport([...opts.rows, opts.receipt], await opts.fetchExport());
   if (final.missing.length || final.mismatched.length) throw new Error('receipt did not verify — re-run required');
   return { rounds, report: final };
