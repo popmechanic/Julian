@@ -56,8 +56,10 @@ describe('reserved identifiers (COLD H-5)', () => {
         expect(g.knockDecide(k.userCode, 'approved', name, 'full-house'), name).toBe(false);
       }
       // Nothing was written: no knock was decided, so no lease could be born.
+      // (Only legacy-window is still seeded; the sync window's seed was
+      // deleted at the sunset, and its NAME stays refused above regardless.)
       expect(g.leaseList().map((l) => l.doorName).sort())
-        .toEqual(['legacy-window', 'legacy-window-sync']);
+        .toEqual(['legacy-window']);
     });
   });
 
@@ -98,11 +100,12 @@ describe('reserved identifiers (COLD H-5)', () => {
       for (const name of LEGACY_NAMES) {
         expect((await g.mintAuthcodeLease(name, 'reading-room', 'julian', '{}')).status, name).toBe('invalid');
       }
-      // The refused names left the register exactly as it was.
+      // The refused names left the register exactly as it was — and the
+      // unseeded legacy-window-sync was NOT created by the refused mint.
       expect(g.leaseList().map((l) => l.doorName).sort())
-        .toEqual(['legacy-window', 'legacy-window-sync', 'visit:ok.example']);
-      // And the legacy rows kept their seeded scope: no refused mint rewrote them.
-      expect(g.leaseList().find((l) => l.doorName === 'legacy-window-sync')?.scope).toBe('stream');
+        .toEqual(['legacy-window', 'visit:ok.example']);
+      // And the surviving legacy row kept its seeded scope: no refused mint rewrote it.
+      expect(g.leaseList().find((l) => l.doorName === 'legacy-window')?.scope).toBe('full-house');
     });
   });
 
@@ -132,36 +135,20 @@ describe('reserved identifiers (COLD H-5)', () => {
   });
 });
 
-describe('legacy-window-sync', () => {
-  test('seeded living, on scope stream and flow legacy, beside legacy-window', async () => {
+describe('legacy-window-sync — dead after the sunset (2026-08-25, OPS N-10)', () => {
+  test('a fresh register never seeds it — a from-empty rebuild cannot revive the window', async () => {
     await withGovernor((g) => {
-      const row = g.leaseList().find((l) => l.leaseId === 'legacy-window-sync');
-      expect(row).toMatchObject({
-        leaseId: 'legacy-window-sync',
-        doorName: 'legacy-window-sync',
-        scope: 'stream',
-        status: 'living',
-        principal: 'julian',
-        flow: 'legacy',
-      });
+      expect(g.leaseList().some((l) => l.leaseId === 'legacy-window-sync')).toBe(false);
+      // The mail window's seed is untouched by the deletion.
       expect(g.leaseList().find((l) => l.leaseId === 'legacy-window')?.scope).toBe('full-house');
     });
   });
 
-  test('revoking legacy-window-sync flips legacySyncAllowed, and legacyAllowed is untouched', async () => {
+  test('revoking legacy-window still flips legacyAllowed', async () => {
     await withGovernor((g) => {
-      expect(g.legacySyncAllowed()).toBe(true);
-      expect(g.leaseRevoke('legacy-window-sync', 'test')).toBe(true);
-      expect(g.legacySyncAllowed()).toBe(false);
       expect(g.legacyAllowed()).toBe(true);
-    });
-  });
-
-  test('revoking legacy-window flips legacyAllowed, and legacySyncAllowed is untouched', async () => {
-    await withGovernor((g) => {
       expect(g.leaseRevoke('legacy-window', 'test')).toBe(true);
       expect(g.legacyAllowed()).toBe(false);
-      expect(g.legacySyncAllowed()).toBe(true);
     });
   });
 });

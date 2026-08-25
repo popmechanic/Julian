@@ -223,29 +223,37 @@ describe('B3 migration: subject, sitting_pin, latch, token_id, ledger indexes', 
     });
   });
 
-  test('seeds legacy-window-sync on a register that never had one', async () => {
+  test('never seeds legacy-window-sync — the sunset deletion holds on a register that never had one', async () => {
+    // Before 2026-08-25 this migration seeded the window living; OPS N-10
+    // named that as the revival hazard, and the permanence deploy deleted the
+    // seed. A register that never had the row must never grow one.
     const open = register();
     await runInDurableObject(open(), () => { /* first construction */ });
     await rewindToB2(open);
     await reconstruct(open);
 
     await runInDurableObject(open(), (g: GovernorDO) => {
-      expect(g.leaseList().find((l) => l.leaseId === SYNC_WINDOW)).toMatchObject({
-        doorName: SYNC_WINDOW, scope: 'stream', status: 'living', principal: 'julian', flow: 'legacy',
-      });
-      expect(g.legacySyncAllowed()).toBe(true);
+      expect(g.leaseList().some((l) => l.leaseId === SYNC_WINDOW)).toBe(false);
     });
   });
 
-  test('a revoked legacy-window-sync stays revoked across a reconstruction', async () => {
+  test('the production register\'s revoked legacy-window-sync row survives, revoked, untouched', async () => {
+    // The live register carries the row Marcus revoked at the sunset. The
+    // deletion removed the seed, not the history: a reconstruction must
+    // neither delete the row nor revive it.
     const open = register();
-    await runInDurableObject(open(), (g: GovernorDO) => {
-      expect(g.leaseRevoke(SYNC_WINDOW, 'marcus')).toBe(true);
+    await runInDurableObject(open(), (_g: GovernorDO, state: DurableObjectState) => {
+      state.storage.sql.exec(
+        `INSERT INTO leases
+           (lease_id, door_name, client_claims, scope, status, born, last_renewal, last_verb,
+            send_cap_per_day, flow, principal)
+         VALUES (?, ?, ?, 'stream', 'revoked', ?, NULL, NULL, 5, 'legacy', 'julian')`,
+        SYNC_WINDOW, SYNC_WINDOW, '{"issuer":"pocket-id"}', Date.now(),
+      );
     });
     await reconstruct(open);
 
     await runInDurableObject(open(), (g: GovernorDO) => {
-      expect(g.legacySyncAllowed()).toBe(false);
       expect(g.leaseList().find((l) => l.leaseId === SYNC_WINDOW)?.status).toBe('revoked');
     });
   });

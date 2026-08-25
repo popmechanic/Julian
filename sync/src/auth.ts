@@ -1,10 +1,10 @@
 // sync/src/auth.ts — sync's client of the one authority.
 //
 // The gate is the only thing sync asks about a credential. There is no JWKS
-// here, no issuer, no audience, no `jose`: a legacy Pocket ID JWT is just a
-// token to sync now, handed to the gate's /introspect JWT arm like every
-// other token. One authority means the sunset lands in one place (spec §6.5)
-// and two workers can never disagree about who is alive.
+// here, no issuer, no audience, no `jose`. The gate's JWT arm was deleted at
+// the sunset (2026-08-25): a raw Pocket ID JWT is refused by the router before
+// any round trip, and would answer `{active:false}` at the gate regardless.
+// One authority means two workers can never disagree about who is alive.
 import {
   CONSUME_TICKET_PATH,
   INTROSPECT_PATH,
@@ -30,9 +30,9 @@ export interface Env {
 // --- Gate-mediated credential checks ---------------------------------------
 //
 // Doors present `jla_`-prefixed lease tokens; the browser presents a `jst_`
-// socket ticket; the legacy window still presents a Pocket ID JWT. The sync
-// worker verifies none of them locally (it holds no secrets and no keys) — it
-// asks the gate. A module-level 60s cache keyed by token hash (or by handle)
+// socket ticket. (The legacy window's Pocket ID JWT road closed at the
+// sunset, 2026-08-25.) The sync worker verifies none of them locally (it
+// holds no secrets and no keys) — it asks the gate. A module-level 60s cache keyed by token hash (or by handle)
 // spares the gate a round trip on every reconnect/message-driven re-auth from
 // a hot socket. Tickets are deliberately excluded: see `consumeTicket`.
 
@@ -161,9 +161,9 @@ async function definitive(
 }
 
 /**
- * Introspects a bearer token — a `jla_` lease access token, or (until the
- * sunset) a legacy Pocket ID JWT, which the gate's JWT arm answers in the
- * same shape. Cached by token hash for 60s, definitive answers only.
+ * Introspects a `jla_` lease access token. (The router refuses every other
+ * bearer shape before this is called; the gate would answer `{active:false}`
+ * for one anyway.) Cached by token hash for 60s, definitive answers only.
  */
 export async function introspectLease(
   token: string,

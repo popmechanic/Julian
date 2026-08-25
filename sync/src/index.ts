@@ -19,7 +19,10 @@ const SEG = /^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$|^[a-z0-9]$/;
 // The §12 slot matrix, in words: a prefix is honored in exactly one slot.
 //   jla_ -> Authorization only (a lease token in a URL leaks into logs)
 //   jst_ -> ?ticket= only, and only on a WebSocket upgrade
-//   JWT  -> Authorization or ?token=, until the legacy window closes
+// The JWT road is gone: the legacy window closed at the sunset (2026-08-25,
+// `legacy-window-sync` revoked) and its fallback arm was deleted in the same
+// sitting's permanence deploy — a raw bearer is refused here without ever
+// reaching the gate.
 // Every other pairing is a typed 401 that says which slot the credential
 // belongs in, so a misconfigured client learns something from the refusal.
 const LEASE_SLOT_MSG = 'lease tokens ride in headers only';
@@ -270,22 +273,22 @@ export default {
     } else {
       const token = headerToken ?? queryToken ?? '';
       if (!token) return new Response('Unauthorized', { status: 401 });
+      // Only a lease token buys this arm. A raw Pocket ID JWT was honored here
+      // until the sunset; it is now refused by shape, before any round trip —
+      // the message tells a stale client what its session actually is.
+      if (!token.startsWith('jla_')) {
+        return new Response('this session is no longer recognized — sign in again', { status: 401 });
+      }
 
       let introspection;
       try {
         // Through the GATE service binding, never a public URL (issue #28).
-        // `jla_` leases and legacy JWTs take the same road: the gate decides
-        // which arm answers, and sync holds no keys of its own.
         introspection = await introspectLease(token, env.GATE, env.INTROSPECT_SECRET);
       } catch {
         return new Response(INDEFINITE_MSG, { status: 503 });
       }
       if (!introspection.active) {
-        return new Response(
-          token.startsWith('jla_')
-            ? 'lease revoked — re-knock'
-            : 'this session is no longer recognized — sign in again',
-          { status: 401 });
+        return new Response('lease revoked — re-knock', { status: 401 });
       }
       admitted = {
         leaseId: introspection.leaseId ?? '', doorName: introspection.doorName ?? '',

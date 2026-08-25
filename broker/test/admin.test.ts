@@ -22,8 +22,8 @@ const SESSION_SECRET = 'test-session-secret';
 const APPROVER = 'user_marcus';
 const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
 
-// The legacy window's own identity — a Pocket ID bearer that still opens the
-// sync door answers as this pseudo-lease and nothing else.
+// Pocket ID fixtures — kept after the sunset so the suite can prove that even
+// a perfectly valid bearer is nobody at /introspect now.
 const ISSUER = 'https://soul.test';
 const AUDIENCE = 'julian-app';
 const JWKS_URL = 'https://soul.test/.well-known/jwks.json';
@@ -58,7 +58,6 @@ interface Script {
   validateAccess?: (token: string) => LeaseIdentity | null;
   validateByHandle?: (leaseId: string, tokenId: string) => HandleVerdict;
   consumeTicket?: (ticket: string) => ConsumeTicketResult;
-  legacySyncAllowed?: () => boolean;
   reinstate?: (doorNameOrId: string, by: string, reason: string) => ReinstateResult;
   leaseList?: () => LeaseSummary[];
   leaseRevoke?: (doorNameOrId: string, by: string) => boolean;
@@ -71,7 +70,6 @@ interface Calls {
   validateAccess: string[];
   validateByHandle: Array<[string, string]>;
   consumeTicket: string[];
-  legacySyncAllowed: number;
   reinstate: Array<[string, string, string]>;
   recordAllowed: Array<[string, string, string, string, string]>;
   leaseRevoke: Array<[string, string]>;
@@ -80,7 +78,7 @@ interface Calls {
 
 function gateEnv(script: Script = {}, overrides: Partial<Env> = {}): { env: Env; calls: Calls } {
   const calls: Calls = {
-    validateAccess: [], validateByHandle: [], consumeTicket: [], legacySyncAllowed: 0,
+    validateAccess: [], validateByHandle: [], consumeTicket: [],
     reinstate: [], recordAllowed: [], leaseRevoke: [], reserveLease: [],
   };
   // Recorded by the fake reserveLease below, read back by the fake entries()
@@ -115,11 +113,6 @@ function gateEnv(script: Script = {}, overrides: Partial<Env> = {}): { env: Env;
       calls.consumeTicket.push(ticket);
       if (script.governorDown) throw new Error('governor down');
       return script.consumeTicket ? script.consumeTicket(ticket) : { ok: false, error: 'unknown' };
-    },
-    async legacySyncAllowed(): Promise<boolean> {
-      calls.legacySyncAllowed += 1;
-      if (script.governorDown) throw new Error('governor down');
-      return script.legacySyncAllowed ? script.legacySyncAllowed() : true;
     },
     async reinstate(doorNameOrId: string, by: string, reason: string): Promise<ReinstateResult> {
       calls.reinstate.push([doorNameOrId, by, reason]);
@@ -236,7 +229,7 @@ describe('POST /introspect', () => {
     expect(calls.validateAccess).toEqual(['jla_unknown']);
   });
 
-  test('good secret + a non-lease token never reaches validateAccess (the JWT arm answers)', async () => {
+  test('good secret + a non-lease token never reaches validateAccess (inactive by shape)', async () => {
     const { env, calls } = gateEnv();
     const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, 'some.jwt.here'), env);
     expect(res.status).toBe(200);
@@ -291,78 +284,27 @@ describe('POST /introspect', () => {
   });
 });
 
-describe('POST /introspect — the JWT arm (the legacy window, §6.6 step 2)', () => {
-  test('a verified, listed Pocket ID bearer answers as the legacy-window-sync pseudo-lease', async () => {
+describe('POST /introspect — the JWT arm is gone (the sunset, §6.6 step 6, 2026-08-25)', () => {
+  // The strongest probe is the *valid* bearer: correctly signed, right issuer,
+  // right audience, sub listed and mapped in STREAM_SUBS, window date in the
+  // future — everything that once opened the legacy window. It is nobody now,
+  // definitively, with no key fetch and no governor round trip. (Any real
+  // fetch would throw under disableNetConnect, and no interceptor is armed.)
+  test('a verified, listed Pocket ID bearer is definitively inactive — no JWKS fetch, no register call', async () => {
     const { env, calls } = gateEnv();
-    const token = await sessionJwt();
-    const exp = JSON.parse(atob(token.split('.')[1])).exp as number;
-    const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, token), env);
+    const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, await sessionJwt()), env);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
-      active: true, scope: 'stream',
-      lease_id: 'legacy-window-sync', door_name: 'legacy-window-sync',
-      principal: 'julian', subject: SUB, flow: 'legacy', exp,
-    });
+    expect(await res.json()).toEqual({ active: false });
     expect(calls.validateAccess).toEqual([]);
-    expect(calls.legacySyncAllowed).toBe(1);
   });
 
-  test('a sub that is not in STREAM_SUBS is definitively inactive, and the register is never asked', async () => {
-    const { env, calls } = gateEnv();
-    const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, await sessionJwt({ sub: 'stranger' })), env);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ active: false });
-    expect(calls.legacySyncAllowed).toBe(0);
-  });
-
-  test('a listed but unmapped sub is inactive — the gate never defaults a principal', async () => {
-    const { env } = gateEnv({}, { STREAM_SUBS: SUB });
-    const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, await sessionJwt()), env);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ active: false });
-  });
-
-  test('an empty STREAM_SUBS refuses everyone', async () => {
-    const { env } = gateEnv({}, { STREAM_SUBS: '' });
-    const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, await sessionJwt()), env);
-    expect(await res.json()).toEqual({ active: false });
-  });
-
-  test('revoking legacy-window-sync closes the JWT arm while jla_ leases keep working', async () => {
-    const { env } = gateEnv({
-      legacySyncAllowed: () => false,
-      validateAccess: () => identity(),
-    });
-    const jwt = await worker.fetch(introspectReq(INTROSPECT_SECRET, await sessionJwt()), env);
-    expect(jwt.status).toBe(200);
-    expect(await jwt.json()).toEqual({ active: false });
-
-    const lease = await worker.fetch(introspectReq(INTROSPECT_SECRET, 'jla_good'), env);
-    expect(lease.status).toBe(200);
-    expect(await lease.json()).toMatchObject({ active: true, lease_id: 'lease-1' });
-  });
-
-  test('a closed window is inactive, and never reaches the register', async () => {
-    const { env, calls } = gateEnv({}, { LEGACY_WINDOW_END: '2020-01-01T00:00:00.000Z' });
-    const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, await sessionJwt()), env);
-    expect(await res.json()).toEqual({ active: false });
-    expect(calls.legacySyncAllowed).toBe(0);
-  });
-
-  test('an unparseable LEGACY_WINDOW_END is a closed window, not an open one', async () => {
-    const { env } = gateEnv({}, { LEGACY_WINDOW_END: 'whenever' });
-    const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, await sessionJwt()), env);
-    expect(await res.json()).toEqual({ active: false });
-  });
-
-  test('wrong audience, wrong issuer and a mangled signature are all definitively inactive', async () => {
+  test('so is every broken variant — the arm is not conditionally closed, it does not exist', async () => {
     const { env } = gateEnv();
-    const mangled = (await sessionJwt()).slice(0, -3) + 'AAA';
     const tokens = [
       await sessionJwt({ audience: 'some-other-app' }),
       await sessionJwt({ issuer: 'https://evil.test' }),
       await sessionJwt({ expiresIn: -7200 }),
-      mangled,
+      'some.jwt.here',
     ];
     for (const token of tokens) {
       const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, token), env);
@@ -371,40 +313,23 @@ describe('POST /introspect — the JWT arm (the legacy window, §6.6 step 2)', (
     }
   });
 
-  test('an unreachable JWKS is indefinite — 503, never {active:false}', async () => {
-    const { env, calls } = gateEnv({}, { OIDC_JWKS_JSON: undefined });
-    const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, await sessionJwt()), env);
-    expect(res.status).toBe(503);
-    expect(await res.json()).not.toEqual({ active: false });
-    expect(calls.legacySyncAllowed).toBe(0);
-  });
-
-  test('an unparseable JWKS document is indefinite too', async () => {
-    const { env } = gateEnv({}, { OIDC_JWKS_JSON: undefined });
-    fetchMock.get(ISSUER).intercept({ path: '/.well-known/jwks.json' }).reply(200, 'not json');
-    const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, await sessionJwt()), env);
-    expect(res.status).toBe(503);
-  });
-
-  test('a fetched JWKS answers the arm like the inline one', async () => {
-    const { env } = gateEnv({}, { OIDC_JWKS_JSON: undefined });
-    fetchMock.get(ISSUER).intercept({ path: '/.well-known/jwks.json' }).reply(200, jwks);
+  test('a missing OIDC config no longer buys a 503 — a bearer is inactive, not indefinite', async () => {
+    // Before the deletion, an unset audience or unreachable JWKS answered 503
+    // ("ask again"). There is nothing to ask about any more: the definitive no.
+    const { env } = gateEnv({}, { OIDC_AUDIENCE: undefined, OIDC_JWKS_JSON: undefined });
     const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, await sessionJwt()), env);
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ active: true, lease_id: 'legacy-window-sync' });
+    expect(await res.json()).toEqual({ active: false });
   });
 
-  test('an unset OIDC_AUDIENCE refuses the arm 503 — never an unbounded verify', async () => {
-    const { env, calls } = gateEnv({}, { OIDC_AUDIENCE: undefined });
-    const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, await sessionJwt()), env);
-    expect(res.status).toBe(503);
-    expect(calls.legacySyncAllowed).toBe(0);
-  });
+  test('jla_ leases keep working beside the dead arm', async () => {
+    const { env } = gateEnv({ validateAccess: () => identity() });
+    const jwt = await worker.fetch(introspectReq(INTROSPECT_SECRET, await sessionJwt()), env);
+    expect(await jwt.json()).toEqual({ active: false });
 
-  test('an unreachable governor is 503, not a revocation', async () => {
-    const { env } = gateEnv({ governorDown: true });
-    const res = await worker.fetch(introspectReq(INTROSPECT_SECRET, await sessionJwt()), env);
-    expect(res.status).toBe(503);
+    const lease = await worker.fetch(introspectReq(INTROSPECT_SECRET, 'jla_good'), env);
+    expect(lease.status).toBe(200);
+    expect(await lease.json()).toMatchObject({ active: true, lease_id: 'lease-1' });
   });
 });
 
@@ -479,64 +404,15 @@ describe('POST /introspect — by handle (a hibernating socket re-auths)', () =>
   });
 });
 
-describe('POST /introspect — the legacy handle (sub + exp + kind=legacy)', () => {
-  const future = () => String(Math.floor(Date.now() / 1000) + 600);
-
-  function legacyForm(over: Record<string, string> = {}): Record<string, string> {
-    return { sub: SUB, exp: future(), kind: 'legacy', ...over };
-  }
-
-  test('a live legacy handle answers as the pseudo-lease', async () => {
-    const { env } = gateEnv();
-    const form = legacyForm();
+describe('POST /introspect — the legacy handle (sub + exp + kind=legacy) is gone with the arm', () => {
+  test('a well-formed legacy handle is definitively inactive, and asks the register nothing', async () => {
+    const { env, calls } = gateEnv();
+    const form = { sub: SUB, exp: String(Math.floor(Date.now() / 1000) + 600), kind: 'legacy' };
     const res = await worker.fetch(introspectForm(INTROSPECT_SECRET, form), env);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
-      active: true, scope: 'stream',
-      lease_id: 'legacy-window-sync', door_name: 'legacy-window-sync',
-      principal: 'julian', subject: SUB, flow: 'legacy', exp: Number(form.exp),
-    });
-  });
-
-  test('a past exp is inactive', async () => {
-    const { env, calls } = gateEnv();
-    const res = await worker.fetch(
-      introspectForm(INTROSPECT_SECRET, legacyForm({ exp: String(Math.floor(Date.now() / 1000) - 1) })), env);
     expect(await res.json()).toEqual({ active: false });
-    expect(calls.legacySyncAllowed).toBe(0);
-  });
-
-  test('a non-numeric exp is inactive', async () => {
-    const { env } = gateEnv();
-    const res = await worker.fetch(introspectForm(INTROSPECT_SECRET, legacyForm({ exp: 'soon' })), env);
-    expect(await res.json()).toEqual({ active: false });
-  });
-
-  test('a closed window, a revoked pseudo-lease and a dropped sub each close it', async () => {
-    const cases: Array<[Script, Partial<Env>]> = [
-      [{}, { LEGACY_WINDOW_END: '2020-01-01T00:00:00.000Z' }],
-      [{ legacySyncAllowed: () => false }, {}],
-      [{}, { STREAM_SUBS: 'someone-else=julian' }],
-    ];
-    for (const [script, overrides] of cases) {
-      const { env } = gateEnv(script, overrides);
-      const res = await worker.fetch(introspectForm(INTROSPECT_SECRET, legacyForm()), env);
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ active: false });
-    }
-  });
-
-  test('kind=legacy without a sub falls through to inactive, not to the JWT arm', async () => {
-    const { env } = gateEnv();
-    const res = await worker.fetch(
-      introspectForm(INTROSPECT_SECRET, { exp: future(), kind: 'legacy' }), env);
-    expect(await res.json()).toEqual({ active: false });
-  });
-
-  test('an unreachable governor is 503, not a revocation', async () => {
-    const { env } = gateEnv({ governorDown: true });
-    const res = await worker.fetch(introspectForm(INTROSPECT_SECRET, legacyForm()), env);
-    expect(res.status).toBe(503);
+    expect(calls.validateByHandle).toEqual([]);
+    expect(calls.validateAccess).toEqual([]);
   });
 });
 

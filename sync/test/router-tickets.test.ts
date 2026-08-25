@@ -204,33 +204,22 @@ describe('§12 slot matrix: one prefix, one slot', () => {
     expect(h.received).toHaveLength(0);
   });
 
-  test('cell 8 — a JWT in Authorization goes to the gate JWT arm', async () => {
-    const gate = fakeGate({
-      introspect: activeLease({
-        lease_id: 'legacy-window-sync', door_name: 'legacy-window-sync',
-        scope: 'stream', flow: 'legacy', subject: 'user_marcus', token_id: undefined, exp: 1893456000,
-      }),
-    });
+  test('cell 8 — a JWT in Authorization is refused by shape; the gate is never asked (the sunset)', async () => {
+    const gate = fakeGate({ introspect: activeLease() });
     const h = harness(gate);
     const res = await worker.fetch(upgrade(SOCKET_URL, { Authorization: 'Bearer eyJhbGciOi.cell8.sig' }), h.testEnv, h.ctx);
-    expect(res.status).toBe(200);
-    expect(gate.introspects).toHaveLength(1);
-    expect(gate.introspects[0].get('token')).toBe('eyJhbGciOi.cell8.sig');
-    expect(h.received).toHaveLength(1);
+    expect(res.status).toBe(401);
+    expect(await res.text()).toBe('this session is no longer recognized — sign in again');
+    expect(gate.introspects).toHaveLength(0);
+    expect(h.received).toHaveLength(0);
   });
 
-  test('cell 9 — a JWT in ?token= goes to the same gate JWT arm', async () => {
-    const gate = fakeGate({
-      introspect: activeLease({
-        lease_id: 'legacy-window-sync', door_name: 'legacy-window-sync',
-        scope: 'stream', flow: 'legacy', subject: 'user_marcus', token_id: undefined,
-      }),
-    });
+  test('cell 9 — a JWT in ?token= is refused the same way', async () => {
+    const gate = fakeGate({ introspect: activeLease() });
     const h = harness(gate);
     const res = await worker.fetch(upgrade(`${SOCKET_URL}?token=eyJhbGciOi.cell9.sig`), h.testEnv, h.ctx);
-    expect(res.status).toBe(200);
-    expect(gate.introspects).toHaveLength(1);
-    expect(gate.introspects[0].get('token')).toBe('eyJhbGciOi.cell9.sig');
+    expect(res.status).toBe(401);
+    expect(gate.introspects).toHaveLength(0);
   });
 
   test('no credential at all is Unauthorized — a cookie is never a credential here', async () => {
@@ -501,18 +490,21 @@ describe('router: the allowed pen', () => {
     expect(gate.refusals).toHaveLength(0);
   });
 
-  test('a JWT-arm open names the absent token id honestly', async () => {
+  test('an open on a lease with no token id names the absence honestly', async () => {
+    // A pre-B3 lease can answer without a token_id; the pen writes the
+    // literal fallback rather than an empty field. (This used to be the JWT
+    // arm's row; the road is gone but the fallback remains reachable.)
     const gate = fakeGate({
       introspect: activeLease({
-        lease_id: 'legacy-window-sync', door_name: 'legacy-window-sync',
-        scope: 'stream', flow: 'legacy', token_id: undefined,
+        lease_id: 'lease-old', door_name: 'door:old',
+        scope: 'stream', flow: 'device', token_id: undefined,
       }),
     });
     const h = harness(gate);
-    await worker.fetch(upgrade(SOCKET_URL, { Authorization: 'Bearer eyJhbGciOi.pen2.sig' }), h.testEnv, h.ctx);
+    await worker.fetch(upgrade(SOCKET_URL, { Authorization: 'Bearer jla_pen2-old-lease' }), h.testEnv, h.ctx);
     await h.settle();
     expect(gate.allowed).toEqual([{
-      lease_id: 'legacy-window-sync', door_name: 'legacy-window-sync', service: 'stream',
+      lease_id: 'lease-old', door_name: 'door:old', service: 'stream',
       verb: 'socket', detail: 'open token_id=jwt',
     }]);
   });

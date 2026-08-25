@@ -1,11 +1,12 @@
 // The register, and the one authority on who is alive.
 //
 // `POST /introspect` answers julian-sync about *every* credential this house
-// knows — a `jla_` lease token, a live socket's `(lease_id, token_id)` handle,
-// and (until the sunset) a Pocket ID bearer, which the JWT arm here verifies
-// so that sync holds no keys, no issuer and no audience of its own. One
-// authority means two workers can never disagree about who is alive, and the
-// window closes in one place. `POST /consume-ticket` spends a `jst_`;
+// knows — a `jla_` lease token and a live socket's `(lease_id, token_id)`
+// handle. The JWT arm that once verified a Pocket ID bearer here was removed
+// by the post-sunset deletion deploy (2026-08-25, B3 spec §6.6 step 6): a raw
+// JWT is now `{active:false}` by construction, and no rebuild can reopen the
+// window. One authority means two workers can never disagree about who is
+// alive. `POST /consume-ticket` spends a `jst_`;
 // `/refusals` and `/allowed` are the two pens sync writes the record with; and
 // `/leases*` is the operator's console onto the same register — read the
 // roster and its membership lists, revoke a door, reinstate a session, or pull
@@ -23,9 +24,6 @@
 // credential and may be cached and acted on; anything the gate could not
 // decide — an unreachable governor, an unreachable JWKS, a missing audience —
 // is a non-200, which sync reads as "ask again", never as "you were revoked".
-import { createLocalJWKSet } from 'jose';
-import type { JSONWebKeySet, JWTVerifyGetKey } from 'jose';
-import { keySetFor } from '../auth';
 import type { Env } from '../env';
 import { parseStreamSubs } from '../exchange';
 import { TICKET_PREFIX } from '../governor';
@@ -36,9 +34,7 @@ import type {
 import { ACCESS_PREFIX, GOVERNOR_DOWN, json } from '../lease-auth';
 import { MANIFEST_PATH, PIN_KEY } from '../package-types';
 import type { PackageManifest } from '../package-types';
-import { verifyWithKeySet } from 'julian-shared/auth';
 import type { ConsumeTicketWire, IntrospectionWire } from 'julian-shared/gate-contract';
-import { EXCHANGE_SCOPES } from 'julian-shared/scopes';
 import { readSession, timingSafeEqual } from './session';
 
 /** The approver allowlist, parsed once: empty or missing seats nobody. */
@@ -73,16 +69,6 @@ function hasMachineCredential(req: Request, env: Env): boolean {
   return !!env.INTROSPECT_SECRET && timingSafeEqual(presented, env.INTROSPECT_SECRET);
 }
 
-/**
- * The sync worker's own legacy window, as a pseudo-lease. Two windows, two
- * revokes: the browser's raw-JWT door and this one close separately, and the
- * name is reserved — no mint path may ever produce it.
- */
-const LEGACY_SYNC_LEASE_ID = 'legacy-window-sync';
-/** What the window buys: exactly what a browser session gets, and nothing more. */
-const LEGACY_SYNC_SCOPE = EXCHANGE_SCOPES[0];
-const LEGACY_FLOW = 'legacy';
-
 /** The one definitive no. Everything indefinite is a non-200 instead. */
 const INACTIVE: IntrospectionWire = { active: false };
 /**
@@ -92,11 +78,6 @@ const INACTIVE: IntrospectionWire = { active: false };
  * "close 4004, re-exchange and come back" rather than "you were revoked".
  */
 const TOKEN_EXPIRED: IntrospectionWire = { active: false, reason: 'token-expired' };
-
-const NO_AUDIENCE =
-  'the gate has no OIDC_AUDIENCE configured, so it cannot tell which app a token was minted for — refusing every introspection of a session token until it is set; tell Marcus';
-const JWKS_UNREACHABLE =
-  'the gate could not reach Pocket ID for its signing keys, so nothing was decided about this token — retry; this is not a refusal';
 
 function field(form: FormData, name: string): string {
   return (form.get(name) ?? '').toString().trim();
@@ -108,9 +89,9 @@ function field(form: FormData, name: string): string {
  * holds none rather than sent as null: sync stores whatever arrives and later
  * re-presents it as a form field, where a null would ride the wire as the
  * literal string "null" and match no row. `exp` — the access token's own
- * expiry — rides along for the same reason the legacy answer carries one: the
- * socket keeps it in its attachment and measures an aged token (WS 4004,
- * re-exchange) against a dead lease (WS 4001, terminal) with it.
+ * expiry — rides along so the socket can keep it in its attachment and measure
+ * an aged token (WS 4004, re-exchange) against a dead lease (WS 4001,
+ * terminal) with it.
  */
 function activeLease(identity: LeaseIdentity): Response {
   const body: IntrospectionWire = {
@@ -125,106 +106,6 @@ function activeLease(identity: LeaseIdentity): Response {
     ...(identity.exp === undefined ? {} : { exp: identity.exp }),
   };
   return json(body);
-}
-
-/** The active answer for the legacy window — one pseudo-lease, whoever holds the JWT. */
-function activeLegacy(sub: string, principal: string, exp: number): Response {
-  const body: IntrospectionWire = {
-    active: true, scope: LEGACY_SYNC_SCOPE,
-    lease_id: LEGACY_SYNC_LEASE_ID, door_name: LEGACY_SYNC_LEASE_ID,
-    principal, subject: sub, flow: LEGACY_FLOW, exp,
-  };
-  return json(body);
-}
-
-/** The window as configured. An unparseable date is a closed window, never an open one. */
-function windowOpen(env: Env): boolean {
-  const end = Date.parse(env.LEGACY_WINDOW_END ?? '');
-  return Number.isFinite(end) && Date.now() < end;
-}
-
-/**
- * The keys, and only the keys. The network fetch is wrapped here — and nothing
- * else is — so that "Pocket ID was unreachable" stays distinguishable from
- * "this signature is wrong": the first is indefinite and must answer 503, the
- * second is definitive and answers `{active:false}`. `verifyWithKeySet`
- * collapses every failure into null, which is exactly right for a signature
- * and exactly wrong for a socket, so the fetch never happens inside it.
- *
- * The key set is deliberately not cached across calls. A stale set does not
- * fail *indefinitely* — it fails **definitively**, telling a browser whose key
- * merely rotated that it was revoked, which is the one wrong answer this
- * module exists to prevent. Sync already caches the verdict for 60s, and
- * Pocket ID's own cache headers ride the fetch, so the honest read costs
- * little; correctness after a rotation is worth all of it.
- */
-async function jwksFor(env: Env): Promise<JWTVerifyGetKey | null> {
-  if (env.OIDC_JWKS_JSON) {
-    // The local seam: no network, but a malformed document is still indefinite.
-    try {
-      return keySetFor(env);
-    } catch {
-      return null;
-    }
-  }
-  let res: Response;
-  try {
-    res = await fetch(env.OIDC_JWKS_URL);
-  } catch {
-    return null;
-  }
-  if (!res.ok) return null;
-  try {
-    return createLocalJWKSet(await res.json() as JSONWebKeySet);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * The window's own membership test, shared by the JWT arm and its by-handle
- * twin: a mapped sub, an open window, and a living pseudo-lease — all three,
- * or nothing. Returns the principal, `null` for a definitive no, or a finished
- * 503 when the register could not be asked.
- */
-async function legacyPrincipal(
-  sub: string, env: Env, gov: DurableObjectStub<GovernorDO>,
-): Promise<string | null | Response> {
-  // `parseStreamSubs` populates the map only for `sub=principal` entries, so a
-  // bare (listed-but-unmapped) sub lands here as undefined — the gate never
-  // guesses a principal, and never defaults one to `julian` (SEC NEW-4).
-  const principal = parseStreamSubs(env.STREAM_SUBS).map.get(sub);
-  if (principal === undefined) return null;
-  if (!windowOpen(env)) return null;
-  try {
-    return (await gov.legacySyncAllowed()) ? principal : null;
-  } catch {
-    return json({ error: GOVERNOR_DOWN }, 503);
-  }
-}
-
-/**
- * The JWT arm: the gate is the one authority on a Pocket ID bearer, so sync
- * holds no keys, no issuer and no audience of its own and the sunset lands in
- * exactly one place (spec §6.5).
- */
-async function introspectJwt(
-  token: string, env: Env, gov: DurableObjectStub<GovernorDO>,
-): Promise<Response> {
-  // Fail closed on configuration, as `/exchange` does: without an audience the
-  // gate cannot tell a token minted for the app from any other Pocket ID token.
-  if (!env.OIDC_AUDIENCE) return json({ error: NO_AUDIENCE }, 503);
-
-  const keySet = await jwksFor(env);
-  if (!keySet) return json({ error: JWKS_UNREACHABLE }, 503);
-
-  const claims = await verifyWithKeySet(token, keySet, env.OIDC_ISSUER, env.OIDC_AUDIENCE);
-  if (!claims) return json(INACTIVE);
-
-  const principal = await legacyPrincipal(claims.sub, env, gov);
-  if (principal instanceof Response) return principal;
-  if (principal === null) return json(INACTIVE);
-  return activeLegacy(claims.sub, principal, claims.exp);
 }
 
 /**
@@ -259,27 +140,15 @@ async function introspectHandle(
   return activeLease(identity);
 }
 
-/** The legacy window, asked by handle: the same three tests, plus the token's own expiry. */
-async function introspectLegacyHandle(
-  sub: string, rawExp: string, env: Env, gov: DurableObjectStub<GovernorDO>,
-): Promise<Response> {
-  const exp = Number(rawExp);
-  if (!Number.isFinite(exp) || exp * 1000 <= Date.now()) return json(INACTIVE);
-  const principal = await legacyPrincipal(sub, env, gov);
-  if (principal instanceof Response) return principal;
-  if (principal === null) return json(INACTIVE);
-  return activeLegacy(sub, principal, exp);
-}
-
 /**
  * No body detail on a bad secret — the wire contract is 401 alone.
  *
- * Three request forms, one response shape, dispatched in this order:
+ * Two request forms, one response shape, dispatched in this order:
  *   `token=jla_…`               → the register, by secret
  *   `token=jst_…`               → inactive; a ticket is consumed, never queried
- *   `token=<anything else>`     → the JWT arm (the legacy window)
+ *   `token=<anything else>`     → inactive; the JWT arm was deleted at the
+ *                                 sunset (2026-08-25) — a bearer is nobody
  *   `lease_id=…&token_id=…`     → the register, by handle
- *   `sub=…&exp=…&kind=legacy`   → the legacy window, by handle
  * Anything else is inactive: an unreadable question earns no identity.
  */
 async function introspect(req: Request, env: Env, gov: DurableObjectStub<GovernorDO>): Promise<Response> {
@@ -305,19 +174,14 @@ async function introspect(req: Request, env: Env, gov: DurableObjectStub<Governo
     }
     // A ticket is spent at `/consume-ticket` or not at all: answering here
     // would let the introspection cache hand one ticket to two sockets.
-    if (token.startsWith(TICKET_PREFIX)) return json(INACTIVE);
-    return introspectJwt(token, env, gov);
+    // Anything else — a raw Pocket ID JWT included — is nobody.
+    return json(INACTIVE);
   }
 
   const leaseId = field(form, 'lease_id');
   const tokenId = field(form, 'token_id');
   if (leaseId !== '' && tokenId !== '') return introspectHandle(leaseId, tokenId, env, gov);
 
-  const sub = field(form, 'sub');
-  const exp = field(form, 'exp');
-  if (field(form, 'kind') === 'legacy' && sub !== '' && exp !== '') {
-    return introspectLegacyHandle(sub, exp, env, gov);
-  }
   return json(INACTIVE);
 }
 

@@ -17,16 +17,17 @@ import worker from '../src/index';
 import type { Env, GateFetcher } from '../src/auth';
 
 /** The gate's JWT arm, answering for a living legacy window. */
-function legacyWindowGate(principal: string): GateFetcher {
+function leaseGate(principal: string): GateFetcher {
   return {
     fetch: async () => new Response(JSON.stringify({
       active: true,
-      lease_id: 'legacy-window-sync',
-      door_name: 'legacy-window-sync',
+      lease_id: 'lease-export-test',
+      door_name: 'door:export-test',
       scope: 'stream',
       principal,
       subject: 'user_marcus',
-      flow: 'legacy',
+      flow: 'device',
+      token_id: 'tok-exp',
       exp: 1893456000,
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
   };
@@ -49,12 +50,12 @@ describe('export endpoint', () => {
     // Authed: the gate vouches for the legacy session → 200 with verified
     // content. `test/exp1` is owned by principal `test`.
     const testEnv = env as unknown as Env;
-    testEnv.GATE = legacyWindowGate('test');
+    testEnv.GATE = leaseGate('test');
     testEnv.INTROSPECT_SECRET = 'test-secret';
 
     const res = await worker.fetch(
       new Request('https://sync.test/test/exp1/export', {
-        headers: { Authorization: 'Bearer eyJhbGciOi.export-legacy.sig' },
+        headers: { Authorization: 'Bearer jla_export-test-token' },
       }),
       testEnv,
     );

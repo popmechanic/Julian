@@ -165,51 +165,43 @@ describe('router: a socket is a write surface — socket-capable scopes only', (
   });
 });
 
-// The legacy Pocket ID JWT is no longer verified here: sync holds no JWKS and
-// no issuer/audience config. A JWT is just a token to sync now, handed to the
-// gate's /introspect JWT arm like any other — one authority, one window, one
-// place the sunset lands (spec §6.5).
-describe('router: the legacy JWT arm is the gate, not a local verifier', () => {
-  test('an active legacy-window-sync answer admits the socket at scope `stream`', async () => {
-    const gate = fakeGate({
-      active: true, leaseId: 'legacy-window-sync', doorName: 'legacy-window-sync',
-      scope: 'stream', principal: 'julian', subject: 'user_marcus', flow: 'legacy',
-    });
+// The legacy JWT road is gone (the sunset, 2026-08-25): a bearer that is not
+// a `jla_` lease token is refused by shape at the router, before any gate
+// round trip. The refusal text tells a stale browser what its session is.
+describe('router: the JWT road is closed — non-jla_ bearers never reach the gate', () => {
+  test('a JWT-shaped bearer at the WS upgrade is 401, with zero gate calls', async () => {
+    const gate = fakeGate({ active: true, leaseId: 'L-never', doorName: 'door:never', scope: 'stream', principal: 'julian' });
     const res = await worker.fetch(wsUpgradeReq('eyJhbGciOi.legacy1.sig'), testEnvWithFakeStub(gate));
-    expect(res.status).not.toBe(403);
-    expect(res.status).toBe(200);
-    expect(gate.calls).toBe(1);
-  });
-
-  test('an inactive answer drops the legacy token — the window has closed', async () => {
-    const gate = fakeGate({ active: false });
-    const res = await worker.fetch(wsUpgradeReq('eyJhbGciOi.legacy2.sig'), testEnv(gate));
     expect(res.status).toBe(401);
-    expect(gate.calls).toBe(1);
+    expect(await res.text()).toBe('this session is no longer recognized — sign in again');
+    expect(gate.calls).toBe(0);
   });
 
-  test('a legacy token in the query string reaches the same arm', async () => {
-    const gate = fakeGate({
-      active: true, leaseId: 'legacy-window-sync', doorName: 'legacy-window-sync',
-      scope: 'stream', principal: 'julian', subject: 'user_marcus', flow: 'legacy',
-    });
+  test('a JWT in the query string is refused the same way', async () => {
+    const gate = fakeGate({ active: true, leaseId: 'L-never', doorName: 'door:never', scope: 'stream', principal: 'julian' });
     const res = await worker.fetch(
       new Request('https://sync.test/julian/chat?token=eyJhbGciOi.legacy3.sig', {
         headers: { Upgrade: 'websocket' },
       }),
       testEnvWithFakeStub(gate));
-    expect(res.status).toBe(200);
-    expect(gate.calls).toBe(1);
+    expect(res.status).toBe(401);
+    expect(gate.calls).toBe(0);
   });
 
-  test('a legacy token whose scope cannot read the stream is refused at export', async () => {
-    const gate = fakeGate({
-      active: true, leaseId: 'legacy-window-sync', doorName: 'legacy-window-sync',
-      scope: 'reading-room', principal: 'julian', subject: 'user_marcus', flow: 'legacy',
-    });
+  test('a JWT at export is refused too — no verb survives the closed road', async () => {
+    const gate = fakeGate({ active: true, leaseId: 'L-never', doorName: 'door:never', scope: 'stream', principal: 'julian' });
     const res = await worker.fetch(
       new Request('https://sync.test/julian/chat/export?token=eyJhbGciOi.legacy4.sig'),
       testEnv(gate));
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
+    expect(gate.calls).toBe(0);
+  });
+
+  test('an inactive gate answer on a jla_ lease still reads as revoked, not as sign-in', async () => {
+    const gate = fakeGate({ active: false });
+    const res = await worker.fetch(wsUpgradeReq('jla_revoked-lease'), testEnv(gate));
+    expect(res.status).toBe(401);
+    expect(await res.text()).toBe('lease revoked — re-knock');
+    expect(gate.calls).toBe(1);
   });
 });

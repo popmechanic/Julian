@@ -142,9 +142,9 @@ const DEFAULT_LEASE_SEND_CAP = 5;
 const ACCESS_PREFIX = 'jla_';
 const REFRESH_PREFIX = 'jlr_';
 const LEGACY_LEASE_ID = 'legacy-window';
-// The sync worker's own legacy window. A second pseudo-lease rather than a
-// second meaning for the first, so closing the browser's raw-JWT door and
-// closing the MCP door are two separate revokes on two separate dates.
+// The sync worker's legacy window, revoked at the sunset (2026-08-25) and no
+// longer seeded. The literal survives only as a reserved name: `reservedOwner`
+// refuses it to every mint path, so nothing can ever wear it again.
 const LEGACY_SYNC_LEASE_ID = 'legacy-window-sync';
 // Reserved door-name prefixes. `browser:` names are the browser session's, and
 // only the exchange flow may mint one; `visit:` names are the MCP visit's, and
@@ -408,17 +408,11 @@ export class GovernorDO extends DurableObject {
        VALUES (?, ?, ?, ?, 'living', ?, NULL, NULL, ?)`,
       LEGACY_LEASE_ID, LEGACY_LEASE_ID, '{"issuer":"pocket-id"}', 'full-house', Date.now(), DEFAULT_LEASE_SEND_CAP,
     );
-    // The sync worker's window, seeded the same way and closable the same way.
-    // It carries `stream`, not `full-house`: a raw Pocket ID JWT at the sync
-    // socket buys the stream and nothing else, and never the mail.
-    sql.exec(
-      `INSERT OR IGNORE INTO leases
-         (lease_id, door_name, client_claims, scope, status, born, last_renewal, last_verb,
-          send_cap_per_day, flow, principal)
-       VALUES (?, ?, ?, 'stream', 'living', ?, NULL, NULL, ?, 'legacy', 'julian')`,
-      LEGACY_SYNC_LEASE_ID, LEGACY_SYNC_LEASE_ID, '{"issuer":"pocket-id"}',
-      Date.now(), DEFAULT_LEASE_SEND_CAP,
-    );
+    // The sync worker's window (`legacy-window-sync`) is deliberately NOT
+    // seeded any more. It was revoked at the sunset ceremony (2026-08-25) and
+    // the seed was deleted in the same sitting's permanence deploy (OPS N-10:
+    // a from-empty rebuild would otherwise re-seed the window living). The
+    // name stays reserved in `reservedOwner` so no knock can ever mint it.
   }
 
   /** The only clock the DO reads. Tests override it to drive expiry and day boundaries. */
@@ -1138,15 +1132,6 @@ export class GovernorDO extends DurableObject {
 
   legacyAllowed(): boolean {
     return this.leaseLiving(LEGACY_LEASE_ID);
-  }
-
-  /**
-   * The sync worker's window, asked and answered exactly like the gate's. Two
-   * windows, two revokes: closing the browser's raw-JWT door early leaves the
-   * MCP door standing, and the reverse.
-   */
-  legacySyncAllowed(): boolean {
-    return this.leaseLiving(LEGACY_SYNC_LEASE_ID);
   }
 
   private leaseLiving(leaseId: string): boolean {
