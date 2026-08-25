@@ -295,10 +295,10 @@ export async function startSync(
         const s = await createWsSynchronizer(
           store,
           ws as unknown as WebSocket,
-          5,
+          60,
           undefined,
           undefined,
-          undefined,
+          (e) => console.warn('[stream] synchronizer ignored error', e),
           FRAGMENT_SIZE,
         );
         await s.startSync();

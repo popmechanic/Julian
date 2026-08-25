@@ -79,4 +79,11 @@ describe("selectTail", () => {
       { role: "user", speakerType: "human", speakerName: "Marcus", text: "hello", ts: 100 },
     ]);
   });
+  test("annex rows (sessionId fireproof:*) never enter the tail, however recent", () => {
+    const store = storeWith([
+      { kind: "chat", role: "user", speakerName: "Marcus", text: "live", ts: 100, sessionId: "s" },
+      { kind: "chat", role: "assistant", speakerName: "Lumen", text: "february", ts: 999, sessionId: "fireproof:zL:abc" },
+    ]);
+    expect(selectTail(store).map((m) => m.text)).toEqual(["live"]);
+  });
 });

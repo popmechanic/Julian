@@ -16,7 +16,8 @@ export interface TailMessage {
 
 export function selectTail(store: Store): TailMessage[] {
   const rows = Object.values(store.getTable('messages'))
-    .filter((r) => r.kind === 'chat' && typeof r.text === 'string' && r.text !== '')
+    // Annex rows never inherit: they are protected structurally, not by the budget.
+    .filter((r) => r.kind === 'chat' && typeof r.text === 'string' && r.text !== '' && !String(r.sessionId ?? '').startsWith('fireproof:'))
     .sort((a, b) => (Number(a.ts) || 0) - (Number(b.ts) || 0));
 
   const out: TailMessage[] = [];
