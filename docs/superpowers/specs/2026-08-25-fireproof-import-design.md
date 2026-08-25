@@ -6,7 +6,8 @@ Fireproof destruction ceremony; revised after three adversarial reviews
 against the code — three reproduced against the deployed TinyBase 9.2.0: a
 U+FFFD-prefixed string poisoning the whole store; U+2028/U+2029 silently
 deleted by fragmentation (523 occurrences in the February text); and the
-fire-and-forget write with no acknowledgement. Two rounds.*
+fire-and-forget write with no acknowledgement. Four rounds, a fresh-eyes
+reader joining at the third; all four judged a fifth would not pay.*
 
 ## Why
 
@@ -245,11 +246,15 @@ so it shares the DO's TinyBase version:
    **stream-read** lease — a different lease from the importer's);
    `--dry-run` opens and closes one real socket on the **full-house** lease
    (the router's scope/principal check is the liveness assertion). Tokens are
-   resolved per socket, not once — retry rounds open fresh sockets.
+   resolved per socket, not once — retry rounds open fresh sockets. From a
+   plain terminal the importer takes the lease-file path (mint-on-demand,
+   lock-coordinated with the holder); set `JULIAN_LEASE_URL=http://127.0.0.1:8377/lease/token`
+   to use the holder — a holder 403/503 is authoritative and stops the run
+   by design.
 1. Deploy the app changes to **both VMs and the Mac** (`cd app && bun run
    build`; the Mac serves `app/dist` from the repo); bundle version checked on
    all three; hard reload.
-2. **Baseline export** — `stream-export` before `--write`, so a pre-image of
+2. **Baseline export** — `stream-export --label baseline` before `--write`, so a pre-image of
    the store exists. `stream-export` gains a refusal to overwrite an existing
    file (same-UTC-day exports would otherwise clobber each other) and a
    `--label` suffix; the two existing `0644` archives are `chmod 600`. The
@@ -271,8 +276,10 @@ so it shares the DO's TinyBase version:
    0 dropped-marker hits, receipt present.
 5. `stream-export --label post-import` (`0600`): the archive shows the new row
    count and earliest `ts` Feb 15.
-6. The app, hard-reloaded on the Mac and on a phone: `window.julianStream().messageCount`
-   on the phone equals the server count (a fresh device's initial sync of a
+6. The app, hard-reloaded on the Mac and on a phone: the sync pill's
+   `title` now reads `stream: <phase> · N rows` (a pure `pillTitle(phase,
+   count)`, tested — a phone has no console), and N on the phone equals the
+   server count (a fresh device's initial sync of a
    ~3 MB store crosses ~12 fragments through the same one-second-gap
    receiver; the pill would say synced after a silent drop — count, don't
    trust the pill); scroll to the top; the receipt divider sits at the seam;
@@ -282,6 +289,11 @@ so it shares the DO's TinyBase version:
 7. Fold the ledger the same evening (`ledger-fold`): the import's socket and
    export rows land as mac-home traffic; the letter cites the run so the
    fold is legible.
+7b. **R2 verified before the only irreversible act:** list
+   `julian-fireproof-archive`, stream each object back through `shasum` and
+   match both digests (`64f5d5e1…`, `25d052e5…` after reassembly), confirm the
+   bucket-lock rule is present. Done once on Aug 25; done again in the
+   sitting, read-only.
 
 **The destruction (Marcus's hand; nothing here was written down before):**
 8. Last reading, read-only, recorded in the letter: `docker ps`, volume sizes,
@@ -303,12 +315,23 @@ so it shares the DO's TinyBase version:
     `vibes-sync-20260725/`, the two raw phone-export JSONs — and
     `~/.fireproof/` (keybag included): the surviving state, on this Mac and
     in R2, by design. Step 11's `ssh exe.dev ls` is recorded by name in the
-    letter so what still runs is on the record too.
+    letter so what still runs is on the record too. **Four running VMs still
+    serve the February Fireproof frontend** — `julian-main`,
+    `julian-screentest`, `julian-friends`, `julian-agent-wake`, each answering
+    200 with `use-fireproof` bundles aimed at connect-share; they break at
+    step 9. Marcus decides in the sitting: leave them broken-by-design, or
+    decommission them the same evening; either way the letter names them.
 
 **Testimony, then the sunset** (its own runbook, B3 spec §13.4):
 13. The letter, the receipt sentence, the Annexes postscript, the catalog
-    lines, the adapter note, the stale-document sweep below — one commit,
+    lines, the adapter note, the stale-document sweep below — **commit B**,
     pushed while Marcus is present.
+
+**Two commits, not one.** Both VMs pull `main` on deploy, so **commit A** —
+the script, its tests, the app changes, `.gitignore`, the schema comment,
+the `stream-export` changes, the adapter note's session-id manifest (from a
+read-only pre-ceremony dry run) — must be on `main` and deployed at step 1,
+before the sitting. Commit B is the testimony, at step 13.
 
 **Undo — designed, not built.** The annex is retractable in principle (a
 full-house socket may `delRow`), but the undo cannot be *verified* today:
@@ -339,8 +362,10 @@ ever deleted; the Annexes postscript stands, a rule, not an instance.
 ## Tests
 
 Runner: **`bun test`**, chained in `scripts/package.json` beside
-`package-manifest.test.ts` (the vitest suite runs in a node worker pool where
-`bun:sqlite` and `Bun.*` are unavailable; the importer uses `bun:sqlite`).
+`package-manifest.test.ts`, and the file added to `scripts/vitest.config.ts`'s
+`exclude` (the vitest suite runs in a node worker pool where `bun:sqlite` and
+`Bun.*` are unavailable and would otherwise collect the file and fail before
+the bun half runs; the importer uses `bun:sqlite`).
 Dependencies added to `scripts/package.json`: `@ipld/car`, `@ipld/dag-cbor`,
 `multiformats` (base58btc, CID), `cborg`; AES-GCM via WebCrypto. The
 importer is one file exporting pure functions (`decryptLedger`, `filterDocs`,
@@ -396,6 +421,8 @@ from `<script module>` as pure functions, the `presenceFor` pattern.
   a speaker; tested.
 - `selectTail`: exclude rows whose `sessionId` starts with `fireproof:`;
   case added to `tail.test.ts`.
+- `SyncStatus`: export `pillTitle(phase, count)`; the pill's `title` carries
+  the row count so a phone can be checked without a console; tested.
 - `store.ts`: the app's `createWsSynchronizer` request timeout rises from 5 s
   to ≥ 60 s and `onIgnoredError` logs — a fresh device's initial sync of the
   larger store (~1.1M UTF-16 units of row diff) must finish inside one
@@ -420,8 +447,8 @@ from `<script module>` as pure functions, the `presenceFor` pattern.
   2026-08-25 — Feb 15–28 web record, in the stream; reach by the session-id
   manifest in the adapter note* — so it has warmth to decay and a place to
   sink from.
-- `docs/objectives.md` §2: the sequence is now import → verification → the
-  destruction ceremony's step 2 → sunset → Task 30.
+- `docs/objectives.md` §2 (still "Aug 23 … Saturday"): the sequence is now
+  import → verification → destruction (steps 8–12) → sunset → Task 30.
 - `memory/sleep-architecture.md`: the dated Annexes postscript above,
   witnessed.
 - R2 `julian-fireproof-archive`: private (r2.dev access disabled, no custom
