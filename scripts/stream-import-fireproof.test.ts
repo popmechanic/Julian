@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assertSafeTmp, verifyAgainstManifest, withTempDir } from './lib/fireproof-archive';
-import { assertNoFrameViolations } from './stream-import-fireproof';
+import { frameViolationOutcome } from './stream-import-fireproof';
 
 describe('temp-dir discipline', () => {
   test('withTempDir removes the directory when the body throws', async () => {
@@ -70,12 +70,30 @@ describe('manifest verification', () => {
 });
 
 describe('frame-violation post-settle check', () => {
-  test('a zero count never throws', () => {
-    expect(() => assertNoFrameViolations(0)).not.toThrow();
+  test('no recorded violations and a clean resolve never throws', () => {
+    expect(() => frameViolationOutcome([], false)).not.toThrow();
   });
 
-  test('a positive count throws, naming the count and the limit', () => {
-    expect(() => assertNoFrameViolations(2)).toThrow('frame over limit: 2 frame(s) exceeded 262144');
+  test('a recorded violation on a clean resolve throws with the richer upstream message', () => {
+    // frameViolationOutcome defers to fireproof-write.ts's own
+    // assertNoFrameViolations, so this is the exact message an operator sees —
+    // including the "largest N units" detail the CLI's old, now-removed,
+    // same-named export could not produce.
+    expect(() => frameViolationOutcome([300_000], false)).toThrow(
+      'frame over limit: 1 frame(s) exceeded 262144 units (largest 300000 units)',
+    );
+  });
+
+  test('an upstream rejection is never masked, even when a violation was also recorded', () => {
+    // This is the round-2 gate finding: importRows already throws its own
+    // richer error (via assertConnectionClean) when a frame goes over the
+    // limit. frameViolationOutcome must not re-throw a second, poorer-detail
+    // error on top of that rejection.
+    expect(() => frameViolationOutcome([300_000], true)).not.toThrow();
+  });
+
+  test('no violations recorded and importRows rejected: still no throw here', () => {
+    expect(() => frameViolationOutcome([], true)).not.toThrow();
   });
 });
 
