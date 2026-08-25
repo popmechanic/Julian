@@ -36,14 +36,13 @@ import {
   mapMessage,
   selectVersions,
 } from './lib/fireproof-map';
-import { importRows, openStore, planBatches, writeBatch } from './lib/fireproof-write';
+import { assertNoFrameViolations, importRows, openStore, planBatches, writeBatch } from './lib/fireproof-write';
 import { resolveAccessToken, resolveLeasePath } from './lib/lease-client';
 import {
   ARCHIVE_PATH,
   ARCHIVE_ROOT,
   ARCHIVE_SHA256,
   FEB_START_MS,
-  FRAME_LIMIT_UNITS,
   LIVE_LEDGER_ID,
   MAR_START_MS,
 } from './lib/fireproof-types';
@@ -54,21 +53,32 @@ const SYNC_WS = process.env.SYNC_WS ?? 'wss://julian-sync.julian-memory.workers.
 const BROKER_URL = process.env.BROKER_URL ?? 'https://julian-broker.julian-memory.workers.dev';
 const DEFAULT_MANIFEST_OUT = './fireproof-annex-manifest.txt';
 
-// GATE FINDING: a throw raised from inside TinyBase's onSend (as `openStore`'s
-// `onFrameTooBig` used to do here) travels back up the persister's save path
-// mid-write, where it can tear the socket or be silently swallowed — untested,
-// unsafe territory. `openStore` in fireproof-write.ts already records every
-// violation before it ever calls this callback, so the callback below only
-// counts and logs; the throw happens here, at a place of this module's own
-// choosing, once importRows has settled (resolved or rejected) and the socket
-// is already closed. The CLI must never print a success report when any frame
-// exceeded the limit — see `doWrite`.
-let frameViolations = 0;
-
-// Pure and exported so it can be proven without a lease: the post-settle
-// check that turns a nonzero violation count into a refusal.
-export function assertNoFrameViolations(n: number): void {
-  if (n > 0) throw new Error(`frame over limit: ${n} frame(s) exceeded ${FRAME_LIMIT_UNITS}`);
+// GATE FINDING (round 1): a throw raised from inside TinyBase's onSend (as
+// `openStore`'s `onFrameTooBig` used to do here) travels back up the
+// persister's save path mid-write, where it can tear the socket or be
+// silently swallowed — untested, unsafe territory. `openStore` in
+// fireproof-write.ts already records every violation before it ever calls
+// this callback, so the callback below only accumulates and logs; the
+// decision of whether to refuse happens here, at a place of this module's
+// own choosing, once importRows has settled (resolved or rejected) and the
+// socket is already closed. The CLI must never print a success report when
+// any frame exceeded the limit — see `doWrite`.
+//
+// GATE FINDING (round 2): this module used to export its own same-named
+// `assertNoFrameViolations(n: number)`, shadowing the richer
+// `assertNoFrameViolations(readonly number[])` that fireproof-write.ts
+// already exports and that `importRows` already calls (via
+// `assertConnectionClean`) after every round's flush. Because `doWrite`
+// re-asserted unconditionally in a `finally`, an upstream rejection from
+// importRows — carrying the "largest N units" detail — was being thrown
+// *over* by this module's poorer-detail throw. `frameViolationOutcome`
+// below is the fix: it defers entirely to the imported assertNoFrameViolations
+// (so the richer message, when it fires, is the only one that ever surfaces)
+// and never re-throws when importRows itself already rejected — an upstream
+// error must never be masked.
+export function frameViolationOutcome(units: readonly number[], importRejected: boolean): void {
+  if (importRejected) return; // the original rejection stands; nothing here may replace it
+  assertNoFrameViolations(units);
 }
 
 interface Options {
@@ -382,8 +392,9 @@ async function doWrite(rows: MappedRow[], opts: Options): Promise<void> {
   if (!sentence) throw new Error('receipt text is empty');
   const receipt = buildReceipt(rows, new Date(), sentence);
 
-  frameViolations = 0;
+  const frameUnits: number[] = [];
   let result: Awaited<ReturnType<typeof importRows>>;
+  let importRejected = false;
   try {
     result = await importRows({
       rows,
@@ -394,24 +405,35 @@ async function doWrite(rows: MappedRow[], opts: Options): Promise<void> {
           token: await freshToken(),
           requestTimeoutSeconds: 60,
           onFrameTooBig: (u) => {
-            frameViolations++;
+            frameUnits.push(u);
             console.error(`[import] frame over limit: ${u} units`);
           },
         }),
       fetchExport: async () => (await fetchExportBody(await freshToken())).mergeableContent,
       log: (s) => console.log(s),
     });
+  } catch (e) {
+    importRejected = true;
+    throw e;
   } finally {
-    // Runs whether importRows resolved or rejected — a frame violation is a
-    // refusal that outranks whatever importRows itself reported, since a torn
-    // or dropped frame is the likely cause of any mismatch it saw.
-    assertNoFrameViolations(frameViolations);
+    // Runs whether importRows resolved or rejected. `importRows` itself already
+    // asserts (via `assertConnectionClean`) after every round's flush, so a
+    // rejection here already carries the richer "largest N units" message —
+    // frameViolationOutcome defers to it and never re-throws over that
+    // rejection. When importRows *resolved* despite a recorded violation
+    // (frame accepted by the socket but still over the soft limit), this is
+    // where the refusal happens instead, since a clean-looking report must
+    // never ship with an over-limit frame behind it.
+    if (frameUnits.length && importRejected) {
+      console.error(`[import] ${frameUnits.length} frame(s) exceeded the limit before the failure above`);
+    }
+    frameViolationOutcome(frameUnits, importRejected);
   }
   console.log('');
   console.log(`import complete in ${result.rounds} round(s)`);
   console.log(`  equal ${result.report.equal.length}, mismatched ${result.report.mismatched.length}, missing ${result.report.missing.length}`);
   console.log(`  receipt row ${receipt.id} at ${iso(receipt.ts)}`);
-  console.log(`  frame violations: ${frameViolations}`);
+  console.log(`  frame violations: ${frameUnits.length}`);
 }
 
 async function main(): Promise<void> {
@@ -448,7 +470,7 @@ async function main(): Promise<void> {
 // One catch, at the top: refusals throw, and this is where they surface.
 //
 // Guarded by `import.meta.main` so the test file can import this module's
-// pure exports (e.g. `assertNoFrameViolations`) without running the CLI —
+// pure exports (e.g. `frameViolationOutcome`) without running the CLI —
 // `bun scripts/stream-import-fireproof.ts` still executes exactly as before.
 if (import.meta.main) {
   try {
