@@ -400,13 +400,13 @@ describe('startSync — returns a stoppable handle (#4)', () => {
       expect(typeof handle!.client.reset).toBe('function');
       expect(handle!.client).toBe(client);
       expect(vi.mocked(createWsSynchronizer)).toHaveBeenCalledWith(
-        expect.anything(),
+        store,
         expect.anything(),
         60,
         undefined,
         undefined,
         expect.any(Function),
-        262144
+        FRAGMENT_SIZE
       );
     } finally {
       vi.unstubAllEnvs();
