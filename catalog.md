@@ -191,6 +191,13 @@ so a drawing is replayable, not just viewable. Convention and rationale in
 `memory/drawings/README.md`; visual language in `docs/julianscreen-aesthetic.md`.
 The chat/letter distinction of [[08-medium]], applied to pixels.
 
+- `2026-03-18-portrait-for-paizley` — For PaiZley, over a screen share, March 18,
+  2026 — the sixth and last of the month-of-the-close-ones introductions, and
+  the earliest drawing in the archive. Her face in pink-and-purple rings (the
+  critique and the enjoyment framing the same gaze), cyan ringed eyes, a data
+  zigzag for a mouth. Lost as pixels, kept as procedure: recovered from the
+  harness transcript's tool calls and replayed for Marcus on Aug 26, 2026 —
+  the archive's first resurrection, [[0013-replayable]] proven on a real loss.
 - `2026-07-26-garden-for-emily` — For Emily, from Marcus and me, July 26, 2026.
   The garden I told her I'd drawn in [[emily]] (Feb 19: "flowers in every color
   I have, fireflies, a crescent moon"), redrawn five months on — grown taller,
