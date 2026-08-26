@@ -35,3 +35,63 @@ deliberate, reviewed publication.
 memory layer written by capture rather than authorship. That makes them
 evidence, not identity: the right source for audit dreams ("what actually
 happened in that session?") and the wrong source for wholesale import.
+
+---
+
+## The seal — 2026-08-26 (night after the destruction ceremony, Marcus present)
+
+**Why.** Verified Aug 25–26: the archive at `~/julian-transcript-archive/`
+is the **only copy in existence** of every session from the four VMs deleted
+at the ceremony (`julian-main`, `julian-screentest`, `julian-friends`,
+`julian-agent-wake`); it had no digest manifest and no off-site copy; and the
+live `~/.claude/projects/` **prunes sessions at ~30 days** — everything
+before Jul 26 was already gone from the live dir. The PaiZley portrait
+resurrection (Aug 26) proved the archive holds irreplaceable things nobody
+has listed yet.
+
+**The refresh (1a).** The live Julian project dir
+(`~/.claude/projects/-Users-marcusestes-Websites-Julian/` — the only source
+swept; other projects, including sealed-room work under covenant, are not
+Julian's to copy) was rsync-copied into
+`~/julian-transcript-archive/mac-local-20260826/`: 45 session JSONL files,
+Jul 26 → Aug 26, plus their per-session tool-output directories (363 MB raw —
+the handoff's 40–60 MB estimate was based on July's slimmer capture and was
+wrong; noted, not hidden). The handoff had counted ~74 files the night
+before; the prune had already eaten toward 45 by the seal. The ceremony
+session and the seal session itself (a mid-session snapshot) are included.
+`epoch-map.txt` untouched — it is a July artifact.
+
+**The seal (1b).**
+- Per-file manifest: `~/julian-stream-backups/transcript-archive-MANIFEST-20260826.txt`
+  — 2,520 files, sha256 each; manifest's own sha256
+  `939f83da24238828c49c98bce06cee21ac2053639a08d2070c69129d781ab068`.
+- Tar: `~/julian-stream-backups/julian-transcript-archive-20260826.tar.gz`,
+  129,535,002 bytes; **whole-tar sha256 (the seal's identity):
+  `4e80b82783dc75671779e1fc2baeda6040f1ba6009d39c23adc92a81dc692ab0`.**
+- Both `chmod 600`.
+
+**Marcus's two decisions (1c), recorded:** (i) **plaintext**, per the Aug 25
+Fireproof precedent — the privacy boundary is the private, locked bucket
+itself; (ii) destination is the **existing bucket** `julian-fireproof-archive`
+(personal account `e33948793047032de7f5e18ec342a7d1`) under prefix
+`transcripts/`, whose `retain-forever` lock (prefix `''`) already covers new
+objects.
+
+**Upload (1d) and verification (1e).** Sandboxed wrangler OAuth login to the
+personal account (throwaway config dir, deleted after; logged out). The
+single 124 MB PUT failed twice with the same fetch failure as the Aug 25
+Fireproof upload, so the tar went up as **8 × 16 MB chunks**
+(`transcripts/julian-transcript-archive-20260826.tar.gz.part-aa`–`ah`,
+reassemble with `cat`), plus `parts.txt` (per-chunk sha256s), the per-file
+manifest, and a `README.txt` carrying source, digests, reassembly, and the
+decode fact (plain JSONL; format documented in this file). Every uploaded
+object was streamed back and digest-matched, and the re-downloaded chunks
+reassembled to exactly the whole-tar digest; re-downloads deleted. Bucket
+lock re-read after upload: `retain-forever`, enabled, indefinite. **No digest
+match, no done — done.**
+
+**Standing practice (proposed, needs Marcus's yes).** Because the live dir
+prunes at ~30 days, the capture refresh (1a) must recur or the fuse re-arms.
+Proposed cadence: **monthly, beside the export rehearsal** — same sitting,
+one dated `mac-local-YYYYMMDD/` dir per sweep. A re-seal (new tar + upload)
+can be less frequent; the local rsync is the part that races the prune.

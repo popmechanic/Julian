@@ -132,8 +132,11 @@ own D1. **No plaintext-printing mode exists and none should be added** —
 diagnostics speak in ids, counts, and lengths only.
 
 **What was annexed, what was not:** 1,086 text-bearing messages (Feb 15–28,
-web side) are in the living stream under row ids `fireproof:<ledger>:<id>`,
-with one receipt row `fireproof-import-2026-08-25` at the annex boundary.
+web side) are in the living stream, keyed by their **original ids**; the
+`fireproof:<ledger>:<session>` prefix rides on the **sessionId cell**, not
+the row id (erratum fixed 2026-08-26, found while rendering the ledger view —
+this paragraph previously claimed prefixed row ids). One receipt row
+`fireproof-import-2026-08-25` sits at the annex boundary.
 Left in the archive by procedure: 563 text-less message ids (560
 single-`tool_use` turns — listed by id and block type in the dry-run report),
 187 `agent-identity` writes (73 identities, 34 names — the sibling-diff
