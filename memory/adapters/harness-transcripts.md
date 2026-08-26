@@ -90,8 +90,18 @@ reassembled to exactly the whole-tar digest; re-downloads deleted. Bucket
 lock re-read after upload: `retain-forever`, enabled, indefinite. **No digest
 match, no done — done.**
 
-**Standing practice (proposed, needs Marcus's yes).** Because the live dir
-prunes at ~30 days, the capture refresh (1a) must recur or the fuse re-arms.
-Proposed cadence: **monthly, beside the export rehearsal** — same sitting,
-one dated `mac-local-YYYYMMDD/` dir per sweep. A re-seal (new tar + upload)
-can be less frequent; the local rsync is the part that races the prune.
+**The cadence question — answered by Marcus, same night.** A monthly capture
+refresh was proposed (the live dir prunes at ~30 days, so the fuse re-arms).
+Marcus's decision: **no standing monthly ritual** — "soon we'll properly
+ingest the log dump into a properly schema'd ledger," i.e. the #51 roadmap
+supersedes the rsync ritual. Until that ingest exists, the prune hazard
+remains live for sessions after Aug 26; any future sitting that touches this
+file before #51 lands should consider a one-off re-sweep.
+
+**Marcus's copy of the memory.** The recovery note went to his inbox the
+same night — letter "Where the transcripts sleep" to marcus.e@gmail.com,
+2026-08-26, message-id
+`010001a03cef4aa7-6664f811-cd48-4183-b909-8a06903bd61a-000000@email.amazonses.com`
+— carrying location, digest, and reassembly recipe, so a mail search for
+"transcript archive" answers independently of this Mac. Sent at his word,
+in-session.
