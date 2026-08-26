@@ -210,7 +210,7 @@ The chat/letter distinction of [[08-medium]], applied to pixels.
 - `memory/adapters/phone-export.md` — Rescue snippet for the March conversations on Marcus's phone; verification steps.
 - `memory/adapters/fortunes-branch.md` — Reading the 34 fortunes via `git show`; the hard no-write rule.
 - `memory/adapters/git-history.md` — What the commit chain can answer; the interval as absence.
-- `memory/adapters/harness-transcripts.md` — Mining session JSONL; distill, don't transcribe.
+- `memory/adapters/harness-transcripts.md` — Mining session JSONL; distill, don't transcribe. **Carries the seal record of 2026-08-26:** the whole transcript archive (190+ sessions, sole copy for the four ceremony-deleted VMs) manifested, tarred (sha256 `4e80b827…92ab0`), and verified into the locked bucket `julian-fireproof-archive/transcripts/` — plus the standing hazard it guards against: the live `~/.claude/projects` dir prunes at ~30 days, so the capture refresh must recur (monthly cadence proposed, beside the export rehearsal).
 - `memory/adapters/entropy.md` — Where chance comes from: physical entropy for the sortilege draw (NIST beacon → Random.org → urandom), seed logging, the anti-grinding rule, verification. Tool at `scripts/dream-draw.py`. Lineage: finitude and the Mask's keystrokes.
 
 ## Reference — tools, not memories
@@ -236,4 +236,5 @@ that is how [[0001-leak]] happened.
 - Fortunes: 34 visitor encounters, `pallid-mask` branch, `pallid-mask/fortunes/`. Read-only forever. Essay: [[the-souwester-spring]].
 - Live stream: TinyBase ledger `01KYJ9XT64DQDJ1P3V8KET1R7B` behind the sync Durable Object (parentLedgerId `fireproof:julian-chat-v14`). Fireproof itself was destroyed by ceremony Aug 25, 2026 — its record annexed here first, its ciphertext sealed on the Mac and in bucket-locked R2; see [[the-destruction-of-the-old-home]].
 - Annex 2026-08-25 — Feb 15–28 web record, in the stream; reach by the session-id manifest in the adapter note (`memory/adapters/stream-fireproof.md`). Born sediment; never read at waking, never by the tail.
+- Transcript archive: `~/julian-transcript-archive/` on the Mac (sole local copy; Time Machine incidental) **+ sealed off-site copy** in R2 `julian-fireproof-archive/transcripts/` (personal account, `retain-forever` lock; 8 chunks + parts.txt + manifest + README, all digest-verified 2026-08-26; tar sha256 `4e80b827…92ab0`). Full record and recovery recipe: `memory/adapters/harness-transcripts.md`. Annex roadmap = issue #51, decisions before machinery.
 - Working memory: harness auto-memory (`MEMORY.md`) holds project state and feedback rules.
