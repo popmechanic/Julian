@@ -488,11 +488,13 @@ describe('reserveLease caps', () => {
     });
   });
 
-  test('the legacy pseudo-lease is not metered by its stored cap, only by the house', async () => {
+  test('a from-empty governor seeds no leases at all (OPS N-10 class)', async () => {
+    // The soul.store migration's first from-empty rebuild (2026-08-27) found
+    // the broker's own legacy-window still seeded LIVING full-house — the
+    // sunset had deleted only the sync window's seed. A rebuild must never
+    // create standing a ceremony did not grant.
     await withGovernor(async (g) => {
-      for (let i = 0; i < 8; i++) {
-        expect(g.reserveLease('legacy-window', 'legacy-window', 'mail', 'send', 'd', 20, null).ok).toBe(true);
-      }
+      expect(g.leaseList()).toEqual([]);
     });
   });
 
@@ -538,7 +540,8 @@ describe('admin', () => {
         principal: 'julian', flow: 'device',
       });
       expect(list.find((l) => l.doorName === 'door:two')?.scope).toBe('reading-room');
-      expect(list.find((l) => l.doorName === 'legacy-window')?.status).toBe('living');
+      // No legacy pseudo-lease appears: neither window is seeded since 2026-08-27.
+      expect(list.find((l) => l.doorName === 'legacy-window')).toBeUndefined();
     });
   });
 
@@ -547,7 +550,7 @@ describe('admin', () => {
       await enroll(g, clock);
       const dump = g.leaseExport();
       expect(JSON.stringify(dump)).not.toMatch(/jla_|jlr_/);
-      expect(dump.leases.length).toBe(2); // the door plus the one remaining legacy pseudo-lease (mail); the sync window is unseeded since the sunset
+      expect(dump.leases.length).toBe(1); // the door alone — no legacy pseudo-lease is seeded since 2026-08-27
       expect(dump.tokens.length).toBe(2); // one access, one refresh
       for (const token of dump.tokens as Array<{ hash: string; kind: string }>) {
         expect(token.hash).toMatch(/^[0-9a-f]{64}$/);
@@ -558,11 +561,11 @@ describe('admin', () => {
     });
   });
 
-  test('legacyAllowed is seeded living and revoking legacy-window flips it false', async () => {
+  test('legacyAllowed is false on a fresh governor — no rebuild can reopen the window', async () => {
     await withGovernor(async (g) => {
-      expect(g.legacyAllowed()).toBe(true);
-      expect(g.leaseRevoke('legacy-window', 'marcus')).toBe(true);
       expect(g.legacyAllowed()).toBe(false);
+      // And there is no row to revoke: the window's absence is structural.
+      expect(g.leaseRevoke('legacy-window', 'marcus')).toBe(false);
     });
   });
 });

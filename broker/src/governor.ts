@@ -400,19 +400,18 @@ export class GovernorDO extends DurableObject {
          scope TEXT, door_name TEXT,
          created INTEGER NOT NULL, expires INTEGER NOT NULL, last_poll INTEGER NOT NULL DEFAULT 0)`,
     );
-    // The legacy window is a lease like any other, so that closing it early is
-    // one revoke rather than a deploy. It is seeded once and never re-seeded.
-    sql.exec(
-      `INSERT OR IGNORE INTO leases
-         (lease_id, door_name, client_claims, scope, status, born, last_renewal, last_verb, send_cap_per_day)
-       VALUES (?, ?, ?, ?, 'living', ?, NULL, NULL, ?)`,
-      LEGACY_LEASE_ID, LEGACY_LEASE_ID, '{"issuer":"pocket-id"}', 'full-house', Date.now(), DEFAULT_LEASE_SEND_CAP,
-    );
-    // The sync worker's window (`legacy-window-sync`) is deliberately NOT
-    // seeded any more. It was revoked at the sunset ceremony (2026-08-25) and
-    // the seed was deleted in the same sitting's permanence deploy (OPS N-10:
-    // a from-empty rebuild would otherwise re-seed the window living). The
-    // name stays reserved in `reservedOwner` so no knock can ever mint it.
+    // NEITHER legacy window is seeded any more. `legacy-window-sync` was
+    // revoked at the sunset ceremony (2026-08-25) and its seed deleted in the
+    // same sitting's permanence deploy. The broker's own `legacy-window` seed
+    // survived that sitting unnoticed — INSERT OR IGNORE was a no-op on the
+    // old gate, where the row already existed revoked — and fired on the
+    // soul.store migration's first from-empty rebuild (2026-08-27), creating
+    // a LIVING full-house lease no ceremony had granted. Revoked by hand the
+    // same hour; the seed is now deleted for the same OPS N-10 reason as the
+    // sync window's: a rebuild must never create standing. Both names stay
+    // reserved in `reservedOwner` so no knock can ever mint them, and with no
+    // living row `legacyAllowed()` fails closed even if LEGACY_WINDOW_END
+    // were ever set again.
   }
 
   /** The only clock the DO reads. Tests override it to drive expiry and day boundaries. */

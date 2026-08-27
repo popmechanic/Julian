@@ -32,6 +32,24 @@ async function authedEnv(): Promise<{ token: string; testEnv: Env }> {
   // These Pocket ID bearers now enter through the legacy window, so the tests
   // must hold it open on their own clock rather than on the deploy placeholder.
   testEnv.LEGACY_WINDOW_END = '2099-01-01T00:00:00.000Z';
+  // ...and must plant the historical legacy-window row themselves: the
+  // constructor's seed is gone (2026-08-27, OPS N-10 — a from-empty rebuild
+  // must never create standing), so `legacyAllowed()` is false on a fresh
+  // register. These routing tests simulate the legacy era, whose registers
+  // carried the row; INSERT OR IGNORE keeps the planting idempotent across
+  // tests sharing the singleton governor.
+  await runInDurableObject(
+    env.GOVERNOR.get(env.GOVERNOR.idFromName('governor')),
+    async (_g, state) => {
+      state.storage.sql.exec(
+        `INSERT OR IGNORE INTO leases
+           (lease_id, door_name, client_claims, scope, status, born, last_renewal, last_verb,
+            send_cap_per_day, principal, flow)
+         VALUES ('legacy-window', 'legacy-window', '{"issuer":"pocket-id"}', 'full-house', 'living', ?, NULL, NULL, 20, 'julian', 'legacy')`,
+        Date.now(),
+      );
+    },
+  );
   const token = await new SignJWT({ sub: 'user_marcus' })
     .setProtectedHeader({ alg: 'RS256', kid: 'k1' })
     .setIssuer(ISSUER).setAudience(AUDIENCE).setIssuedAt()

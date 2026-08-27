@@ -44,6 +44,15 @@ async function rewindToV1(open: Open): Promise<void> {
        VALUES (?, ?, '{"issuer":"pocket-id"}', 'full-house', 'living', ?, NULL, NULL, 5)`,
       V1_DOOR, V1_DOOR, Date.now(),
     );
+    // Every production v1 register carries the legacy-window row from the era
+    // when the constructor seeded it. The seed is gone (2026-08-27, OPS N-10),
+    // so the fixture inserts the historical row itself.
+    sql.exec(
+      `INSERT INTO leases
+         (lease_id, door_name, client_claims, scope, status, born, last_renewal, last_verb, send_cap_per_day)
+       VALUES ('legacy-window', 'legacy-window', '{"issuer":"pocket-id"}', 'full-house', 'living', ?, NULL, NULL, 5)`,
+      Date.now(),
+    );
     const cols = (g as unknown as TestSeam).__columnsOf('leases');
     expect(cols).not.toContain('principal');
     expect(cols).not.toContain('flow');
@@ -73,8 +82,8 @@ describe('leases table migration: principal + flow', () => {
       expect(cols).toContain('principal');
       expect(cols).toContain('flow');
       const leases = g.leaseList();
-      // Both rows predate the columns: the legacy window seeded by the v1
-      // constructor, and the door seeded through the v1 column list.
+      // Both rows predate the columns: the historical legacy-window row and
+      // the door, both inserted through the v1 column list by rewindToV1.
       const win = leases.find((l) => l.leaseId === 'legacy-window');
       expect(win?.principal).toBe('julian');
       expect(win?.flow).toBe('device');
@@ -115,7 +124,14 @@ describe('leases table migration: principal + flow', () => {
     // reconstruction below would fail outright; were the column somehow re-added,
     // this value would be gone.
     await runInDurableObject(open(), (g: GovernorDO, state: DurableObjectState) => {
-      state.storage.sql.exec("UPDATE leases SET principal = 'not-the-default' WHERE lease_id = 'legacy-window'");
+      // A fresh register seeds nothing, so plant the marker row explicitly.
+      state.storage.sql.exec(
+        `INSERT INTO leases
+           (lease_id, door_name, client_claims, scope, status, born, last_renewal, last_verb,
+            send_cap_per_day, principal, flow)
+         VALUES ('door:idem', 'door:idem', '{}', 'full-house', 'living', ?, NULL, NULL, 5, 'not-the-default', 'device')`,
+        Date.now(),
+      );
       expect((g as unknown as TestSeam).__columnsOf('leases')).toContain('principal');
     });
     await reconstruct(open);
@@ -124,7 +140,7 @@ describe('leases table migration: principal + flow', () => {
       const cols = (g as unknown as TestSeam).__columnsOf('leases');
       expect(cols).toContain('principal');
       expect(cols).toContain('flow');
-      expect(g.leaseList().find((l) => l.leaseId === 'legacy-window')?.principal).toBe('not-the-default');
+      expect(g.leaseList().find((l) => l.leaseId === 'door:idem')?.principal).toBe('not-the-default');
     });
   });
 
@@ -183,6 +199,16 @@ async function rewindToB2(open: Open): Promise<void> {
     sql.exec('ALTER TABLE lease_tokens DROP COLUMN token_id');
     for (const idx of LEDGER_INDEXES) sql.exec(`DROP INDEX IF EXISTS ${idx}`);
     sql.exec('DELETE FROM leases WHERE lease_id = ?', SYNC_WINDOW);
+    // A real B2 register carries the legacy-window row from its seeded era
+    // (the seed itself is gone since 2026-08-27 — OPS N-10); insert the
+    // historical row the way that register would hold it.
+    sql.exec(
+      `INSERT OR IGNORE INTO leases
+         (lease_id, door_name, client_claims, scope, status, born, last_renewal, last_verb,
+          send_cap_per_day, principal, flow)
+       VALUES ('legacy-window', 'legacy-window', '{"issuer":"pocket-id"}', 'full-house', 'living', ?, NULL, NULL, 5, 'julian', 'legacy')`,
+      Date.now(),
+    );
 
     const seam = g as unknown as TestSeam;
     for (const col of B3_LEASE_COLS) expect(seam.__columnsOf('leases')).not.toContain(col);
@@ -311,9 +337,17 @@ describe('B3 migration: subject, sitting_pin, latch, token_id, ledger indexes', 
     // the re-run ALTER would throw "duplicate column name"; were the columns
     // somehow re-added, these would be gone.
     await runInDurableObject(open(), (_g: GovernorDO, state: DurableObjectState) => {
+      // A fresh register seeds nothing, so plant the marker row explicitly.
+      state.storage.sql.exec(
+        `INSERT INTO leases
+           (lease_id, door_name, client_claims, scope, status, born, last_renewal, last_verb,
+            send_cap_per_day, principal, flow)
+         VALUES ('door:idem-b3', 'door:idem-b3', '{}', 'full-house', 'living', ?, NULL, NULL, 5, 'julian', 'device')`,
+        Date.now(),
+      );
       state.storage.sql.exec(
         "UPDATE leases SET subject = 'user_marcus', sitting_pin = 'pin-1', latch = '{\"pin\":\"p\",\"path\":\"x\"}'"
-        + " WHERE lease_id = 'legacy-window'",
+        + " WHERE lease_id = 'door:idem-b3'",
       );
     });
     await reconstruct(open);
@@ -322,7 +356,7 @@ describe('B3 migration: subject, sitting_pin, latch, token_id, ledger indexes', 
       const seam = g as unknown as TestSeam;
       for (const col of B3_LEASE_COLS) expect(seam.__columnsOf('leases')).toContain(col);
       expect(state.storage.sql
-        .exec('SELECT subject, sitting_pin, latch FROM leases WHERE lease_id = ?', 'legacy-window')
+        .exec('SELECT subject, sitting_pin, latch FROM leases WHERE lease_id = ?', 'door:idem-b3')
         .one()).toEqual({ subject: 'user_marcus', sitting_pin: 'pin-1', latch: '{"pin":"p","path":"x"}' });
       expect(indexNames(state).filter((n) => (LEDGER_INDEXES as readonly string[]).includes(n)).sort())
         .toEqual([...LEDGER_INDEXES].sort());

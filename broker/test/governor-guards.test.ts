@@ -56,10 +56,10 @@ describe('reserved identifiers (COLD H-5)', () => {
         expect(g.knockDecide(k.userCode, 'approved', name, 'full-house'), name).toBe(false);
       }
       // Nothing was written: no knock was decided, so no lease could be born.
-      // (Only legacy-window is still seeded; the sync window's seed was
-      // deleted at the sunset, and its NAME stays refused above regardless.)
-      expect(g.leaseList().map((l) => l.doorName).sort())
-        .toEqual(['legacy-window']);
+      // (Neither legacy window is seeded any more — the sync window's seed
+      // died at the sunset, the mail window's on 2026-08-27; both NAMES stay
+      // refused above regardless.)
+      expect(g.leaseList()).toEqual([]);
     });
   });
 
@@ -100,12 +100,10 @@ describe('reserved identifiers (COLD H-5)', () => {
       for (const name of LEGACY_NAMES) {
         expect((await g.mintAuthcodeLease(name, 'reading-room', 'julian', '{}')).status, name).toBe('invalid');
       }
-      // The refused names left the register exactly as it was — and the
-      // unseeded legacy-window-sync was NOT created by the refused mint.
+      // The refused names left the register exactly as it was — neither
+      // unseeded legacy window was created by the refused mints.
       expect(g.leaseList().map((l) => l.doorName).sort())
-        .toEqual(['legacy-window', 'visit:ok.example']);
-      // And the surviving legacy row kept its seeded scope: no refused mint rewrote it.
-      expect(g.leaseList().find((l) => l.doorName === 'legacy-window')?.scope).toBe('full-house');
+        .toEqual(['visit:ok.example']);
     });
   });
 
@@ -135,17 +133,27 @@ describe('reserved identifiers (COLD H-5)', () => {
   });
 });
 
-describe('legacy-window-sync — dead after the sunset (2026-08-25, OPS N-10)', () => {
-  test('a fresh register never seeds it — a from-empty rebuild cannot revive the window', async () => {
+describe('the legacy windows — both dead (sync: sunset 2026-08-25; mail: 2026-08-27, OPS N-10)', () => {
+  test('a fresh register seeds neither window — a from-empty rebuild cannot revive either', async () => {
     await withGovernor((g) => {
       expect(g.leaseList().some((l) => l.leaseId === 'legacy-window-sync')).toBe(false);
-      // The mail window's seed is untouched by the deletion.
-      expect(g.leaseList().find((l) => l.leaseId === 'legacy-window')?.scope).toBe('full-house');
+      // The mail window's seed died on 2026-08-27, when the soul.store
+      // migration's from-empty rebuild proved it created unapproved standing.
+      expect(g.leaseList().some((l) => l.leaseId === 'legacy-window')).toBe(false);
     });
   });
 
-  test('revoking legacy-window still flips legacyAllowed', async () => {
+  test('a historical living legacy-window row still flips legacyAllowed when revoked', async () => {
+    // Only a register that carries the row from its seeded era (or a restored
+    // backup of one) can answer legacyAllowed true; revocation still closes it.
     await withGovernor((g) => {
+      sqlOf(g).exec(
+        `INSERT INTO leases
+           (lease_id, door_name, client_claims, scope, status, born, last_renewal, last_verb,
+            send_cap_per_day, principal, flow)
+         VALUES ('legacy-window', 'legacy-window', '{"issuer":"pocket-id"}', 'full-house', 'living', ?, NULL, NULL, 5, 'julian', 'legacy')`,
+        Date.now(),
+      );
       expect(g.legacyAllowed()).toBe(true);
       expect(g.leaseRevoke('legacy-window', 'test')).toBe(true);
       expect(g.legacyAllowed()).toBe(false);
