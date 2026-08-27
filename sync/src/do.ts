@@ -6,7 +6,7 @@ import { createMiddleware, getHash } from 'tinybase';
 import type { Middleware, Cell, Changes, Value } from 'tinybase';
 import type { MergeableStore } from 'tinybase/mergeable-store';
 import { createStreamStore } from 'julian-shared/schema';
-import { encodeUndefined } from 'julian-shared/export-codec';
+import { encodeUndefined, decodeUndefined } from 'julian-shared/export-codec';
 import {
   SYNC_AUTH_HEADER,
   type InternalReadRequest,
@@ -211,6 +211,12 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
   // store must NOT be a field initializer, or it would be constructed undefined
   // there and then silently overwritten with a second, unpersisted store.
   store!: MergeableStore;
+  // Captured in createPersister for the same reason, and under the same
+  // discipline, as `store`: never a field initializer. The restore road is the
+  // one write path that must be durable before it answers (see
+  // restoreContent) — every other write is a socket merge, whose durability is
+  // the auto-persister's ordinary business.
+  persister!: ReturnType<typeof createDurableObjectSqlStoragePersister>;
   #middleware?: Middleware;
   // Cells stripped by the merge guard, awaiting an authoritative rewrite:
   // "<tableId> <rowId> <cellId>" -> the incoming cell's typeof.
@@ -229,9 +235,10 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
     this.installGuards();
     // v9 fragmented mode = row-level SQLite layout (avoids Cloudflare's 2 MB row
     // limit). Never downgrade tinybase below 9 — the on-disk layout is breaking.
-    return createDurableObjectSqlStoragePersister(this.store, this.ctx.storage.sql, {
+    this.persister = createDurableObjectSqlStoragePersister(this.store, this.ctx.storage.sql, {
       mode: 'fragmented',
     });
+    return this.persister;
   }
 
   // Match the client fragment size so large payloads never exceed the WS cap.
@@ -427,6 +434,9 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/export') {
       return Response.json(this.exportContent());
+    }
+    if (request.method === 'POST' && url.pathname === '/restore') {
+      return this.restoreContent(request);
     }
     // The internal read road's DO end. Only the router reaches this path, and
     // only after the read secret matched — the DO does no authentication of
@@ -734,6 +744,56 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
     if (this.ctx.getWebSockets().length > 0) {
       await this.ctx.storage.setAlarm(now + SWEEP_INTERVAL_MS);
     }
+  }
+
+  // One-shot restore (soul.store migration): applies a decoded export into an
+  // EMPTY store only, preserving every CRDT stamp, and answers with the
+  // freshly recomputed export hash so the caller can prove hash-equality
+  // against the source. A non-empty store is a 409 — this road can never
+  // clobber a living record.
+  async restoreContent(request: Request): Promise<Response> {
+    // Emptiness is read off the STAMP TREE, not the plain store. Two reasons,
+    // and the first is load-bearing: the values schema gives `activeSessionId`
+    // a default, so `getValueIds()` on a never-written store already answers
+    // `['activeSessionId']` — a plain-store check would 409 every restore,
+    // forever, and the road would be dead on arrival. The second: a store
+    // whose only content is a retraction (a deletion stamp) has an empty
+    // plain view but is emphatically a written record, and must not be
+    // overwritten. The stamp tree is exactly "has anything ever been written
+    // here", which is the question this guard is asking.
+    const [[tables], [values]] = this.store.getMergeableContent();
+    const empty = Object.keys(tables).length === 0 && Object.keys(values).length === 0;
+    if (!empty) {
+      return Response.json({ error: 'store is not empty — restore is one-shot' }, { status: 409 });
+    }
+    let body: { mergeableContent?: unknown };
+    try {
+      body = await request.json() as { mergeableContent?: unknown };
+    } catch {
+      return Response.json({ error: 'unreadable body — send {"mergeableContent": ...}' }, { status: 400 });
+    }
+    if (body?.mergeableContent === undefined) {
+      return Response.json({ error: 'body must carry mergeableContent' }, { status: 400 });
+    }
+    try {
+      this.store.setMergeableContent(decodeUndefined(body.mergeableContent) as never);
+      // Durable before the 200. The auto-persister would otherwise flush on
+      // its own schedule, i.e. AFTER the response — so the caller would be
+      // told "restored" while the bytes were still only in memory, and a DO
+      // eviction in that window would silently lose the whole migration. This
+      // road runs exactly once against an empty store; it can afford to wait,
+      // and the answer must mean what it says.
+      await this.persister.save();
+    } catch (e) {
+      // The error's CLASS, never its message: a thrown message from deep
+      // inside the merge can quote the offending value, and the value here is
+      // record content. The class names the failure without carrying any of
+      // the stream across the wire.
+      const kind = e instanceof Error ? e.name : typeof e;
+      return Response.json(
+        { error: `restore failed while merging content (${kind})` }, { status: 400 });
+    }
+    return Response.json({ restored: true, contentHash: this.exportContent().contentHash });
   }
 
   exportContent(): ExportedContent {

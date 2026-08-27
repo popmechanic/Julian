@@ -72,7 +72,7 @@ function reportPen(
   ctx: ExecutionContext | undefined,
   path: string,
   admitted: Pick<Admitted, 'leaseId' | 'doorName'>,
-  verb: 'export' | 'socket',
+  verb: 'export' | 'socket' | 'restore',
   detail: string,
 ): void {
   const p = env.GATE.fetch(`https://gate${path}`, {
@@ -89,13 +89,15 @@ function reportPen(
   ctx?.waitUntil ? ctx.waitUntil(p) : void p;
 }
 
-export function parsePath(pathname: string): { store: string; context: string; isExport: boolean } | null {
+export function parsePath(
+  pathname: string,
+): { store: string; context: string; isExport: boolean; isRestore: boolean } | null {
   const segs = pathname.split('/').filter(Boolean);
-  if (segs.length === 3 && segs[2] !== 'export') return null;
+  if (segs.length === 3 && segs[2] !== 'export' && segs[2] !== 'restore') return null;
   if (segs.length < 2 || segs.length > 3) return null;
   const [store, context] = segs;
   if (!SEG.test(store) || !SEG.test(context)) return null;
-  return { store, context, isExport: segs.length === 3 };
+  return { store, context, isExport: segs[2] === 'export', isRestore: segs[2] === 'restore' };
 }
 
 const isUpgrade = (req: Request): boolean =>
@@ -239,7 +241,7 @@ export default {
       // A ticket is a one-shot key to one door: a socket upgrade. Every other
       // shape is refused before the ticket is spent, so a mis-aimed client
       // can retry with the same ticket instead of burning it.
-      if (parsed.isExport) return new Response(TICKET_SOCKET_ONLY_MSG, { status: 401 });
+      if (parsed.isExport || parsed.isRestore) return new Response(TICKET_SOCKET_ONLY_MSG, { status: 401 });
       if (!queryTicket.startsWith('jst_')) return new Response(TICKET_ONLY_TICKET_MSG, { status: 401 });
       if (!isUpgrade(req)) return new Response('Expected WebSocket', { status: 426 });
 
@@ -304,10 +306,11 @@ export default {
     // TinyBase sync is bidirectional and a socket is therefore a WRITE
     // surface. The sets themselves live in the shared vocabulary — sync owns
     // no private copy of the table.
-    const verb: 'export' | 'socket' = parsed.isExport ? 'export' : 'socket';
+    const verb: 'export' | 'socket' | 'restore' =
+      parsed.isExport ? 'export' : parsed.isRestore ? 'restore' : 'socket';
     const scopeAllows = parsed.isExport
       ? EXPORT_SCOPES.has(admitted.scope)
-      : SOCKET_SCOPES.has(admitted.scope);
+      : SOCKET_SCOPES.has(admitted.scope); // restore is a WRITE: socket scopes only
     if (!scopeAllows) {
       reportPen(env, ctx, REFUSALS_PATH, admitted, verb,
         `refused: scope ${admitted.scope} may not stream.${verb}`);
@@ -325,6 +328,26 @@ export default {
     }
 
     const stub = env.JULIAN_SYNC.get(env.JULIAN_SYNC.idFromName(`${parsed.store}/${parsed.context}`));
+    if (parsed.isRestore) {
+      if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+      // Door allowlist, fail-closed: unset RESTORE_DOORS admits nobody. Gated
+      // on door_name because that is what the wire really carries for a
+      // device-flow lease (subject is null there by construction — governor).
+      const doors = new Set((env.RESTORE_DOORS ?? '').split(',').map((s) => s.trim()).filter(Boolean));
+      if (admitted.doorName === undefined || !doors.has(admitted.doorName)) {
+        reportPen(env, ctx, REFUSALS_PATH, admitted, 'restore',
+          'refused: door is not on the restore allowlist');
+        return new Response('restore is allowlisted-door-only', { status: 403 });
+      }
+      const bodyText = await req.text();
+      reportPen(env, ctx, ALLOWED_PATH, admitted, 'restore',
+        `token_id=${admitted.tokenId ?? ''}`);
+      return forwardToDo(stub, new Request(new URL('/restore', req.url), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: bodyText,
+      }));
+    }
     if (parsed.isExport) {
       if (req.method !== 'GET') return new Response('Method not allowed', { status: 405 });
       // A healthy read is a ledger row like a healthy open below: the pen
