@@ -28,7 +28,10 @@ directory = "./public"
 # CSV of door names allowed to POST /restore — the migration door only.
 # Door-name gating, not subject: a device lease carries no subject on the
 # wire (see the plan's wire-truth correction). Fail-closed when unset.
-RESTORE_DOORS = "mac-home"
+# Both spellings of the one door: the gate canonicalizes names with a
+# `door:` prefix at approval (as/approve.ts), so the introspection wire
+# carries `door:mac-home` — found live at R9 when the bare form 403'd.
+RESTORE_DOORS = "mac-home,door:mac-home"
 
 [[routes]]
 pattern = "sync.julian.soul.store"
