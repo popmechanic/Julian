@@ -25,7 +25,7 @@ import { resolveAccessToken } from './lib/lease-client';
 const leasePath = process.env.STREAM_EXPORT_LEASE_FILE ?? join(homedir(), '.julian', 'stream-export-lease.json');
 
 // Broker URL for token refresh
-const brokerUrl = process.env.BROKER_URL ?? 'https://julian-broker.julian-memory.workers.dev';
+const brokerUrl = process.env.BROKER_URL ?? 'https://gate.julian.soul.store';
 
 // Validate --label early (before any network call).
 // If --label is present but has no value or starts with --, fail immediately.
@@ -63,7 +63,7 @@ if ('error' in tokenResult) {
 }
 
 const token = tokenResult.token;
-const base = process.env.SYNC_BASE ?? 'https://julian-sync.julian-memory.workers.dev';
+const base = process.env.SYNC_BASE ?? 'https://sync.julian.soul.store';
 
 const res = await fetch(`${base}/${STORE_PATH}/export`, { headers: { Authorization: `Bearer ${token}` } });
 if (!res.ok) {

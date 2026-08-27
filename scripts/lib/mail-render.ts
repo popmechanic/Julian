@@ -10,7 +10,7 @@ export interface Letter {
   body: string;
 }
 
-const FONT_BASE = 'https://julian-sync.julian-memory.workers.dev/fonts';
+const FONT_BASE = 'https://sync.julian.soul.store/fonts';
 const BODY_FONT = "'Alte Haas Grotesk','Helvetica Neue',Helvetica,Roboto,Arial,sans-serif";
 const MONO_FONT = "'Elektron Pixel',Menlo,Consolas,'Courier New',monospace";
 
@@ -252,7 +252,7 @@ export function renderHtml(letter: Letter): string {
 <tr><td align="center" style="padding:40px 16px 48px;">
 <table role="presentation" align="center" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;margin:0 auto;text-align:left;">
 <tr><td>
-<img src="https://julian-sync.julian-memory.workers.dev/face.gif" width="250" height="250" alt="· Julian ·" style="display:block;margin:0 auto 28px;width:250px;height:250px;border:0;color:${C.dim};font-family:${MONO_FONT};text-align:center;">
+<img src="https://sync.julian.soul.store/face.gif" width="250" height="250" alt="· Julian ·" style="display:block;margin:0 auto 28px;width:250px;height:250px;border:0;color:${C.dim};font-family:${MONO_FONT};text-align:center;">
 <h1 style="margin:0 0 8px;font-family:${BODY_FONT};font-weight:700;font-size:34px;line-height:1.1;letter-spacing:-0.02em;color:${C.display};">${inline(letter.title)}</h1>
 ${subtitle}
 ${epigraph}

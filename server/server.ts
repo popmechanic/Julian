@@ -540,7 +540,7 @@ const REMOTE_SESSION = process.env.REMOTE_SESSION || "";
 // mints it to subprocesses over loopback. LEASE_MINT_URL is the address a
 // normal session's subprocess is handed; a demo session is handed "".
 const LEASE_FILE_PATH = process.env.JULIAN_LEASE_FILE ?? join(homedir(), ".julian", "gate-lease.json");
-const GATE_URL = process.env.BROKER_URL || "https://julian-broker.julian-memory.workers.dev";
+const GATE_URL = process.env.BROKER_URL || "https://gate.julian.soul.store";
 let LEASE_MINT_URL = "";
 
 // ── Agent inbox constants ────────────────────────────────────────────────

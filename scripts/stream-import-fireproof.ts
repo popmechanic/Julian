@@ -49,9 +49,9 @@ import {
 } from './lib/fireproof-types';
 import type { DecodedDoc, LedgerInfo, MappedRow } from './lib/fireproof-types';
 
-const SYNC_BASE = process.env.SYNC_BASE ?? 'https://julian-sync.julian-memory.workers.dev';
-const SYNC_WS = process.env.SYNC_WS ?? 'wss://julian-sync.julian-memory.workers.dev';
-const BROKER_URL = process.env.BROKER_URL ?? 'https://julian-broker.julian-memory.workers.dev';
+const SYNC_BASE = process.env.SYNC_BASE ?? 'https://sync.julian.soul.store';
+const SYNC_WS = process.env.SYNC_WS ?? 'wss://sync.julian.soul.store';
+const BROKER_URL = process.env.BROKER_URL ?? 'https://gate.julian.soul.store';
 const DEFAULT_MANIFEST_OUT = './fireproof-annex-manifest.txt';
 
 // GATE FINDING (round 1): a throw raised from inside TinyBase's onSend (as
