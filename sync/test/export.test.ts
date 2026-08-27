@@ -71,6 +71,51 @@ describe('export endpoint', () => {
     expect(probe.getCell('messages', 'm1', 'text')).toBe('precious');
   });
 
+  test('a deleted row exports as an explicit tombstone and does not resurrect on restore (issue #48)', async () => {
+    // Seed two rows into a fresh DO, then retract one. The CRDT stamps the
+    // deletion as undefined; JSON used to collapse it to null, and a restore
+    // brought the row back alive with schema defaults.
+    await runInDurableObject(
+      env.JULIAN_SYNC.get(env.JULIAN_SYNC.idFromName('test/exp48')),
+      async (instance: import('../src/do').JulianSyncDO) => {
+        instance.store.setRow('messages', 'kept', { sessionId: 's', role: 'user', speakerName: 'M', text: 'stays', ts: 1 });
+        instance.store.setRow('messages', 'gone', { sessionId: 's', role: 'user', speakerName: 'M', text: 'retracted', ts: 2 });
+        instance.store.delRow('messages', 'gone');
+      },
+    );
+
+    const testEnv = env as unknown as Env;
+    testEnv.GATE = leaseGate('test');
+    testEnv.INTROSPECT_SECRET = 'test-secret';
+    const res = await worker.fetch(
+      new Request('https://sync.test/test/exp48/export', {
+        headers: { Authorization: 'Bearer jla_export-test-token' },
+      }),
+      testEnv,
+    );
+    expect(res.status).toBe(200);
+    const raw = await res.text();
+    const body = JSON.parse(raw) as { mergeableContent: unknown; contentHash: number };
+
+    // The artifact itself is lossless: deletions are explicit markers, never null.
+    const { UNDEFINED_MARKER } = await import('julian-shared/export-codec');
+    const contentJson = JSON.stringify(body.mergeableContent);
+    expect(contentJson).toContain(UNDEFINED_MARKER);
+    expect(contentJson).not.toContain('null'); // no stamp value collapsed to null
+
+    // The hash covers the lossless form as served.
+    const { getHash } = await import('tinybase');
+    expect(getHash(JSON.stringify(body.mergeableContent))).toBe(body.contentHash);
+
+    // Round-trip: decode, restore, and the retracted row stays retracted.
+    const { decodeUndefined } = await import('julian-shared/export-codec');
+    const { createStreamStore } = await import('julian-shared/schema');
+    const restored = createStreamStore('probe48');
+    restored.setMergeableContent(decodeUndefined(body.mergeableContent) as never);
+    expect(restored.getRowIds('messages')).toEqual(['kept']);
+    expect(restored.getCell('messages', 'kept', 'text')).toBe('stays');
+  });
+
   test('a healthy export lands in the positive pen (the ledger records reads, not only refusals)', async () => {
     // Found live 2026-08-13: the first stream-read export succeeded and left
     // no ledger row — the export branch forwarded to the DO without the

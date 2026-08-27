@@ -6,6 +6,7 @@ import { createMiddleware, getHash } from 'tinybase';
 import type { Middleware, Cell, Changes, Value } from 'tinybase';
 import type { MergeableStore } from 'tinybase/mergeable-store';
 import { createStreamStore } from 'julian-shared/schema';
+import { encodeUndefined } from 'julian-shared/export-codec';
 import {
   SYNC_AUTH_HEADER,
   type InternalReadRequest,
@@ -736,7 +737,12 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
   }
 
   exportContent(): ExportedContent {
-    const mergeableContent = this.store.getMergeableContent();
+    // Issue #48: deleted cells are stamped undefined in the CRDT, and bare
+    // JSON collapses undefined → null — a live-looking value that resurrects
+    // the deletion on restore. Encode before serialization so the artifact is
+    // lossless; consumers decode (julian-shared/export-codec) before
+    // setMergeableContent. The hash covers the encoded form as served.
+    const mergeableContent = encodeUndefined(this.store.getMergeableContent());
     return {
       mergeableContent,
       contentHash: getHash(JSON.stringify(mergeableContent)),

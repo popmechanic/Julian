@@ -5,6 +5,7 @@
   "exports": {
     "./auth": "./auth.ts",
     "./schema": "./schema.ts",
+    "./export-codec": "./export-codec.ts",
     "./scopes": "./scopes.ts",
     "./gate-contract": "./gate-contract.ts"
   },

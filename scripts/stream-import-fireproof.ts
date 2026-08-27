@@ -16,6 +16,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createStreamStore, STORE_PATH } from 'julian-shared/schema';
+import { decodeUndefined } from 'julian-shared/export-codec';
 import {
   extractMembers,
   readBlobs,
@@ -357,7 +358,10 @@ async function freshToken(): Promise<string> {
 async function fetchExportBody(token: string): Promise<{ mergeableContent: unknown; ledgerId: string | null }> {
   const res = await fetch(`${SYNC_BASE}/${STORE_PATH}/export`, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) throw new Error(`/export failed: HTTP ${res.status}`);
-  return (await res.json()) as { mergeableContent: unknown; ledgerId: string | null };
+  const body = (await res.json()) as { mergeableContent: unknown; ledgerId: string | null };
+  // Issue #48: the wire form carries deletions as explicit markers; decode at
+  // the boundary so every reader downstream sees the CRDT's own undefined.
+  return { ...body, mergeableContent: decodeUndefined(body.mergeableContent) };
 }
 
 async function doWrite(rows: MappedRow[], opts: Options): Promise<void> {

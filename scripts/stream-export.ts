@@ -4,8 +4,18 @@
 // creation ceremony ever runs. This CLI fetches the authed /export endpoint,
 // verifies the content hash, proves the payload parses back into a fresh
 // schema'd store, then archives it (JSON + .sha256) under the ledger's folder.
+//
+// Export format (since 2026-08-26, issue #48): deletions in mergeableContent
+// are explicit '￼' markers, never null — so a retraction is verifiable and a
+// restore cannot resurrect deleted rows. Restoring ANY archive: JSON.parse the
+// file, then decodeUndefined(body.mergeableContent) from
+// julian-shared/export-codec before setMergeableContent. Archives sealed
+// before this date carry null where the marker now goes; decodeUndefined maps
+// those too (null is impossible as a live cell value, so the mapping is
+// unambiguous) — old archives stay readable and are healed on restore.
 import { getHash } from 'tinybase';
 import { createStreamStore, STORE_PATH } from 'julian-shared/schema';
+import { decodeUndefined } from 'julian-shared/export-codec';
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -71,8 +81,11 @@ if (getHash(JSON.stringify(body.mergeableContent)) !== body.contentHash) {
   console.error('HASH MISMATCH — export not trustworthy, refusing to archive');
   process.exit(1);
 }
+// Decode before the probe (issue #48): the wire form carries deletions as
+// explicit markers; setMergeableContent needs them back as undefined. The
+// archived file keeps the encoded body verbatim — that is the lossless artifact.
 const probe = createStreamStore('export-probe');
-probe.setMergeableContent(body.mergeableContent as never);
+probe.setMergeableContent(decodeUndefined(body.mergeableContent) as never);
 const messageCount = probe.getRowIds('messages').length;
 
 const dir = `${process.env.EXPORT_DIR ?? `${process.env.HOME}/julian-stream-backups/tinybase`}/${body.ledgerId ?? 'unborn'}`;
