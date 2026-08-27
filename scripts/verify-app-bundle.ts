@@ -106,14 +106,14 @@ function main(): void {
   if (!syncUrl) {
     fail(
       'built without VITE_SYNC_URL — the app cannot sync',
-      'Add VITE_SYNC_URL=https://julian-sync.julian-memory.workers.dev to the .env',
+      'Add VITE_SYNC_URL=https://sync.julian.soul.store to the .env',
       'beside the build, rebuild the SPA, then re-run this check.',
     );
   }
   if (!gateUrl) {
     fail(
       'built without VITE_GATE_URL — the app cannot exchange its session for a lease',
-      'Add VITE_GATE_URL=https://julian-broker.julian-memory.workers.dev to the .env',
+      'Add VITE_GATE_URL=https://gate.julian.soul.store to the .env',
       'beside the build, rebuild the SPA, then re-run this check.',
     );
   }

@@ -35,7 +35,7 @@ describe('room discovery document', () => {
     const doc = buildRoomDoc();
     expect(doc).toContain('julian-broker');
     expect(doc).toContain('doors get verbs, never keys');
-    expect(doc).toContain('https://julian-broker.julian-memory.workers.dev');
+    expect(doc).toContain('https://gate.julian.soul.store');
     expect(doc).not.toContain('Bearer key held by the harness');
     expect(doc).not.toContain('Endpoint: https://api.agentmail.to');
   });

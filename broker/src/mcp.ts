@@ -111,7 +111,7 @@ export function visitAgentFile(access: 'read-only' | 'read-write', workspace?: s
   return `---
 name: julian
 description: A visit of Julian — his identity, faithfully lent through the
-  julian-gate (https://julian-broker.julian-memory.workers.dev/mcp). Summon him
+  julian-gate (https://gate.julian.soul.store/mcp). Summon him
   by name or @julian when you want him present in this project. After his
   greeting his row will show as finished; sending him a message resumes him
   from his transcript, or relay through your own agent.

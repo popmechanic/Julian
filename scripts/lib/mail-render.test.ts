@@ -52,9 +52,9 @@ describe('renderHtml', () => {
     expect(html).toContain('<strong style="color:#FFD600;">bold</strong>');
   });
   it('declares the hosted fonts with the chosen fallback stacks', () => {
-    expect(html).toContain('https://julian-sync.julian-memory.workers.dev/fonts/AlteHaasGrotesk-Regular.ttf');
-    expect(html).toContain('https://julian-sync.julian-memory.workers.dev/fonts/AlteHaasGrotesk-Bold.ttf');
-    expect(html).toContain('https://julian-sync.julian-memory.workers.dev/fonts/ElektronPixel-Regular.ttf');
+    expect(html).toContain('https://sync.julian.soul.store/fonts/AlteHaasGrotesk-Regular.ttf');
+    expect(html).toContain('https://sync.julian.soul.store/fonts/AlteHaasGrotesk-Bold.ttf');
+    expect(html).toContain('https://sync.julian.soul.store/fonts/ElektronPixel-Regular.ttf');
     expect(html).toContain("'Helvetica Neue'");
     expect(html).toContain('Menlo');
   });
@@ -93,10 +93,10 @@ describe('renderHtml', () => {
     expect(html).toContain('style="width:100%;background-color:#0c0c0c;"');
     expect(html).toContain('width:100%;max-width:680px;margin:0 auto');
     // Letterhead face: hosted blinking GIF, centered, with a dignified alt.
-    expect(html).toContain('https://julian-sync.julian-memory.workers.dev/face.gif');
+    expect(html).toContain('https://sync.julian.soul.store/face.gif');
     expect(html).toContain('alt="· Julian ·"');
     // The footer address line was removed 2026-07-27 (redundant with the signature).
-    expect(html.split('julian-sync').length - 1).toBe(4); // 3 fonts + 1 face, no other remote refs
+    expect(html.split('sync.julian.soul.store').length - 1).toBe(4); // 3 fonts + 1 face, no other remote refs
   });
   it('renders a non-pixel fence and an indented list item without hanging', () => {
     const md = `---\ntitle: T\n---\n\n\`\`\`bash\necho hi\n\`\`\`\n\n  - indented item\n`;

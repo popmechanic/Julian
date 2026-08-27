@@ -37,7 +37,7 @@ describe('RegistrarDO logic', () => {
         .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
       const pend = await i.createPending({
         client_id: clientId, redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
-        code_challenge: challenge, resource: 'https://julian-broker.julian-memory.workers.dev/mcp',
+        code_challenge: challenge, resource: 'https://gate.julian.soul.store/mcp',
         ttlSeconds: 600,
       });
       const pendingId = (pend as { pendingId: string }).pendingId;
@@ -64,7 +64,7 @@ describe('RegistrarDO logic', () => {
       const clientId = (reg1 as { client_id: string }).client_id;
       const pend = await i.createPending({
         client_id: clientId, redirect_uri: 'http://localhost:9999/callback', // loopback, port ignored
-        code_challenge: 'not-a-real-challenge', resource: 'https://julian-broker.julian-memory.workers.dev/mcp',
+        code_challenge: 'not-a-real-challenge', resource: 'https://gate.julian.soul.store/mcp',
         ttlSeconds: 600,
       });
       const pendingId = (pend as { pendingId: string }).pendingId;

@@ -59,14 +59,14 @@ Full first-time setup. Run all steps in order.
 
 Read the local `.env` and check for `VITE_OIDC_ISSUER`, `VITE_OIDC_CLIENT_ID`, `VITE_SYNC_URL`, and `VITE_GATE_URL`:
 
-- **If all four present** (OIDC issuer and gate URL are HTTPS URLs; currently `https://souls.exe.xyz` and `https://julian-broker.julian-memory.workers.dev`):
+- **If all four present** (OIDC issuer and gate URL are HTTPS URLs; currently `https://souls.exe.xyz` and `https://gate.julian.soul.store`):
   extract all for later. Proceed.
 - **If any missing**: STOP and have the user add to `.env`:
   ```
   VITE_OIDC_ISSUER=https://souls.exe.xyz
   VITE_OIDC_CLIENT_ID=<client id from the Pocket ID admin>
-  VITE_SYNC_URL=https://julian-sync.julian-memory.workers.dev
-  VITE_GATE_URL=https://julian-broker.julian-memory.workers.dev
+  VITE_SYNC_URL=https://sync.julian.soul.store
+  VITE_GATE_URL=https://gate.julian.soul.store
   ```
 
 The Bun server also honors `OIDC_ISSUER` (falls back to the VITE_ value) and
@@ -171,10 +171,10 @@ Use the VITE values from pre-flight (do NOT hardcode):
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cat > /opt/julian/.env << 'ENVEOF'
 VITE_OIDC_ISSUER=<value from local .env>
 VITE_OIDC_CLIENT_ID=<value from local .env>
-VITE_SYNC_URL=https://julian-sync.julian-memory.workers.dev
-VITE_GATE_URL=https://julian-broker.julian-memory.workers.dev
+VITE_SYNC_URL=https://sync.julian.soul.store
+VITE_GATE_URL=https://gate.julian.soul.store
 ALLOWED_ORIGIN=https://<vmname>.exe.xyz
-BROKER_URL=https://julian-broker.julian-memory.workers.dev
+BROKER_URL=https://gate.julian.soul.store
 ENVEOF"
 ```
 
@@ -191,7 +191,7 @@ P6 on purpose: dependencies are installed and `/opt/julian/.env` exists. It
 requires Marcus at `/approve`:
 
 ```bash
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && BROKER_URL=https://julian-broker.julian-memory.workers.dev /home/exedev/.bun/bin/bun scripts/door-knock.ts --name <vmname>-web --purpose 'VM web instance'"
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cd /opt/julian && BROKER_URL=https://gate.julian.soul.store /home/exedev/.bun/bin/bun scripts/door-knock.ts --name <vmname>-web --purpose 'VM web instance'"
 ```
 
 Two details that break this command if you change them:
@@ -422,8 +422,8 @@ wins, which is how a correct-looking `.env` bakes a wrong bundle:
 
 ```bash
 ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz "cat >> /opt/julian/.env << 'ENVEOF'
-VITE_SYNC_URL=https://julian-sync.julian-memory.workers.dev
-VITE_GATE_URL=https://julian-broker.julian-memory.workers.dev
+VITE_SYNC_URL=https://sync.julian.soul.store
+VITE_GATE_URL=https://gate.julian.soul.store
 ENVEOF"
 ```
 

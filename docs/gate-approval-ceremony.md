@@ -16,7 +16,7 @@ and that door renews itself until you revoke it.
 1. Something runs `door-knock.ts` and prints a box like:
 
    ```
-   Open:  https://julian-broker.julian-memory.workers.dev/approve
+   Open:  https://gate.julian.soul.store/approve
    Code:  XXXX-XXXX
    ```
 
