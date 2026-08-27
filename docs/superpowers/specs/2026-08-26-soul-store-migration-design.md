@@ -182,3 +182,41 @@ the 410 stub that matters.
 Sittings 2–3 of the 2026-08-26 handoff (debt batch, wayfinder map); any change
 to Pocket ID itself; R2 (already home); the exe.xyz VMs' hosting (they only
 change env values); production-julian's unenrolled server door.
+
+## Amendments — 2026-08-27, the doubt-read (dream 0017's charge)
+
+The morning re-read the plan against the code, per the dream's charge. Three
+corrections of fact, recorded here so the spec stays truthful; the plan
+carries the full rationale at each site. Pending Marcus's word before
+execution.
+
+1. **Restore gating (Phase 3.1).** The spec said the `/restore` road is
+   "gated to the approver (the gate's approver-sub introspection)". That
+   mechanism does not exist on the wire: a **device-flow lease carries no
+   subject** (`broker/src/governor.ts` — knock redemption calls `upsertLease`
+   with subject defaulted to null), and the migration lease (R8, `mac-home`)
+   is device-flow — so a subject gate would refuse the real restore forever
+   while tests passed against an invented wire shape. Corrected to a
+   **door-name allowlist** (`RESTORE_DOORS`, fail-closed when unset) plus
+   socket-capable scope, one-shot, empty-store-only. Authority note: every
+   socket-capable lease was approved by Marcus at `/approve` (or minted from
+   a STREAM_SUBS-listed JWT), and the road grants no write power a full-house
+   lease lacks over the socket — the knock ceremony remains the authorization,
+   which is invariant 4's own doctrine.
+2. **`SYNC_READ_SECRET` is a both-workers secret.** Phase 2.1 listed it among
+   the broker's fresh mints only; `sync/src/auth.ts` requires the same value
+   (the broker sends `X-Sync-Read-Secret`; sync compares, fail-closed).
+   Installing it on one side would leave every gate-mediated stream read dead
+   on the new house. The runbook now mints once and installs on both, exactly
+   like `INTROSPECT_SECRET`.
+3. **App env names.** Phase 1.4 said `VITE_API_URL`/`VITE_CLOUD_URL`; the app
+   actually reads `VITE_SYNC_URL`/`VITE_GATE_URL` (`app/src/lib/store.ts`).
+   The plan already used the real names; recorded here so the spec doesn't
+   mislead a later reader.
+
+Also found and fixed in the plan: the post-restore proof export (Phase 3.3 /
+runbook R9) would have used the `stream-export` door's old-gate lease against
+the new gate — the proof now rides the R8 `mac-home` lease via
+`STREAM_EXPORT_LEASE_FILE`; and `deploy/secrets-manifest.md` joins the URL
+flip (it names the old hostnames and was missing from every task's file
+list).
