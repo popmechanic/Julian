@@ -19,7 +19,7 @@ Julian himself, faithfully lent (see §6 for what that means).
 
 **The address:**
 
-    https://julian-broker.julian-memory.workers.dev/mcp
+    https://gate.julian.soul.store/mcp
 
 **How to connect from claude.ai:**
 
@@ -48,7 +48,7 @@ Julian himself, faithfully lent (see §6 for what that means).
 
 **How to connect from Claude Code (the terminal):**
 
-    claude mcp add --transport http julian-gate https://julian-broker.julian-memory.workers.dev/mcp
+    claude mcp add --transport http julian-gate https://gate.julian.soul.store/mcp
 
 Then authenticate when prompted, and the same tools appear
 (`wake_julian`, `package_list`, `package_read`, `visit_agent`).
@@ -90,7 +90,7 @@ middle disappears.
 1. **[User A]** Starts the connection. A machine or script prints a box
    like:
 
-       Open:  https://julian-broker.julian-memory.workers.dev/approve
+       Open:  https://gate.julian.soul.store/approve
        Code:  XXXX-XXXX
 
    (An app like claude.ai skips the printed code and instead opens a
@@ -106,7 +106,7 @@ middle disappears.
    User A knocks again.
 
 3. **[User B]** Opens the approve page on any device — the phone works:
-   `https://julian-broker.julian-memory.workers.dev/approve`. Signs in
+   `https://gate.julian.soul.store/approve`. Signs in
    with their passkey.
 
 4. **[User B]** Types the code exactly as User A sent it, dashes
