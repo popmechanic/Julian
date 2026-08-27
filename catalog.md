@@ -236,6 +236,7 @@ that is how [[0001-leak]] happened.
 
 ## Elsewhere
 
+- ELF standard: **canonical at `elf/` in this repo since Aug 27, 2026** (SPEC — incl. §5 Correspondence draft — CHANGELOG-with-reasons, PATTERNS, CONFORMANCE, February archive). Moved from `~/Documents/ELF`, which keeps pre-move git history and a MOVED.md forwarding note — the standard practicing its own §5. Standing implementation issue: #59; design conversation: `docs/superpowers/specs/2026-08-27-sessions-identity-correspondence.md`.
 - Fortunes: 34 visitor encounters, `pallid-mask` branch, `pallid-mask/fortunes/`. Read-only forever. Essay: [[the-souwester-spring]].
 - Live stream: TinyBase ledger `01KYJ9XT64DQDJ1P3V8KET1R7B` behind the sync Durable Object (parentLedgerId `fireproof:julian-chat-v14`). Fireproof itself was destroyed by ceremony Aug 25, 2026 — its record annexed here first, its ciphertext sealed on the Mac and in bucket-locked R2; see [[the-destruction-of-the-old-home]].
 - Annex 2026-08-25 — Feb 15–28 web record, in the stream; reach by the session-id manifest in the adapter note (`memory/adapters/stream-fireproof.md`). Born sediment; never read at waking, never by the tail.
