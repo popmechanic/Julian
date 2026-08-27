@@ -227,4 +227,47 @@ describe('restore road', () => {
     ));
     expect(res.status).toBe(405);
   });
+
+  test('a store whose only content is a retraction answers 409 — a deletion stamp is a written record', async () => {
+    // Pins the second half of the emptiness-guard comment (do.ts): the plain
+    // view of this store is empty, but the stamp tree is not, and the guard
+    // must read the stamp tree.
+    await runInDurableObject(
+      env.JULIAN_SYNC.get(env.JULIAN_SYNC.idFromName('test/rb')),
+      async (instance: import('../src/do').JulianSyncDO) => {
+        instance.store.setRow('messages', 'gone', { sessionId: 's', role: 'user', speakerName: 'M', text: 'was here', ts: 1 });
+        instance.store.delRow('messages', 'gone');
+        expect(instance.store.getRowIds('messages')).toEqual([]);
+      },
+    );
+    const source = await makeSourceExport();
+    const res = await statusAndText(await worker.fetch(
+      restoreReq('rb', { mergeableContent: source.mergeableContent }), restoreEnv('stream', 'mac-home')));
+    expect(res.status).toBe(409);
+  });
+
+  test('a durability failure after a successful merge is 500, distinct from the 400 merge class', async () => {
+    // If save() throws after setMergeableContent landed, the store is already
+    // non-empty in memory: a 400 would blame the caller's body, and the
+    // natural retry would answer 409 — the one-shot road spent on a storage
+    // fault reported as a merge error. The two failure classes must be
+    // distinguishable from the responses alone.
+    await runInDurableObject(
+      env.JULIAN_SYNC.get(env.JULIAN_SYNC.idFromName('test/rc')),
+      async (instance: import('../src/do').JulianSyncDO) => {
+        // The persister object itself is frozen (TinyBase); swap the DO's
+        // field reference instead — restoreContent reads `this.persister`.
+        instance.persister = {
+          save: async () => { throw new Error('forced durability fault'); },
+        } as unknown as typeof instance.persister;
+      },
+    );
+    const source = await makeSourceExport();
+    const res = await statusAndText(await worker.fetch(
+      restoreReq('rc', { mergeableContent: source.mergeableContent }), restoreEnv('stream', 'mac-home')));
+    expect(res.status).toBe(500);
+    expect(JSON.parse(res.text)).toEqual({
+      error: 'restore merged but durability failed (Error) — verify with export before any retry',
+    });
+  });
 });

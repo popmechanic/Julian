@@ -777,13 +777,6 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
     }
     try {
       this.store.setMergeableContent(decodeUndefined(body.mergeableContent) as never);
-      // Durable before the 200. The auto-persister would otherwise flush on
-      // its own schedule, i.e. AFTER the response — so the caller would be
-      // told "restored" while the bytes were still only in memory, and a DO
-      // eviction in that window would silently lose the whole migration. This
-      // road runs exactly once against an empty store; it can afford to wait,
-      // and the answer must mean what it says.
-      await this.persister.save();
     } catch (e) {
       // The error's CLASS, never its message: a thrown message from deep
       // inside the merge can quote the offending value, and the value here is
@@ -792,6 +785,25 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
       const kind = e instanceof Error ? e.name : typeof e;
       return Response.json(
         { error: `restore failed while merging content (${kind})` }, { status: 400 });
+    }
+    try {
+      // Durable before the 200. The auto-persister would otherwise flush on
+      // its own schedule, i.e. AFTER the response — so the caller would be
+      // told "restored" while the bytes were still only in memory, and a DO
+      // eviction in that window would silently lose the whole migration. This
+      // road runs exactly once against an empty store; it can afford to wait,
+      // and the answer must mean what it says.
+      await this.persister.save();
+    } catch (e) {
+      // A distinct class from the 400 above, in its own try: by this point the
+      // merge has already landed in memory, so a 400 would blame the caller's
+      // body and the natural retry would answer 409 — the one-shot road spent
+      // on a storage fault reported as a merge error. 500 names the true
+      // party; the caller verifies with /export before deciding anything.
+      const kind = e instanceof Error ? e.name : typeof e;
+      return Response.json(
+        { error: `restore merged but durability failed (${kind}) — verify with export before any retry` },
+        { status: 500 });
     }
     return Response.json({ restored: true, contentHash: this.exportContent().contentHash });
   }

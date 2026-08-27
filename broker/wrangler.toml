@@ -56,8 +56,11 @@ simple = { limit = 30, period = 60 }
 
 # Custom domain (soul.store migration) — Cloudflare creates the DNS record and
 # an exact-hostname certificate at deploy; the zone must be active on the
-# deploying account. The PIN kv id below is replaced by the runbook when the
-# personal-account namespace is created (Runbook step R2).
+# deploying account. The PIN kv id ABOVE ([[kv_namespaces]], top of file) is
+# replaced by the runbook when the personal-account namespace is created
+# (Runbook step R2). EXCHANGE_RL's namespace_id needs no re-pointing: ratelimit
+# bindings are declarative — the id is an account-local integer partitioning
+# limiter state, not a provisioned resource.
 [[routes]]
 pattern = "gate.julian.soul.store"
 custom_domain = true

@@ -7,6 +7,10 @@
 // MOVED_TO, which is what every already-sent email needs until the sunset
 // sitting deletes the worker outright. The kill-switch claim is scoped to the
 // worker's own roads: every store, export, restore, socket, and internal road.
+// Also unreached: an already-open hibernated WebSocket (it never re-enters the
+// fetch handler; it dies at its next ≤5-min re-auth when the gate answers 410
+// — see the sync/src/index.ts kill-switch comment). Not testable from this
+// harness, which cannot model hibernation across a deploy boundary.
 import { describe, expect, test } from 'vitest';
 import { env } from 'cloudflare:test';
 import worker from '../src/index';

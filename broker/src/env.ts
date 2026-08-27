@@ -24,7 +24,11 @@ export interface Env {
   GATE_CLIENT_ID: string;     // Pocket ID client for the approval login
   GATE_REDIRECT_URI: string;  // must match the client's registered callback
   PUBLIC_URL: string;         // the gate's own origin, as a door sees it
-  LEGACY_WINDOW_END: string;  // ISO date; after it, Pocket ID bearers are refused
+  // Permanently unset since d642e5a deleted it from wrangler.toml (the sunset):
+  // lease-auth's legacy arm reads it and fails closed on the missing value
+  // (Date.parse(undefined ?? '') → NaN → 401 WINDOW_CLOSED). Optional so the
+  // type tells the truth; deleting the legacy arm itself is its own decision.
+  LEGACY_WINDOW_END?: string;
 
   PACKAGE_RAW_BASE: string;   // raw content root, e.g. https://raw.githubusercontent.com/popmechanic/Julian
   PIN_COMPARE_BASE: string;   // branch-membership proof root, e.g. https://api.github.com/repos/popmechanic/Julian/compare/main...

@@ -214,6 +214,13 @@ export default {
     // no stale client can reach auth, storage, or the DO on the old house.
     // The DO bindings stay in wrangler.toml, so storage is untouched beneath it.
     //
+    // One more honest edge: an ALREADY-OPEN hibernated WebSocket never re-enters
+    // this fetch handler, so a live tab can keep merging into the old DO for up
+    // to REAUTH_INTERVAL_MS (5 min) after MOVED_TO lands — until its next
+    // re-auth hits the gate's 410 and the socket closes 4002. Bounded and
+    // self-healing; the runbook's R0/R9 quiesce discipline is what actually
+    // closes it.
+    //
     // Scope, stated honestly: this covers every *worker-routed* path. The
     // `[assets]` binding (`./public`) is served by the assets layer without
     // invoking the worker at all, so `/fonts/…` and the aurora keep answering
