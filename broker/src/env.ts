@@ -48,4 +48,7 @@ export interface Env {
   EXCHANGE_RL?: { limit(opts: { key: string }): Promise<{ success: boolean }> };
 
   AGENTMAIL_INBOX_ID: string;
+
+  /** When set, the worker answers 410 to everything — the sunset signpost. */
+  MOVED_TO?: string;
 }

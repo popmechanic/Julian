@@ -207,6 +207,23 @@ function ticketRefusal(error: string | undefined): string {
 
 export default {
   async fetch(rawReq: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
+    // Sunset kill-switch (soul.store migration): a deploy that sets MOVED_TO
+    // turns this whole worker into a signpost. Placed before all routing so
+    // no stale client can reach auth, storage, or the DO on the old house.
+    // The DO bindings stay in wrangler.toml, so storage is untouched beneath it.
+    //
+    // Scope, stated honestly: this covers every *worker-routed* path. The
+    // `[assets]` binding (`./public`) is served by the assets layer without
+    // invoking the worker at all, so `/fonts/…` and the aurora keep answering
+    // 200 under MOVED_TO — which is what the already-sent letters need until
+    // the sunset sitting deletes the worker outright.
+    if (env.MOVED_TO) {
+      return Response.json(
+        { error: 'gone', moved_to: env.MOVED_TO, message: `this house has moved — use ${env.MOVED_TO}` },
+        { status: 410 },
+      );
+    }
+
     const req = stripInternalHandoff(rawReq);
     const url = new URL(req.url);
 

@@ -74,6 +74,20 @@ function passthrough(res: Response): Response {
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
+    // Sunset kill-switch (soul.store migration): a deploy that sets MOVED_TO
+    // turns this whole worker into a signpost. Placed before all routing so
+    // no stale client can reach auth, storage, or the DO on the old house —
+    // not even the unauthenticated discovery documents, which would otherwise
+    // keep pointing a fresh MCP client at a gate that no longer answers.
+    // The DO bindings stay in wrangler.toml, so the governor and registrar
+    // storage sit untouched beneath it.
+    if (env.MOVED_TO) {
+      return Response.json(
+        { error: 'gone', moved_to: env.MOVED_TO, message: `this house has moved — use ${env.MOVED_TO}` },
+        { status: 410 },
+      );
+    }
+
     const url = new URL(req.url);
     const path = url.pathname;
 

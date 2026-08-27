@@ -25,6 +25,9 @@ export interface Env {
   // `string` but read defensively at the guard, because an unset secret
   // arrives as undefined at runtime and must refuse everyone.
   SYNC_READ_SECRET: string;
+
+  /** When set, the worker answers 410 to everything — the sunset signpost. */
+  MOVED_TO?: string;
 }
 
 // --- Gate-mediated credential checks ---------------------------------------
