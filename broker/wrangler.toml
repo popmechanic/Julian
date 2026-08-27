@@ -27,7 +27,7 @@ OIDC_ISSUER = "https://souls.exe.xyz"
 OIDC_JWKS_URL = "https://souls.exe.xyz/.well-known/jwks.json"
 OIDC_AUDIENCE = "0143f667-3c75-4779-b16c-e2709ffdc049"   # Pocket ID client_id for the Julian app
 AGENTMAIL_INBOX_ID = "julian-marcus@agentmail.to"        # public address, not a secret
-MCP_RESOURCE_URL = "https://julian-broker.julian-memory.workers.dev/mcp"
+MCP_RESOURCE_URL = "https://gate.julian.soul.store/mcp"
 PACKAGE_RAW_BASE = "https://raw.githubusercontent.com/popmechanic/Julian"
 PIN_COMPARE_BASE = "https://api.github.com/repos/popmechanic/Julian/compare/main..."
 
@@ -35,9 +35,8 @@ PIN_COMPARE_BASE = "https://api.github.com/repos/popmechanic/Julian/compare/main
 # runtime have the right shape; the real values are set at deploy.
 APPROVER_SUBS = "94d31ef6-0b1f-441e-b67c-c037a8993924"                                       # comma-separated Pocket ID subs; empty refuses every approval
 GATE_CLIENT_ID = "79ff255e-dd77-4ade-adc8-db4fd833f361"                         # Pocket ID client for the approval login
-GATE_REDIRECT_URI = "https://julian-broker.julian-memory.workers.dev/auth/callback"
-PUBLIC_URL = "https://julian-broker.julian-memory.workers.dev"
-LEGACY_WINDOW_END = "2026-09-01T00:00:00Z"               # Sep 1 backstop, OPS N-6 — goes live as deploy step 1
+GATE_REDIRECT_URI = "https://gate.julian.soul.store/auth/callback"
+PUBLIC_URL = "https://gate.julian.soul.store"
 
 STREAM_SUBS = "94d31ef6-0b1f-441e-b67c-c037a8993924=julian"                     # sub=principal comma-separated map
 APP_ORIGINS = "https://julian.exe.xyz,https://julian-new.exe.xyz,http://localhost:8000"  # comma-separated exact origins
@@ -54,3 +53,11 @@ simple = { limit = 30, period = 60 }
 
 # Worker secrets (wrangler secret put) — never vars, never in this file:
 #   AGENTMAIL_API_KEY, SESSION_SECRET, INTROSPECT_SECRET, BREAKGLASS_SECRET, SYNC_READ_SECRET
+
+# Custom domain (soul.store migration) — Cloudflare creates the DNS record and
+# an exact-hostname certificate at deploy; the zone must be active on the
+# deploying account. The PIN kv id below is replaced by the runbook when the
+# personal-account namespace is created (Runbook step R2).
+[[routes]]
+pattern = "gate.julian.soul.store"
+custom_domain = true

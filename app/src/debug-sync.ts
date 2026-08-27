@@ -37,8 +37,8 @@ Object.assign(window.WebSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 
 log(`initial phase: ${syncPhase()}`);
 onSyncPhase((p) => log(`phase → ${p}`));
 
-const gateUrl = 'https://julian-broker.julian-memory.workers.dev';
-const base = 'wss://julian-sync.julian-memory.workers.dev';
+const gateUrl = 'https://gate.julian.soul.store';
+const base = 'wss://sync.julian.soul.store';
 
 (async () => {
   log('constructing ExchangeClient with fake JWT');

@@ -23,3 +23,13 @@ service = "julian-broker"
 
 [assets]
 directory = "./public"
+
+[vars]
+# CSV of door names allowed to POST /restore — the migration door only.
+# Door-name gating, not subject: a device lease carries no subject on the
+# wire (see the plan's wire-truth correction). Fail-closed when unset.
+RESTORE_DOORS = "mac-home"
+
+[[routes]]
+pattern = "sync.julian.soul.store"
+custom_domain = true
