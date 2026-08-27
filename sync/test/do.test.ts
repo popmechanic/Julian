@@ -35,6 +35,7 @@ describe('JulianSyncDO', () => {
 
   test('oversized cell is rejected', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.ensureGuards(); // guards install lazily now (see createPersister) — this test exercises them
       instance.store.setRow('messages', 'm1', { sessionId: 's', role: 'user', speakerName: 'M', text: 'ok', ts: 1 });
       instance.store.setCell('messages', 'm1', 'text', 'x'.repeat(70_000));
       expect(instance.store.getCell('messages', 'm1', 'text')).toBe('ok');
@@ -43,6 +44,7 @@ describe('JulianSyncDO', () => {
 
   test('oversized cell arriving via sync merge is rejected, rest of merge lands', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.ensureGuards(); // guards install lazily now (see createPersister) — this test exercises them
       const { createStreamStore } = await import('julian-shared/schema');
       // A remote replica syncs in one oversized cell and one normal row —
       // the synchronizer delivers this via the mergeable apply path, not setCell.
@@ -74,6 +76,7 @@ describe('JulianSyncDO', () => {
 
   test('oversized array cell (messages.content) is converged away, not just number/boolean/string', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.ensureGuards(); // guards install lazily now (see createPersister) — this test exercises them
       const { createStreamStore } = await import('julian-shared/schema');
       const remote = createStreamStore('remote-arr');
       remote.setRow('messages', 'bigarr', { sessionId: 's', role: 'assistant', speakerName: 'J', text: 'ok', ts: 4 });
@@ -92,6 +95,7 @@ describe('JulianSyncDO', () => {
 
   test('a second oversized value on an already-dropped cell is also converged away', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.ensureGuards(); // guards install lazily now (see createPersister) — this test exercises them
       const { createStreamStore } = await import('julian-shared/schema');
       const remote = createStreamStore('remote-2x');
       remote.setRow('messages', 'big2', { sessionId: 's', role: 'user', speakerName: 'M', text: 'y'.repeat(70_000), ts: 5 });
@@ -181,6 +185,7 @@ describe('JulianSyncDO', () => {
 
   test('lineage: first set passes, overwrite is refused on the local path (#9)', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.ensureGuards(); // guards install lazily now (see createPersister) — this test exercises them
       instance.store.setValue('ledgerId', 'L1');
       expect(instance.store.getValue('ledgerId')).toBe('L1'); // creation still works
       instance.store.setValue('ledgerId', 'EVIL');
@@ -192,6 +197,7 @@ describe('JulianSyncDO', () => {
 
   test('lineage: every key in the set is guarded; activeSessionId stays mutable (#9)', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.ensureGuards(); // guards install lazily now (see createPersister) — this test exercises them
       instance.store.setValues({
         ledgerId: 'L1', parentLedgerId: 'P1', lineageNote: 'N1', createdAt: 111, createdBy: 'Julian & Marcus',
         activeSessionId: 's1',
@@ -211,6 +217,7 @@ describe('JulianSyncDO', () => {
 
   test('lineage: a merge-path overwrite is stripped and converged away (#9)', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.ensureGuards(); // guards install lazily now (see createPersister) — this test exercises them
       instance.store.setValue('ledgerId', 'L1');
       // The synchronizer path: plain changes with stamps already stripped —
       // exactly what willApplyChanges receives from a foreign socket.
@@ -229,6 +236,7 @@ describe('JulianSyncDO', () => {
 
   test('lineage: a real replica merge cannot overwrite lineage, and re-syncs back to the true value (#9)', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.ensureGuards(); // guards install lazily now (see createPersister) — this test exercises them
       const { createStreamStore } = await import('julian-shared/schema');
       instance.store.setValue('ledgerId', 'L1');
       // A foreign replica that never saw L1 claims its own lineage and syncs in.
@@ -255,6 +263,7 @@ describe('JulianSyncDO', () => {
 
   test('lineage: a second merge overwrite after a restore is also converged away (#9)', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.ensureGuards(); // guards install lazily now (see createPersister) — this test exercises them
       const { createStreamStore } = await import('julian-shared/schema');
       instance.store.setValue('createdAt', 111);
       const remote = createStreamStore('remote-lineage-2x');
@@ -278,6 +287,7 @@ describe('JulianSyncDO', () => {
 
   test('lineage: a merge that only re-states the existing lineage is left untouched (#9)', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.ensureGuards(); // guards install lazily now (see createPersister) — this test exercises them
       instance.store.setValue('ledgerId', 'L1');
       const before = JSON.stringify(instance.store.getMergeableContent());
       instance.store.applyChanges([{}, { ledgerId: 'L1', activeSessionId: 's9' }, 1] as never);
@@ -293,6 +303,7 @@ describe('JulianSyncDO', () => {
 
   test('lineage: deletion is refused too, so delete-then-set cannot launder an overwrite (#9)', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.ensureGuards(); // guards install lazily now (see createPersister) — this test exercises them
       instance.store.setValue('ledgerId', 'L1');
       instance.store.delValue('ledgerId');
       expect(instance.store.getValue('ledgerId')).toBe('L1');
@@ -308,6 +319,7 @@ describe('JulianSyncDO', () => {
 
   test('lineage: a merge-path deletion is stripped and converged away (#9)', async () => {
     await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+      instance.ensureGuards(); // guards install lazily now (see createPersister) — this test exercises them
       const { createStreamStore } = await import('julian-shared/schema');
       instance.store.setValue('ledgerId', 'L1');
       instance.store.applyChanges([{}, { ledgerId: undefined }, 1] as never);

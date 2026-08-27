@@ -32,8 +32,14 @@ async function makeSourceExport() {
   const { encodeUndefined } = await import('julian-shared/export-codec');
   const { getHash } = await import('tinybase');
   const src = createStreamStore('restore-src');
-  src.setRow('messages', 'kept', { sessionId: 's', role: 'user', speakerName: 'M', text: 'stays', ts: 1 });
-  src.setRow('messages', 'gone', { sessionId: 's', role: 'user', speakerName: 'M', text: 'retracted', ts: 2 });
+  // The `content` array cell is REQUIRED in this fixture: the real record
+  // carries one on every message, and tinybase 9.2.0's middleware breaks
+  // setMergeableContent's stamp-faithfulness for array-typed cells (every
+  // stamp rewritten as a fresh local write). Found live at R9 of the
+  // soul.store migration — a fixture without `content` stays green while
+  // production flattens provenance. Test written to reality's shape.
+  src.setRow('messages', 'kept', { sessionId: 's', role: 'user', speakerName: 'M', text: 'stays', ts: 1, content: [{ type: 'text', text: 'stays' }] as never });
+  src.setRow('messages', 'gone', { sessionId: 's', role: 'user', speakerName: 'M', text: 'retracted', ts: 2, content: [{ type: 'text', text: 'retracted' }] as never });
   src.delRow('messages', 'gone');
   const mergeableContent = encodeUndefined(src.getMergeableContent());
   return { mergeableContent, contentHash: getHash(JSON.stringify(mergeableContent)) };

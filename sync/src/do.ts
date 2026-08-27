@@ -232,7 +232,16 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
 
   createPersister() {
     this.store = createStreamStore();
-    this.installGuards();
+    // Guards are NOT installed here, deliberately. tinybase 9.2.0's
+    // createMiddleware permanently breaks setMergeableContent's
+    // stamp-faithfulness for array-typed cells (`messages.content`) — once a
+    // store has ever been wrapped, a restore or persister load rewrites every
+    // stamp as a fresh local write, flattening the record's provenance
+    // (found live at R9 of the soul.store migration; destroy() does not undo
+    // the wrap). So the store stays unwrapped through construction and the
+    // persister's load, and ensureGuards() wraps it at the first surface
+    // where live merge traffic can reach the store: a socket upgrade, a
+    // hibernated socket's message, or the end of a restore.
     // v9 fragmented mode = row-level SQLite layout (avoids Cloudflare's 2 MB row
     // limit). Never downgrade tinybase below 9 — the on-disk layout is breaking.
     this.persister = createDurableObjectSqlStoragePersister(this.store, this.ctx.storage.sql, {
@@ -244,6 +253,17 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
   // Match the client fragment size so large payloads never exceed the WS cap.
   getFragmentSize(): number {
     return FRAGMENT_SIZE;
+  }
+
+  // True once installGuards has wrapped the store. Wrapping is one-way in
+  // tinybase 9.2.0 (see createPersister), so this flag is the only thing
+  // standing between the store and a double wrap.
+  #guardsInstalled = false;
+
+  ensureGuards() {
+    if (this.#guardsInstalled) return;
+    this.#guardsInstalled = true;
+    this.installGuards();
   }
 
   installGuards() {
@@ -454,6 +474,10 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
     // a legacy session) and states the result in `X-Sync-Auth`. The DO trusts
     // that header and stores only the handles from it.
     const isUpgrade = request.headers.get('Upgrade')?.toLowerCase() === 'websocket';
+    // Live merge traffic starts here — wrap the store before any socket can
+    // write to it (guards install lazily; see createPersister). Hibernated
+    // sockets that wake without a fetch are covered by webSocketMessage below.
+    this.ensureGuards();
     if (!isUpgrade) {
       return (await super.fetch?.(request)) ?? new Response('Expected WebSocket', { status: 426 });
     }
@@ -535,6 +559,10 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
   //       Pocket ID session and comes back; nothing was revoked.
   //   active, but scope or ownership lost         -> 4003.
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    // A hibernated socket wakes the DO without passing through fetch, so this
+    // is a first-write surface of its own — the guards must wrap the store
+    // before the synchronizer sees the message (lazy install; createPersister).
+    this.ensureGuards();
     const attachment = ws.deserializeAttachment() as SocketAttachment | null;
     if (attachment && Date.now() - attachment.verifiedAt > REAUTH_INTERVAL_MS) {
       const form = handleForm(attachment);
@@ -775,7 +803,19 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
     if (body?.mergeableContent === undefined) {
       return Response.json({ error: 'body must carry mergeableContent' }, { status: 400 });
     }
+    // If live traffic has already wrapped the store, a stamp-faithful restore
+    // is impossible (the wrap is one-way — see createPersister) and the store
+    // is in practice non-empty anyway. The emptiness 409 above will almost
+    // always answer first; this check makes the impossibility explicit rather
+    // than letting a wrapped store silently flatten the archive's provenance.
+    if (this.#guardsInstalled) {
+      return Response.json(
+        { error: 'store has already served live traffic — restore is one-shot' }, { status: 409 });
+    }
     try {
+      // The store is unwrapped here by construction (guards install lazily,
+      // and the branch above refused a wrapped store), so this call adopts
+      // every CRDT stamp verbatim — the whole point of the hash-equal proof.
       this.store.setMergeableContent(decodeUndefined(body.mergeableContent) as never);
     } catch (e) {
       // The error's CLASS, never its message: a thrown message from deep
@@ -785,6 +825,10 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
       const kind = e instanceof Error ? e.name : typeof e;
       return Response.json(
         { error: `restore failed while merging content (${kind})` }, { status: 400 });
+    } finally {
+      // Restore is over either way; from here the store carries (or refused)
+      // the record and every subsequent write is live traffic — guard it.
+      this.ensureGuards();
     }
     try {
       // Durable before the 200. The auto-persister would otherwise flush on
