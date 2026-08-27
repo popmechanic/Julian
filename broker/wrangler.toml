@@ -20,7 +20,7 @@ new_sqlite_classes = ["RegistrarDO"]
 
 [[kv_namespaces]]
 binding = "PIN"
-id = "7b51a9089a104dbba176dac1b1e0b593"   # created 2026-08-12 (B2 runbook step 1); vitest/miniflare ignore ids
+id = "916b2465336448e6b1dea3183f430cb8"   # created 2026-08-27 (soul.store migration R2, personal account); vitest/miniflare ignore ids
 
 [vars]
 OIDC_ISSUER = "https://souls.exe.xyz"
