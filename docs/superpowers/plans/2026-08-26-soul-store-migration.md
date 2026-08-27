@@ -633,6 +633,7 @@ Entry: R9's hash-equal proof on record; every door re-knocked and proven; R12's 
 - [ ] **S2 (Marcus's hand):** on corporate (token env): `npx wrangler delete --name julian-sync` then `npx wrangler delete --name julian-broker`; delete the corporate PIN KV namespace (`npx wrangler kv namespace delete --namespace-id 7b51a9089a104dbba176dac1b1e0b593`).
 - [ ] **S3 (Marcus's hand):** rotate the AgentMail API key at the provider; update Mac `.env`; pipe the new key into the new gate (`printf %s "$NEW" | npx wrangler secret put AGENTMAIL_API_KEY`); verify `bun scripts/mail-broker.ts health`.
 - [ ] **S4 (Marcus's hand):** revoke `julian-migration-temp` in the Cloudflare dashboard; `rm ~/.julian/cf-corporate-token`; remove the old redirect URI from the Pocket ID client.
+- [ ] **S4½ — retire the restore road's standing:** with R9 long proven, remove `RESTORE_DOORS = "mac-home"` from `sync/wrangler.toml` `[vars]` and redeploy sync — the road fails closed on the unset var (tested), so the one-shot capability ends here rather than standing forever. Commit the toml (`chore: retire RESTORE_DOORS — migration complete`).
 - [ ] **S5 (testimony):** the moving-house letter to `memory/`; catalog Elsewhere + open-thread updates; `memory/adapters/` URL mentions updated; issues closed with evidence; commit and push.
 
 ## Operator smoke
