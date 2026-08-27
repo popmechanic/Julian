@@ -124,7 +124,25 @@
   /* the VALUE line uses a case-faithful mono — the pixel face is caps-only,
      and the whole point of this value is its preserved casing */
   .aff-val.verbatim { font-family: 'Courier New', Courier, monospace; font-weight: 700; }
-  .aff-val .seg { cursor: help; border-bottom: 1px dotted var(--muted); }
+  .aff-val .seg { cursor: help; border-bottom: 1px dotted var(--muted); position: relative; }
+  .aff-val .seg::after {
+    content: attr(data-tip);
+    position: absolute; bottom: calc(100% + 10px); left: 50%;
+    transform: translateX(-50%) translateY(3px);
+    width: max-content; max-width: 240px; white-space: normal; word-break: normal;
+    background: var(--bg); border: 1px solid var(--yellow);
+    color: var(--body); font-family: var(--grot); font-weight: 400;
+    font-size: 0.8rem; line-height: 1.4; letter-spacing: 0;
+    padding: 0.5em 0.75em; text-align: left;
+    opacity: 0; pointer-events: none; z-index: 6;
+    transition: opacity 0.18s, transform 0.18s;
+  }
+  .aff-val .seg:hover::after, .aff-val .seg:focus-visible::after {
+    opacity: 1; transform: translateX(-50%) translateY(0);
+  }
+  /* the first segment sits near the left edge — anchor its tip left */
+  .aff-val .seg:first-child::after { left: 0; transform: translateX(0) translateY(3px); }
+  .aff-val .seg:first-child:hover::after, .aff-val .seg:first-child:focus-visible::after { transform: translateX(0) translateY(0); }
   .aff-gloss { display: block; font-size: 0.85rem; color: var(--dim); font-family: var(--grot); margin-top: 0.3rem; }
 
   /* ---------- buttons ---------- */
@@ -264,7 +282,7 @@
     <div class="aff-row">
       <span class="aff-key">TIME</span>
       <span>
-        <span class="aff-val"><span class="seg" tabindex="0" title="the moment — August 27, 2026, 18:51:00.870 UTC, encoded">P03Yu__</span><span class="seg" tabindex="0" title="the tiebreaker — the 2nd write inside this same millisecond">---2</span><span class="seg" tabindex="0" title="whose hand — the fingerprint of the copy of the store that wrote it">8Fhmb</span></span>
+        <span class="aff-val"><span class="seg" tabindex="0" data-tip="THE MOMENT — August 27, 2026, 18:51:00.870 UTC, encoded compactly" aria-label="the moment — August 27, 2026, 18:51:00.870 UTC, encoded compactly">P03Yu__</span><span class="seg" tabindex="0" data-tip="THE TIEBREAKER — this was the 2nd write inside that same millisecond" aria-label="the tiebreaker — the 2nd write inside that same millisecond">---2</span><span class="seg" tabindex="0" data-tip="WHOSE HAND — the fingerprint of the copy of the store that wrote it" aria-label="whose hand — the fingerprint of the copy of the store that wrote it">8Fhmb</span></span>
         <span class="aff-gloss">A hybrid clock: <strong>the moment</strong> (P03Yu__ = 18:51:00.870&nbsp;UTC),
         <strong>a tiebreaker</strong> (---2, the second write inside that millisecond), and
         <strong>whose hand</strong> (8Fhmb, the writing copy's fingerprint). Hover each part.</span>
