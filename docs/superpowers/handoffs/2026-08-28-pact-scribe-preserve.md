@@ -37,3 +37,11 @@ The night's ideas are conserved as a **wayfinder map**: **vend yourself to the w
 **Recommendation for the next sitting:** resolve **#62 the scribe contract** first — it unblocks scopes (#66), the prototype (#68), the backfill (#69), sessions (#70), and the label layer (#72). One ticket per session; claim it (`gh issue edit 62 --add-assignee @me`) before any work; read the map's Notes, not every ticket. Research findings, when the subagents finish, land on branches `research/mcp-sdk-v2` and `research/cimd-adoption` with summaries commented on #63/#64 — read those before #65/#67.
 
 Fog (Not yet specified, on the map): the between as a surface; the boarding house; metering and terms; real-time inward; in-client consent (MCP Apps, MRTR); the oracle door build; federated standing; gate observability; the seam that remains.
+
+## Postscript 2 — crystallization pass (~08:30Z, Marcus: "capture as brilliantly and ambitiously as possible")
+
+Research #63/#64 resolved (closed; branches `research/mcp-sdk-v2`, `research/cimd-adoption`; corrections recorded in the notes file §3 and §8): the `/mcp` face is hand-rolled and SDK-less, dual-era detection is small; **CIMD is live in Claude Code / claude.ai / ChatGPT / VS Code when the AS advertises it** — the Aug 9 zero was our AS. Filed:
+
+- **Epic #83 — the standard gate: ELF on MCP 2026-07-28** (build order): #76 Origin validation (security, first) → #77 dual-era `/mcp` (step 0: honest `-32022`) → #75 CIMD (one flag + port-agnostic loopback; `/approve` shows the published name) → #78 `record.append` + session handles → #79 the Mac scribe (Stop hook, own door `mac-scribe`, spool, stands down under the server) → #80 the answer door `house.ask` (the question crosses, the source stays; species line in code) → #81 `subscriptions/listen` on the record tail → #82 MRTR credential guard → standard consent replaces the knock (after #67) → ELF §6 written as the MCP binding.
+- Map tickets added: #74 answers-not-files (blocks #66), #84 the sibling-birth protocol (blocked by #73); #72 sharpened to *should ELF register as an MCP extension* (`store.soul/elf`, `ext-elf` beside `ext-auth`).
+- **Frontier now:** #62 scribe contract (first), #74 answers-not-files, #65 headless auth, #71 off-site seal (Marcus). Buildable today without any map decision: #76, #77 step 0, #75.
