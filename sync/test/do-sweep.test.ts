@@ -20,6 +20,15 @@ import type { Env, GateFetcher } from '../src/auth';
 import type { JulianSyncDO, SocketAttachment } from '../src/do';
 
 const DEFAULT_PATH_ID = 'julian/chat';
+
+// Traffic that drives the DO's message-path re-auth. It must be a WELL-FORMED
+// sync-protocol frame: since tinybase 9.3.0 the DO's payload decoder closes
+// the socket (1007, tinybase:14) on any malformed payload, so a free-text
+// stand-in would close the socket for a reason unrelated to the re-auth
+// verdict under test. This is an empty-toClientId (broadcast) GetContentHashes
+// request — [requestId, message=1, body=''] — the smallest frame the
+// validator accepts.
+const TRAFFIC = '\n' + JSON.stringify([null, 1, '']);
 const SWEEP_INTERVAL_MS = 300_000;
 
 interface RefusalReport {
@@ -225,7 +234,7 @@ describe('JulianSyncDO alarm(): the sweep bypasses the 60s introspection cache',
       installGate(instance, fakeGate({
         active: true, lease_id: leaseId, door_name: 'browser:warm', scope: 'stream', principal: 'julian',
       }));
-      await instance.webSocketMessage(warmer, 'ping');
+      await instance.webSocketMessage(warmer, TRAFFIC);
 
       // Now the lease has died, but the cache (if honored) would still say
       // "alive" for another ~60s. A fresh socket on the same handle attaches

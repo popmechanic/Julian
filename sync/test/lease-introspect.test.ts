@@ -20,6 +20,15 @@ import { introspectLease } from '../src/auth';
 import type { Env, GateFetcher } from '../src/auth';
 import type { JulianSyncDO, SocketAttachment } from '../src/do';
 
+// Traffic that drives the DO's message-path re-auth. It must be a WELL-FORMED
+// sync-protocol frame: since tinybase 9.3.0 the DO's payload decoder closes
+// the socket (1007, tinybase:14) on any malformed payload, so a free-text
+// stand-in would close the socket for a reason unrelated to the re-auth
+// verdict under test. This is an empty-toClientId (broadcast) GetContentHashes
+// request — [requestId, message=1, body=''] — the smallest frame the
+// validator accepts.
+const TRAFFIC = '\n' + JSON.stringify([null, 1, '']);
+
 beforeAll(() => {
   fetchMock.activate();
   fetchMock.disableNetConnect();
@@ -239,7 +248,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
       // The fake GATE always rejects — a re-introspect attempt would reject
       // and get caught internally, closing 4002. Asserting "not closed"
       // therefore also proves no introspection was attempted.
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toBeNull();
     });
   });
@@ -251,7 +260,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
       installGate((instance as unknown as { env: Env }).env, fakeGate(200, { active: false }));
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toEqual({ code: 4001, reason: 'lease revoked' });
     });
   });
@@ -263,7 +272,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
       installGate((instance as unknown as { env: Env }).env, { fetch: async () => { throw new Error('connect timeout'); } });
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toEqual({ code: 4002, reason: 'introspection unavailable' });
     });
   });
@@ -282,7 +291,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
       installGate((instance as unknown as { env: Env }).env, fakeGate(503, 'gate down'));
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toEqual({ code: 4002, reason: 'introspection unavailable' });
     });
 
@@ -295,7 +304,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
       installGate((instance as unknown as { env: Env }).env, fakeGate(200, { active: true, lease_id: 'L-stale-503', door_name: 'door:recovered2', scope: 'full-house', principal: 'julian' }));
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toBeNull();
     });
   });
@@ -308,7 +317,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
       installGate((instance as unknown as { env: Env }).env, fakeGate(200, { active: true, lease_id: 'L-stale3', door_name: 'door:w', scope: 'full-house', principal: 'julian' }));
       (instance as unknown as { env: Env }).env.INTROSPECT_SECRET = 'test-secret';
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toBeNull();
 
       const refreshed = server.deserializeAttachment() as SocketAttachment;
@@ -326,7 +335,7 @@ describe('DO webSocketMessage: traffic-driven re-auth', () => {
       // so this covers only a socket accepted outside the fetch path.
 
       // No GATE call is scripted to succeed — proves no introspection happens.
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toBeNull();
     });
   });

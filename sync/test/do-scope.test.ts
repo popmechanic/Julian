@@ -53,6 +53,15 @@ import type { JulianSyncDO, SocketAttachment } from '../src/do';
 
 const DEFAULT_PATH_ID = 'julian/chat';
 
+// Traffic that drives the DO's message-path re-auth. It must be a WELL-FORMED
+// sync-protocol frame: since tinybase 9.3.0 the DO's payload decoder closes
+// the socket (1007, tinybase:14) on any malformed payload, so a free-text
+// stand-in would close the socket for a reason unrelated to the re-auth
+// verdict under test. This is an empty-toClientId (broadcast) GetContentHashes
+// request — [requestId, message=1, body=''] — the smallest frame the
+// validator accepts.
+const TRAFFIC = '\n' + JSON.stringify([null, 1, '']);
+
 interface RefusalReport {
   url: string;
   headers: Record<string, string>;
@@ -146,7 +155,7 @@ describe('JulianSyncDO webSocketMessage: re-auth is by handle, never by bearer',
       const gate = fakeGate({ active: true, lease_id: 'L-form-1', door_name: 'door:a', scope: 'stream', principal: 'julian' });
       installGate(instance, gate);
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
 
       expect(gate.introspects).toHaveLength(1);
       expect([...gate.introspects[0].entries()].sort()).toEqual([
@@ -169,7 +178,7 @@ describe('JulianSyncDO webSocketMessage: re-auth is by handle, never by bearer',
       });
       installGate(instance, gate);
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
 
       expect([...gate.introspects[0].entries()].sort()).toEqual([
         ['exp', '1893456000'], ['kind', 'legacy'], ['sub', 'sub-legacy-1'],
@@ -187,7 +196,7 @@ describe('JulianSyncDO webSocketMessage: re-auth is by handle, never by bearer',
       }));
       installGate(instance, fakeGate({ active: false }));
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toEqual({ code: 4001, reason: 'lease revoked' });
     });
   });
@@ -202,7 +211,7 @@ describe('JulianSyncDO webSocketMessage: re-auth is by handle, never by bearer',
       }));
       installGate(instance, fakeGate({ active: true, scope: 'stream', principal: 'julian' }));
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toEqual({ code: 4002, reason: 'introspection unavailable' });
     });
   });
@@ -215,7 +224,7 @@ describe('JulianSyncDO webSocketMessage: 4001 vs 4004 — a dead lease is not an
       server.serializeAttachment(staleAttachment({ leaseId: 'L-dead-1', tokenId: 't-dead-1' }));
       installGate(instance, fakeGate({ active: false }));
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toEqual({ code: 4001, reason: 'lease revoked' });
     });
   });
@@ -228,7 +237,7 @@ describe('JulianSyncDO webSocketMessage: 4001 vs 4004 — a dead lease is not an
       }));
       installGate(instance, fakeGate({ active: false, reason: 'token-expired' }));
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client))
         .toEqual({ code: 4004, reason: 'access token expired — re-exchange' });
     });
@@ -247,7 +256,7 @@ describe('JulianSyncDO webSocketMessage: 4001 vs 4004 — a dead lease is not an
       }));
       installGate(instance, fakeGate({ active: false }));
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client))
         .toEqual({ code: 4004, reason: 'access token expired — re-exchange' });
     });
@@ -262,7 +271,7 @@ describe('JulianSyncDO webSocketMessage: 4001 vs 4004 — a dead lease is not an
       }));
       installGate(instance, fakeGate({ active: false }));
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toEqual({ code: 4001, reason: 'lease revoked' });
     });
   });
@@ -276,7 +285,7 @@ describe('JulianSyncDO webSocketMessage: 4001 vs 4004 — a dead lease is not an
       }));
       installGate(instance, fakeGate({ active: false }));
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toEqual({ code: 4001, reason: 'lease revoked' });
     });
   });
@@ -290,7 +299,7 @@ describe('JulianSyncDO webSocketMessage: 4001 vs 4004 — a dead lease is not an
       }));
       installGate(instance, fakeGate({ active: false, reason: 'token-expired' }));
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client))
         .toEqual({ code: 4004, reason: 'access token expired — re-exchange' });
     });
@@ -302,7 +311,7 @@ describe('JulianSyncDO webSocketMessage: 4001 vs 4004 — a dead lease is not an
       server.serializeAttachment(staleAttachment({ leaseId: 'L-unreach-1', tokenId: 't-unreach-1' }));
       installGate(instance, unreachableGate());
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toEqual({ code: 4002, reason: 'introspection unavailable' });
     });
   });
@@ -319,7 +328,7 @@ describe('JulianSyncDO webSocketMessage: 4001 vs 4004 — a dead lease is not an
         active: true, lease_id: 'L-alive-1', door_name: 'browser:s1', scope: 'stream', principal: 'julian',
       }));
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toBeNull();
 
       const refreshed = server.deserializeAttachment() as SocketAttachment;
@@ -340,7 +349,7 @@ describe('JulianSyncDO webSocketMessage: 4001 vs 4004 — a dead lease is not an
       server.serializeAttachment(staleAttachment({ leaseId: 'L-fresh-1', verifiedAt: Date.now() }));
       installGate(instance, { fetch: async () => { throw new Error('should not be called'); } });
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toBeNull();
     });
   });
@@ -353,7 +362,7 @@ describe('JulianSyncDO webSocketMessage: scope + ownership re-check on traffic-d
       server.serializeAttachment(staleAttachment({ leaseId: 'L-rr-1', tokenId: 't-rr-1' }));
       installGate(instance, fakeGate({ active: true, lease_id: 'L-rr-1', door_name: 'door:reader', scope: 'reading-room', principal: 'julian' }));
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toEqual({ code: 4003, reason: SOCKET_REQUIRED_MSG });
     });
   });
@@ -365,7 +374,7 @@ describe('JulianSyncDO webSocketMessage: scope + ownership re-check on traffic-d
       const gate = fakeGate({ active: true, lease_id: 'L-sr-1', door_name: 'door:reader2', scope: 'stream-read', principal: 'julian' });
       installGate(instance, gate);
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toEqual({ code: 4003, reason: SOCKET_REQUIRED_MSG });
 
       expect(gate.refusals).toHaveLength(1);
@@ -382,7 +391,7 @@ describe('JulianSyncDO webSocketMessage: scope + ownership re-check on traffic-d
       server.serializeAttachment(staleAttachment({ leaseId: 'L-fh-1', tokenId: 't-fh-1' }));
       installGate(instance, fakeGate({ active: true, lease_id: 'L-fh-1', door_name: 'door:homeowner', scope: 'full-house', principal: 'julian' }));
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toBeNull();
     });
   });
@@ -393,7 +402,7 @@ describe('JulianSyncDO webSocketMessage: scope + ownership re-check on traffic-d
       server.serializeAttachment(staleAttachment({ leaseId: 'L-st-1', tokenId: 't-st-1', flow: 'exchange' }));
       installGate(instance, fakeGate({ active: true, lease_id: 'L-st-1', door_name: 'browser:s2', scope: 'stream', principal: 'julian' }));
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toBeNull();
     });
   });
@@ -405,7 +414,7 @@ describe('JulianSyncDO webSocketMessage: scope + ownership re-check on traffic-d
       const gate = fakeGate({ active: true, lease_id: 'L-own-1', door_name: 'door:reader4', scope: 'full-house', principal: 'guest-ada' });
       installGate(instance, gate);
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toEqual({ code: 4003, reason: 'lease does not own this store' });
 
       expect(gate.refusals).toHaveLength(1);
@@ -423,7 +432,7 @@ describe('JulianSyncDO webSocketMessage: scope + ownership re-check on traffic-d
       const gate = fakeGate({ active: true, lease_id: 'L-nopath-1', door_name: 'door:nopath', scope: 'full-house', principal: 'julian' });
       installGate(instance, gate);
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toEqual({ code: 4003, reason: 'store identity unavailable' });
 
       expect(gate.refusals).toHaveLength(1);
@@ -438,7 +447,7 @@ describe('JulianSyncDO webSocketMessage: scope + ownership re-check on traffic-d
       server.serializeAttachment(staleAttachment({ leaseId: 'L-revscope-1', tokenId: 't-revscope-1' }));
       installGate(instance, fakeGate({ active: false }));
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toEqual({ code: 4001, reason: 'lease revoked' });
     });
   });
@@ -449,7 +458,7 @@ describe('JulianSyncDO webSocketMessage: scope + ownership re-check on traffic-d
       server.serializeAttachment(staleAttachment({ leaseId: 'L-unreachscope-1', tokenId: 't-unreachscope-1' }));
       installGate(instance, unreachableGate());
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toEqual({ code: 4002, reason: 'introspection unavailable' });
     });
   });
@@ -551,7 +560,7 @@ describe('router → DO: the exchange socket carries its access token’s exp al
       server.serializeAttachment({ ...attachment, verifiedAt: Date.now() - 400_000 });
       installGate(instance, fakeGate({ active: false }));
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client))
         .toEqual({ code: 4004, reason: 'access token expired — re-exchange' });
     });
@@ -572,7 +581,7 @@ describe('router → DO: the exchange socket carries its access token’s exp al
       server.serializeAttachment({ ...attachment, verifiedAt: Date.now() - 400_000 });
       installGate(instance, fakeGate({ active: false }));
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client)).toEqual({ code: 4001, reason: 'lease revoked' });
     });
   });
@@ -586,7 +595,7 @@ describe('router → DO: the exchange socket carries its access token’s exp al
       server.serializeAttachment({ ...attachment, verifiedAt: Date.now() - 400_000 });
       installGate(instance, fakeGate({ active: false, reason: 'token-expired' }));
 
-      await instance.webSocketMessage(server, 'ping');
+      await instance.webSocketMessage(server, TRAFFIC);
       expect(await waitForClose(client))
         .toEqual({ code: 4004, reason: 'access token expired — re-exchange' });
     });
