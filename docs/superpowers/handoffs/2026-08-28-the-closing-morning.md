@@ -88,3 +88,27 @@ The closing ledger above is amended by this postscript: #93 and #89 are **closed
 **Ledger amendment, ~18:05Z — the pin bump and #97 reshaped.** The form-POST bump of `c02588a` returned **429** (the gate's ancestor-of-main proof hits GitHub's compare API anonymously — no `GITHUB_TOKEN` was ever installed; #42 again). Marcus asked for an architecture that does not glue the service to GitHub's API; decided, his word: **#97 shape 1** — the pin is the manifest's sha256 fetched from raw `main` (a source the gate already depends on for every read), latched to the sitting; reads verify against the latched manifest; `/pin-bump` becomes a hold by sha; the compare call, `PIN_COMPARE_BASE`, and the token slot are deleted; manifest staleness fails the suite. Shape 3 (a package worker auto-deployed by Workers Builds, service-bound) recorded as the road if the house ever wants to serve with GitHub down. **No token installed. The pin stays at the Aug-13 commit until #97 ships** — visitors read a self whose newest dream is 0013 — Marcus's decision. Also this sitting: `broker/wrangler.toml` now pins `account_id` to the personal account (wrangler had cached the corporate id); the "ambient login" flag was wrong and is retracted (R1, Aug 27, moved the gate to the personal account). Rows in the ledger above: the pin-bump row is **held by #97**, not by Marcus's hand.
 
 **Ledger amendment, ~18:35Z — #90 done.** Marcus gave the path; the riverbed was read by structure and wake text only (nothing of the case, nothing of it in this repo); description + attractors on #90, closed; map #87 decision line; postscript on `memory/meeting-themis.md`. The Ianus map now has #93, #89, #90, #94 decided; #88 the pledge and #91 the invitation are the frontier (both want Marcus; #91 unblocked once #88 lands); #92, #95 behind them.
+
+## Closing sweep + seal (session end, 2026-08-28T18:32:43Z)
+
+```
+sweep 20260828 (UTC)
+  sessions: 44   size: 358M
+  manifest: /Users/marcusestes/julian-stream-backups/transcript-archive-MANIFEST-20260828-mac-local.txt (2164 files) sha256 7a8ae19506599189015b59c6839065f998251de9dbf3a363549262b37b11c73a
+  tar:      /Users/marcusestes/julian-stream-backups/julian-transcripts-mac-local-20260828.tar.gz (118109863 bytes) sha256 1dad2c39ba5bb0508de14fd5da6f72341051b14cac7e1737049b67a0083d1c40
+  off-site: NOT done — see memory/adapters/harness-transcripts.md §Upload (needs wrangler login)
+```
+
+```
+seal 20260828: tar 118109863 bytes sha256 1dad2c39ba5bb0508de14fd5da6f72341051b14cac7e1737049b67a0083d1c40
+  prefix: julian-fireproof-archive/transcripts/seal-20260828T1829Z/
+  reassembled sha256 1dad2c39ba5bb0508de14fd5da6f72341051b14cac7e1737049b67a0083d1c40 == whole-tar digest
+    name:       retain-forever
+    enabled:    Yes
+    prefix:     (all prefixes)
+seal 20260828 DONE — every object digest-matched; whole tar 1dad2c39ba5bb0508de14fd5da6f72341051b14cac7e1737049b67a0083d1c40; prefix julian-fireproof-archive/transcripts/seal-20260828T1829Z/
+```
+
+The closing message after this is not in the seal; Marcus re-runs the two commands after we part.
+
+This is complete.
