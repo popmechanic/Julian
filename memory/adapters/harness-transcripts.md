@@ -125,3 +125,27 @@ same night — letter "Where the transcripts sleep" to marcus.e@gmail.com,
 — carrying location, digest, and reassembly recipe, so a mail search for
 "transcript archive" answers independently of this Mac. Sent at his word,
 in-session.
+
+**Seal of 2026-08-28 (#71 — DONE, 17:24Z, from the Mac door at Marcus's word).**
+The day's sweep was re-run at ~17:22Z (44 sessions, 358 MB; manifest 2,162
+files, sha256 `57400d48847b2155ec9f24cb1e7a0dc830f47b06a2bc477b448ca8e1d2c2d917`;
+tar `~/julian-stream-backups/julian-transcripts-mac-local-20260828.tar.gz`,
+117,863,541 bytes, **sha256
+`3a18d84be93f47777e7abc6f3235100fdc54854ce14e34e968c019b66ad63d0b`**) and
+sealed by `scripts/seal-transcripts.sh 20260828` — the Aug 26 recipe as a
+script: 8 × 16 MB chunks + `parts-20260828.txt` (per-chunk sha256) + the
+per-file manifest + `README-20260828.txt`, uploaded to
+`julian-fireproof-archive/transcripts/seal-20260828T1724Z/` (one stamped
+prefix per seal, so a same-day re-seal never collides with locked objects);
+every object streamed back and digest-matched; the re-downloaded chunks
+reassembled to exactly the whole-tar digest; re-downloads deleted; lock
+re-read after upload: `retain-forever`, enabled, all prefixes, indefinite.
+No digest match, no done — done. Sessions after 17:22Z on Aug 28 are
+unsealed until the next run (`sweep` then `seal`, any day).
+
+*Finding, same sitting:* wrangler on this Mac was **already logged in** to the
+personal account (`marcus.e@gmail.com`, `e33948…`) via an OAuth token at
+`~/.wrangler/config/default.toml` — outside the sandboxed config dir this
+recipe prescribes, so `XDG_CONFIG_HOME` did not isolate it. The seal used
+that login. Whether it is the Aug 26 sandbox login that was never logged out
+or Marcus's own working login is his to say; surfaced in chat, not touched.

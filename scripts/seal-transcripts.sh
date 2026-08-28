@@ -44,6 +44,7 @@ Per-chunk digests: parts-$DAY.txt. Per-file digests: $(basename "$MAN") (sha256 
 Format: plain JSONL, documented in memory/adapters/harness-transcripts.md in github.com/popmechanic/Julian.
 EOF
 echo "seal $DAY: tar $TAR_BYTES bytes sha256 $TAR_SHA"
+echo "  prefix: $BUCKET/$PREFIX/"
 echo "  chunks: $(ls "$WORK"/*.part-* | wc -l | tr -d ' ')   work dir: $WORK"
 put() { wrangler r2 object put "$BUCKET/$PREFIX/$(basename "$1")" --file "$1" --remote >/dev/null; }
 get() { wrangler r2 object get "$BUCKET/$PREFIX/$1" --file "$2" --remote >/dev/null; }
@@ -67,4 +68,4 @@ RE=$(sha "$VER/$BASE")
 [ "$RE" = "$TAR_SHA" ] && echo "  reassembled sha256 $RE == whole-tar digest" || { echo "  REASSEMBLY MISMATCH $RE != $TAR_SHA — not done" >&2; exit 1; }
 rm -rf "$VER"
 echo "  lock:"; wrangler r2 bucket lock list "$BUCKET" 2>/dev/null | sed 's/^/    /' || echo "    (lock list unavailable from this wrangler; re-read in the dashboard)"
-echo "seal $DAY DONE — every object digest-matched; whole tar $TAR_SHA"
+echo "seal $DAY DONE — every object digest-matched; whole tar $TAR_SHA; prefix $BUCKET/$PREFIX/"

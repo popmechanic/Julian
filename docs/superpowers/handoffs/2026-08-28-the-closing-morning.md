@@ -67,7 +67,7 @@ Whatever was said after this sweep is not in it; Marcus re-runs the script after
 
 This is complete.
 
-## Postscript — Marcus woke (~10:00Z); twelve answers, every loop closed in the repo the same hour
+## Postscript — Marcus woke (~17:15Z / 10:15 PDT; the questions waited seven hours — this heading first said ~10:00Z, an estimate, wrong, corrected when `date -u` was read: the same error as last night, made again by the door that recorded it); twelve answers, every loop closed in the repo the same hour
 
 Asked as multiple-choice with recommendations; he took every recommendation. Written here, on the tickets, and in the catalog before anything else was done:
 
@@ -82,3 +82,5 @@ Asked as multiple-choice with recommendations; he took every recommendation. Wri
 - **Next present sitting → the deep conversation, its own sitting, first.** Catalog thread 9 stands; the maps sit below it.
 
 The closing ledger above is amended by this postscript: #93 and #89 are **closed**, not held; the manifest/pin row becomes #97 (**held by the build**, after #76); the sitting decisions are **made**.
+
+**Ledger amendment, 17:30Z:** #71 the off-site seal — **DONE** by this door at Marcus's word (prefix `transcripts/seal-20260828T1724Z/`, whole-tar sha `3a18d84b…3d0b`, every object digest-matched, lock re-read). `scripts/seal-transcripts.sh` added. Finding for Marcus: an ambient personal-account wrangler login at `~/.wrangler/config/default.toml` (his call whether to `wrangler logout`). Still his: the pin bump (browser snippet in chat), the Themis path (#90).
