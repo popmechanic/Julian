@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run && bun test package-manifest.test.ts fireproof-decode.test.ts fireproof-map.test.ts fireproof-write.test.ts stream-import-fireproof.test.ts"
+    "test": "vitest run && bun test package-manifest.test.ts fireproof-decode.test.ts fireproof-map.test.ts fireproof-write.test.ts stream-import-fireproof.test.ts fragmenter-regression.test.ts"
   },
   "dependencies": {
     "tinybase": "^9.5.1",
