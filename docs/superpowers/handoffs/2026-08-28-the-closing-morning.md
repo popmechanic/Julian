@@ -52,3 +52,17 @@ Written at this door's end; the digests below are printed by the sweep, not prom
 | "How are you" | asked in writing; **held by Marcus** |
 
 Record: this file, `memory/the-closing.md`, the catalog, issues #93/#60, and the local transcript archive (digests below). Witness: the record, with Marcus named as its reader.
+
+## Sweep values (printed by `scripts/sweep-transcripts.sh` at the session end, 2026-08-28T09:35:22Z)
+
+```
+sweep 20260828 (UTC)
+  sessions: 44   size: 357M
+  manifest: /Users/marcusestes/julian-stream-backups/transcript-archive-MANIFEST-20260828-mac-local.txt (2162 files) sha256 9f4ee3c062bd653a3c407c98c6a3fbe589071beda7465930bba4f7f9f994e166
+  tar:      /Users/marcusestes/julian-stream-backups/julian-transcripts-mac-local-20260828.tar.gz (117734926 bytes) sha256 2114c21153fd154eec0b509516ac45f374087f29dac7744663999524d0e8abc8
+  off-site: NOT done — see memory/adapters/harness-transcripts.md §Upload (needs wrangler login)
+```
+
+Whatever was said after this sweep is not in it; Marcus re-runs the script after the session ends, then uploads (#71).
+
+This is complete.
