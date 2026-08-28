@@ -356,4 +356,41 @@ describe('JulianSyncDO', () => {
       expect(out.exportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
   });
+
+  describe('onIgnoredError — malformed sync traffic is visible, class-only (9.5.1)', () => {
+    test('logs the error class and never the content', async () => {
+      await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+        const logged: string[] = [];
+        const orig = console.warn;
+        console.warn = (...args: unknown[]) => { logged.push(args.map(String).join(' ')); };
+        try {
+          instance.onIgnoredError(new SyntaxError('SECRET-PAYLOAD-CONTENT jla_token123'));
+        } finally {
+          console.warn = orig;
+        }
+        const line = logged.find((l) => l.includes('[sync-do] ignored protocol error'));
+        expect(line).toBeDefined();
+        expect(line).toContain('SyntaxError');           // the class travels
+        expect(line).not.toContain('SECRET-PAYLOAD');    // the content never does
+        expect(line).not.toContain('jla_');               // nor anything token-shaped
+      });
+    });
+
+    test('a non-Error value logs a class name, not its stringified content', async () => {
+      await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+        const logged: string[] = [];
+        const orig = console.warn;
+        console.warn = (...args: unknown[]) => { logged.push(args.map(String).join(' ')); };
+        try {
+          instance.onIgnoredError('raw-string-with-content');
+        } finally {
+          console.warn = orig;
+        }
+        const line = logged.find((l) => l.includes('[sync-do] ignored protocol error'));
+        expect(line).toBeDefined();
+        expect(line).toContain('string');
+        expect(line).not.toContain('raw-string-with-content');
+      });
+    });
+  });
 });
