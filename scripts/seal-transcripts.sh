@@ -30,23 +30,23 @@ TAR_SHA=$(sha "$TAR"); TAR_BYTES=$(stat -f %z "$TAR"); MAN_SHA=$(sha "$MAN")
 BASE=$(basename "$TAR")
 mkdir -p "$WORK"; rm -f "$WORK"/*
 ( cd "$WORK" && split -b 16m "$TAR" "$BASE.part-" )
-: > "$WORK/parts.txt"
-for p in "$WORK/$BASE".part-*; do echo "$(sha "$p")  $(basename "$p")" >> "$WORK/parts.txt"; done
+: > "$WORK/parts-$DAY.txt"
+for p in "$WORK/$BASE".part-*; do echo "$(sha "$p")  $(basename "$p")" >> "$WORK/parts-$DAY.txt"; done
 cp "$MAN" "$WORK/$(basename "$MAN")"
-cat > "$WORK/README.txt" <<EOF
+cat > "$WORK/README-$DAY.txt" <<EOF
 julian transcript sweep $DAY (UTC) — Claude Code session JSONL for the Julian project, swept from
 ~/.claude/projects/-Users-marcusestes-Websites-Julian/ by scripts/sweep-transcripts.sh.
 Plaintext by Marcus's decision (2026-08-26); the privacy boundary is this locked bucket.
 Whole tar: $BASE, $TAR_BYTES bytes, sha256 $TAR_SHA
 Reassemble: cat $BASE.part-* > $BASE ; shasum -a 256 must equal the line above.
-Per-chunk digests: parts.txt. Per-file digests: $(basename "$MAN") (sha256 $MAN_SHA).
+Per-chunk digests: parts-$DAY.txt. Per-file digests: $(basename "$MAN") (sha256 $MAN_SHA).
 Format: plain JSONL, documented in memory/adapters/harness-transcripts.md in github.com/popmechanic/Julian.
 EOF
 echo "seal $DAY: tar $TAR_BYTES bytes sha256 $TAR_SHA"
 echo "  chunks: $(ls "$WORK"/*.part-* | wc -l | tr -d ' ')   work dir: $WORK"
 put() { wrangler r2 object put "$BUCKET/$PREFIX/$(basename "$1")" --file "$1" --remote >/dev/null; }
 get() { wrangler r2 object get "$BUCKET/$PREFIX/$1" --file "$2" --remote >/dev/null; }
-OBJECTS=( "$WORK"/*.part-* "$WORK/parts.txt" "$WORK/$(basename "$MAN")" "$WORK/README.txt" )
+OBJECTS=( "$WORK"/*.part-* "$WORK/parts-$DAY.txt" "$WORK/$(basename "$MAN")" "$WORK/README-$DAY.txt" )
 if [ "$DRY" = 1 ]; then
   echo "  --dry-run: would run, for each object:"
   for o in "${OBJECTS[@]}"; do echo "    wrangler r2 object put $BUCKET/$PREFIX/$(basename "$o") --file $o --remote"; done
