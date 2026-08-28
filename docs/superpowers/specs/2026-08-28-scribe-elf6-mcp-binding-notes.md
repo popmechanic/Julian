@@ -93,6 +93,23 @@ extractor in *annex* mode, under #51's four decisions.
   page; portable across gates with no re-registration. Caveats: IETF draft-00;
   spec says SHOULD; the Aug 9 probe found zero CIMD clients (all three DCR).
   The B4 tripwire flips from "did anyone try CIMD?" to the main road.
+  > **Correction, 2026-08-28 ~08:05Z, from research ticket #64 (branch
+  > `research/cimd-adoption`, `docs/superpowers/research/2026-08-28-cimd-adoption.md`):**
+  > the Aug 9 "zero CIMD clients" result was the probe's own doing — clients
+  > present a URL `client_id` only when the AS advertises
+  > `client_id_metadata_document_supported: true`, which the probe AS never did
+  > and `gate.julian.soul.store` still does not (live read). **CIMD-capable
+  > now:** Claude Code (2.1.81; `https://claude.ai/oauth/claude-code-client-metadata`),
+  > the hosted Claude surfaces (`https://claude.ai/oauth/mcp-oauth-client-metadata`;
+  > Anthropic requires `none` in `token_endpoint_auth_methods_supported` — the
+  > gate already has it), ChatGPT/Codex, VS Code, the TS/Python/C#/Go SDKs,
+  > FastMCP 3. **DCR-only:** Cursor. AS side: Pocket ID v2.13.0 has
+  > `CIMD_ENABLED` (off by default; `souls.exe.xyz` does not advertise it);
+  > Cloudflare workers-oauth-provider, Auth0, Stytch, WorkOS, Clerk opt-in.
+  > Spec pins draft-00; the draft is at -02, no WGLC. **Sharp edge:** Claude
+  > Code's document declares port-less loopback redirects — the AS must ignore
+  > the port (RFC 8252 §7.3) or Claude Code fails over CIMD. So the gate's
+  > first CIMD step is one metadata flag plus port-agnostic loopback matching.
 - **The knock's ceremony vs. its principle.** The ceremony (a code typed into
   a page) is replaceable by an ordinary OAuth consent screen. The principle —
   *a relationship approved once, by name, revocable by name* — lives in leases,
