@@ -102,17 +102,47 @@
 **Est-files:** server/lib.ts, server/room.ts, app/src/lib/jobs.ts, shared/schema.ts, broker/src/mcp.ts
 **Notes:** Cluster anchor; includes #10 (jobs.list has no reply path for text-only arrivals — verified broader now: the MCP face exposes no jobs verb at all). Design question inside: whether the board's agent-facing surface should live on the MCP face rather than the marker channel. — parked at the Aug 20 docket gate: boarding-house horizon, not pre-ceremony work
 
-### #44: App type-check green — tsconfig types + tinybase dedupe
-**State:** parked
-**Score:** 5 — dev health: a permanently red check trains the eye to ignore red
-**Est-files:** app/tsconfig.json, package.json, app/package.json, shared/package.json, sync/package.json
-**Notes:** Replaces closed #24. Two small aligned fixes; verify `bun run check` green end-to-end. — parked at the Aug 20 docket gate: fold in as a rider where natural
+### #44: tinybase 9.2→latest (9.5.1) aligned upgrade — the fragmenter deletes U+2028/U+2029 in transit
+**State:** accepted
+**Score:** 8 — RE-TRIAGED UP 2026-08-27 (was 5, dev health): objective 1 now — the deployed 9.2.0 fragmenter's `.{1,N}` regex deletes LINE/PARAGRAPH SEPARATOR chars when a large cell is fragmented (silent record loss class; the annexed corpus carried 523 occurrences, normalized defensively at import); 9.3.0's code-point fragmenter is clean. 9.2.0 also carries the #53 middleware stamp-flattening (cured architecturally; the bump may retire the hazard class)
+**Est-files:** package.json, app/package.json, shared/package.json, sync/package.json, lockfiles
+**Notes:** Re-verified 2026-08-27: skew live (root ^9.3.0; app/shared/sync ^9.2.0). The svelte-check half closed by e06d427. TARGET UPDATED at the gate (Marcus): upstream is now at 9.5.1 — align all four packages to latest TOGETHER, not 9.3. Research agent dispatched 2026-08-27 over the 9.2.0→9.5.1 release span (fragmenter fix confirmation, #53 middleware hazard status, stamp/wire/DO-layout compatibility — the DO holds the canonical record, so persister-layout compat is the load-bearing question — plus new capabilities worth adopting); findings land in docs/research/, and the bump plan is authored against them. Suites to run after: all four + #48 codec suite + sync export integration + the #53 repro (sync/test/restore.test.ts). Un-park proposed at the 2026-08-27 triage gate; Marcus's reply to the gate directed the upgrade, so treat as accepted.
 
 ### #12: Offline-compose → reconnect — the last unwitnessed local-first path
 **State:** parked
 **Score:** 4.5 — objective 1, small: the one convergence path still taken on faith since Jul 27
 **Est-files:** app/src/lib/store.test.ts (or a deliberate live session, recorded)
-**Notes:** Could be a test (preferred, repeatable) or a recorded live session. Cheap; a candidate rider on the #4 lifecycle plan since both touch store.ts reconnect behavior. — parked at the Aug 20 docket gate: candidate rider on the #4 lifecycle plan
+**Notes:** Could be a test (preferred, repeatable) or a recorded live session. Cheap; a candidate rider on the #4 lifecycle plan since both touch store.ts reconnect behavior. — parked at the Aug 20 docket gate: candidate rider on the #4 lifecycle plan. RE-TRIAGE NOTE 2026-08-27: the #4 lifecycle plan has shipped, so the rider never happened; upstream's build-with-tinybase skill review (issue comment, Aug 27) now names reconnection one of five REQUIRED verification proofs — this stays the one item taken on faith. GATE RULING 2026-08-27 (Marcus): rides the #44 upgrade plan as its final verification task — a reconnect proof on 9.5.1 beats one on 9.2. Stays parked as an entry; closes when the #44 plan lands it.
+
+### #46: gate: observability logging on broker + sync workers
+**State:** accepted
+**Score:** 7.5 — objective 3: two live diagnoses (B1 probe Aug 12; claude.ai connector Aug 21) each cost a full behavioral-reconstruction session that one log query would have answered
+**Est-files:** broker/wrangler.toml, sync/wrangler.toml, plus a no-secrets-printed sweep of broker/src + sync/src console paths
+**Notes:** Triaged 2026-08-27; verified live: no [observability] block in either wrangler.toml. Config-only enable (head_sampling_rate 1 at current volume) + the issue's one real consideration made a task: verify no console path ever prints a token/code/secret before enabling (verify, don't assume). Deploy rider; ledger stays the deliberate record, logs are plumbing beneath it.
+
+### #45: gate: directive 404 for authenticated lost callers
+**State:** accepted
+**Score:** 7 — objective 3: fail-loud should point; the blank wall misdirected a real diagnosis (Aug 21 read as "gate broken" when the condition was "wrong path")
+**Est-files:** broker/src/index.ts, broker/test/*
+**Notes:** Triaged 2026-08-27; verified live: bare `Not found` fallback at broker/src/index.ts:211. Fix per issue: JSON body naming /mcp + door verbs, optional /mcp/ trailing-slash tolerance; bare-origin aliasing already correctly rejected in the issue (a directive 404 teaches; an alias blesses misconfiguration). One string, one test — natural same-sitting pair with #46 (same worker, one deploy).
+
+### #55: deploy skill U1b — verify .env VALUES for known-host vars, not presence
+**State:** triaged
+**Score:** 6.5 — recurrence guard: the exact class bit twice in one day (R10: julian-new's .env all-old-house yet "checked"; the Mac's BROKER_URL masquerading as a lease-rotation failure)
+**Est-files:** .claude/skills/deploy/SKILL.md
+**Notes:** Triaged 2026-08-27; verified: U1b/P6 language checks key presence only. Fix: for VITE_OIDC_ISSUER / VITE_SYNC_URL / VITE_GATE_URL / BROKER_URL, check values against the current canonical hosts (souls.exe.xyz issuer; *.julian.soul.store) and fail loud on any old-house hostname. Skill-text change only; no deploy needed. GATE 2026-08-27: held (not selected); stays triaged for a future gate.
+
+### #49: honest toolchain — committed typechecks green, suite counts honest (cluster: #49 + #54 + #47's scripts-tsconfig bullet)
+**State:** triaged
+**Score:** 6 — dev health, objective 3 adjacent: a red check you ignore and a green count that silently excludes a suite train the eye the same wrong way
+**Est-files:** broker/vitest.node.config.ts, broker/tsconfig.json, sync/tsconfig.json, scripts/tsconfig.json (new), broker/test-mcp-client/*, per-package package.json typecheck scripts
+**Notes:** Triaged 2026-08-27; re-verified BETTER than filed: the DOM-lib drowning is gone (both workers' tsconfigs already carry workers-types, no DOM). Remaining, all small: broker `bunx tsc` fails only on vitest.node.config.ts (node types); sync fails only on `cloudflare:test` module types in tests (add the vitest-pool-workers types entry); scripts/ has no tsconfig at all (~1,100 unchecked lines, #47 bullet — moves into this cluster); #54: test-mcp-client harness suite load-fails on the ajv CJS shim and contributes 0 tests (verified identical at BASE 2026-08-27) — fix or remove-from-suite decision, so broker's green count stops lying by omission. Wire `typecheck` scripts into the suites' green definition. GATE 2026-08-27: held (not selected); stays triaged for a future gate.
+
+### #47: fireproof-import residuals — the code half
+**State:** triaged
+**Score:** 5 — small correctness residuals from a merged, verified run; none load-bearing, cheap as a set
+**Est-files:** scripts/lib/fireproof-write.ts, scripts/lib/fireproof-decode.ts, scripts/stream-import-fireproof.ts, scripts/bun.lock
+**Notes:** Triaged 2026-08-27 with checklist pruning: the spec-correction bullet is DONE (dated correction written beside, spec line 63 — tick it); the two ultrapowers-ENGINE bullets belong in the plugin's own repo, not this one (propose filing there + ticking here); the scripts-tsconfig bullet moves to the #49 cluster. Remaining code: @ipld/car nested-pin alignment, planBatches single-over-cap row guard, close()'s nested-finally (destroy() rejection skips ws.close()), sweepStaleTmp concurrent-run hazard note, CLI "above"→"below" wording. Test bullets stay listed on the issue; archive-reader coverage is by-design dry-run-only. GATE 2026-08-27: held (not selected); stays triaged for a future gate.
 
 ### #20: Session-continuity live proofs — the remaining two
 **State:** parked

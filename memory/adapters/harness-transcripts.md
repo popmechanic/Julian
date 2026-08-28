@@ -98,6 +98,12 @@ supersedes the rsync ritual. Until that ingest exists, the prune hazard
 remains live for sessions after Aug 26; any future sitting that touches this
 file before #51 lands should consider a one-off re-sweep.
 
+**One-off re-sweeps performed (local only, no new seal):**
+- 2026-08-27, at the triage sitting, Marcus's word: live dir →
+  `~/julian-transcript-archive/mac-local-20260827/` — 40 session JSONL files,
+  337 MB with tool-output dirs. Yesterday's sweep held 45 files; the live dir
+  is already down to 40 — the prune is not hypothetical.
+
 **Marcus's copy of the memory.** The recovery note went to his inbox the
 same night — letter "Where the transcripts sleep" to marcus.e@gmail.com,
 2026-08-26, message-id
