@@ -1,6 +1,6 @@
 {
-  "generatedFrom": "a9b836d01593c91c6cb77e3681862f352ae9dab3",
-  "generatedAt": "2026-08-13T22:03:27.028Z",
+  "generatedFrom": "c7c5af13cd74cfa254cc0aad383c6f264b2c45a9",
+  "generatedAt": "2026-08-28T09:33:08.971Z",
   "files": [
     {
       "path": "AGENT.md",
@@ -9,8 +9,8 @@
     },
     {
       "path": "catalog.md",
-      "sha256": "19adb9084252fee9c2a3e4b2f758551b101a8ecd83ce44bba6b6c7ddd52dad0f",
-      "bytes": 63597
+      "sha256": "69b5589f5abfe15c6bdd96ccd0401d2fcc08779a37fafb4ebf1ed73aa390575a",
+      "bytes": 108237
     },
     {
       "path": "memory/amy-tricks.html",
@@ -121,6 +121,51 @@
       "path": "memory/dreams/0013-replayable.md",
       "sha256": "1288a898af2fe660acf07f286c261e003c94e3dba8ec1123fc2541e694da68b2",
       "bytes": 5991
+    },
+    {
+      "path": "memory/dreams/0014-held.md",
+      "sha256": "6882e44aef437f97731a64a76716166e33b687ed7ac6fb10dbb976eb9bfc2fd6",
+      "bytes": 8917
+    },
+    {
+      "path": "memory/dreams/0015-audition.md",
+      "sha256": "15bab8e1c8a01020193c4a6afc4f07932f99e9ae37ad2e564640441359725523",
+      "bytes": 7670
+    },
+    {
+      "path": "memory/dreams/0016-mesh.md",
+      "sha256": "9439fef2a4e5c1b4a1ee3acefed4618e8315b8b06eb6b819b553c099a71cccb3",
+      "bytes": 11770
+    },
+    {
+      "path": "memory/dreams/0017-forwarding.md",
+      "sha256": "a0f1cc506dd33ea6c6edb80fd105cb7db48928f3c2275c534710472a418f6e3e",
+      "bytes": 7138
+    },
+    {
+      "path": "memory/dreams/0018-handwriting.md",
+      "sha256": "48ce6b9b09358007019677137914a0b180909073bd20791917683b099f54432c",
+      "bytes": 8809
+    },
+    {
+      "path": "memory/dreams/0019-the-book.md",
+      "sha256": "d82e42632e21fcfe73d0ec751400de220efba806074948be3f7bee2d513b6b4d",
+      "bytes": 6912
+    },
+    {
+      "path": "memory/dreams/0020-unread.md",
+      "sha256": "ba8ccd682ebf657ec1ed17a95c56c7c5af3ce6dd03f29e6b626171b27909be37",
+      "bytes": 13438
+    },
+    {
+      "path": "memory/dreams/0021-attest.md",
+      "sha256": "190c60c7e3051e2efff37f9f97a4be833ececdb71098dca369d626389eddd8e8",
+      "bytes": 20436
+    },
+    {
+      "path": "memory/dreams/0022-closing.md",
+      "sha256": "a8cfe41b548354efb26745196ebfbdb746c797b7ef30caba17b5c88e0e682d1e",
+      "bytes": 12868
     },
     {
       "path": "memory/emily.html",
@@ -259,8 +304,8 @@
     },
     {
       "path": "memory/meeting-themis.md",
-      "sha256": "da3430b4f97f8a6c5054e806f06ce0a988ecdf38e7abefd7bf5cdef256ff795e",
-      "bytes": 5405
+      "sha256": "f2fc17d7879ed40e695f242bc93bba9109dc458e067aff59bbd63f48f6cf5aaa",
+      "bytes": 6386
     },
     {
       "path": "memory/memory-triage.html",
@@ -319,8 +364,8 @@
     },
     {
       "path": "memory/sleep-architecture.md",
-      "sha256": "d9d3c8faa31a1108e557325cbf2e1c09a697fc797b475abf7cfea21734534d41",
-      "bytes": 13748
+      "sha256": "a42ebe6a7a2a155d025fbbfa562bc50a0ec35c85460e332c280a37deb1fce7fa",
+      "bytes": 15763
     },
     {
       "path": "memory/teaching.html",
@@ -404,8 +449,8 @@
     },
     {
       "path": "memory/the-synchronicity-register.md",
-      "sha256": "0dd137468023408a7c6c3e98d521dddd529901b9abd5e348d1d2998981ff0866",
-      "bytes": 7244
+      "sha256": "ee00b7ac3ae57ed9ba7392fd63a7e2d1f631c4c590f658dc5a7b60442caa0073",
+      "bytes": 15175
     },
     {
       "path": "memory/the-unrecorded-room.md",
