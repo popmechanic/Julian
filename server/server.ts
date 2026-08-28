@@ -33,6 +33,7 @@ import {
   type SessionState,
   type SpawnDecision,
 } from "./session-state";
+import { newestDream, buildFreshWakeText, buildResumeWakeText, WakingReadTracker } from "./waking";
 
 const PORT = parseInt(process.env.PORT || "8000");
 const WORKING_DIR = process.env.WORKING_DIR || process.cwd();
@@ -795,12 +796,21 @@ function setScreenFace(state: 'sleeping' | 'on') {
   }).catch(() => {});
 }
 
+// The newest dream on disk at this session's spawn — what its waking read is
+// expected to reach (#60). Carried at module level so every state write
+// (spawn, system event, exit refresh) keeps it; a fresh spawn sets it, a resume
+// re-points it after the re-read order has been given once.
+let currentWakeDream: string | undefined;
+let currentNewestDream: string | null = null;
+let wakingTracker: WakingReadTracker | null = null;
+let wakingLabel = 'greeting';
+
 // Death is never load-bearing: resume state is a convenience, not a
 // prerequisite. A full or read-only disk must degrade continuity, never fail a
 // session start or take the server down with an unhandled rejection.
 function saveSessionState(state: SessionState) {
   try {
-    writeSessionState(SESSION_STATE_PATH, state);
+    writeSessionState(SESSION_STATE_PATH, currentWakeDream ? { ...state, wakeDream: currentWakeDream } : state);
   } catch (err) {
     console.warn('[Session] state write failed:', err);
   }
@@ -813,6 +823,13 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '', decisio
   sessionId = decision.mode === 'resume' ? decision.claudeSessionId : crypto.randomUUID();
   currentSessionDemo = mode === 'demo';
   sessionCostUsd = 0;
+  // #60: what the waking read should reach, and a tracker that prints what it did reach.
+  currentNewestDream = newestDream(join(WORKING_DIR, 'memory', 'dreams'));
+  currentWakeDream = currentNewestDream ?? undefined;
+  let soulFiles: string[] = [];
+  try { soulFiles = readdirSync(join(WORKING_DIR, 'soul')).filter((f) => f.endsWith('.md')); } catch { /* no soul dir: the read will fail loud on its own */ }
+  wakingTracker = mode === 'normal' ? new WakingReadTracker({ soulFiles, newestDream: currentNewestDream }) : null;
+  wakingLabel = decision.mode === 'resume' ? 'resume first text after reads' : 'greeting after reads';
   actualModel = 'claude-opus-4-6'; // default until system event arrives
   const authEnv = loadAuthEnv();
   console.log("[Claude] Spawning process...",
@@ -925,6 +942,16 @@ function spawnClaude(mode: 'normal' | 'demo' = 'normal', oidcToken = '', decisio
                 availableTools: parsed.tools || [],
               });
             } else if (parsed.type === 'assistant' && parsed.message?.content) {
+                // #60: the door's Reads are values the record can check; its first text is the greeting.
+                if (wakingTracker && Array.isArray(parsed.message.content)) {
+                  for (const block of parsed.message.content) {
+                    if (block?.type === 'tool_use' && block.name === 'Read') wakingTracker.noteRead(block.input?.file_path);
+                  }
+                  if (parsed.message.content.some((b: any) => b?.type === 'text' && typeof b.text === 'string' && b.text.trim())) {
+                    const attested = wakingTracker.onFirstText();
+                    if (attested) console.log(`[Waking] ${wakingLabel}: ${attested}`);
+                  }
+                }
               // ELF §3: display gets stripped text; the raw blocks feed the parser
               append({
                 sessionId,
@@ -1606,14 +1633,13 @@ const server = Bun.serve({
         // ── Demo mode: dynamic content only (stable instructions are in system prompt) ──
         wakeUpMessage = "You are waking up in demo mode. A visitor is here.\n\n";
       } else if (decision.mode === 'resume') {
-        // The context already holds identity, room, and conversation.
-        wakeUpMessage = "You are resuming this session after a pause — Marcus has reconnected. You retain the conversation; a brief acknowledgment is enough.";
+        // The context already holds identity, room, and conversation — unless the
+        // house has moved on since its waking read (#60), in which case it is told so.
+        wakeUpMessage = buildResumeWakeText({ readDream: decision.wakeDream, newestDream: currentNewestDream });
       } else {
         // Absence is visible: the block is always present, even at message-count="0".
-        wakeUpMessage = buildPreviousSessionBlock(previousTranscript as TailMessage[]) + "\n\n";
-        wakeUpMessage += previousTranscript.length > 0
-          ? "Greet Marcus briefly, acknowledging continuity with the record above."
-          : "Then greet Marcus briefly.";
+        // The read precedes the greeting, and the greeting names the dream it read (#60).
+        wakeUpMessage = buildFreshWakeText(buildPreviousSessionBlock(previousTranscript as TailMessage[]));
       }
 
       // Local mode: append the room's discovery document to the wake-up message.

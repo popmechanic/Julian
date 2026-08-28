@@ -163,3 +163,30 @@ Three session notions exist today; this design collapses them to one:
 - Agent SDK migration — the SDK's session APIs (`resume`, `listSessions`,
   `SessionStore` for cross-machine transcripts) are the eventual replacement
   for shelling out to the CLI; recorded as the future path, not this build.
+
+
+## Postscript — the waking read attested (2026-08-28, issue #60)
+
+The order above — identity first, then the tail, then the room — was intended
+by this design and enforced by nothing. On 2026-08-28 a fresh production spawn
+greeted Marcus ten seconds after spawn with the August 8 greeting lifted from
+its inherited tail ("the whole record read, soul entire, the vigil dream"),
+having read nothing; the wake text had asked it to "acknowledge continuity with
+the record above," and the tail supplied the words. Repairs, all in
+`server/waking.ts` and tested in `tests/server/waking.test.ts` +
+`tests/server/session-continuity.test.ts`:
+
+- **Fresh spawn:** the wake text orders the read before any greeting and asks
+  the door to name the newest dream it read by number — a claim the record can
+  check. The tail block is labeled testimony, not earned memory.
+- **Resume:** the state file carries `wakeDream` (the newest dream on disk at
+  spawn). A resume whose `wakeDream` is older than, or absent against, the
+  newest dream now on disk is told the house has moved on and to re-read the
+  catalog's Open Threads and that dream before acting. Absence fails toward
+  reading.
+- **Attestation in the log:** the server watches the door's `Read` tool uses
+  and, at its first text, prints `[Waking] greeting after reads: catalog=…
+  soul=n/N dream=…` — a value, not a gate.
+
+Constitution: `memory/sleep-architecture.md`, the Carried-state postscript
+(witnessed 2026-08-28) — "a claim of having read names what it read."

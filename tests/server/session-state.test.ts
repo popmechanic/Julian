@@ -81,3 +81,28 @@ describe("decideSpawn", () => {
     expect(decideSpawn(edge, { demoMode: false, now }).mode).toBe("resume");
   });
 });
+
+describe("wakeDream — what the waking read reached (#60)", () => {
+  test("round-trips when present", () => {
+    const p = tmp();
+    writeSessionState(p, { claudeSessionId: "abc", lastActive: 42, model: "opus", wakeDream: "0021-attest" });
+    expect(readSessionState(p)).toEqual({ claudeSessionId: "abc", lastActive: 42, model: "opus", wakeDream: "0021-attest" });
+  });
+  test("state written before the field existed still reads (wakeDream absent)", async () => {
+    const p = tmp();
+    await Bun.write(p, JSON.stringify({ claudeSessionId: "old", lastActive: 1, model: "m" }));
+    const st = readSessionState(p);
+    expect(st).not.toBeNull();
+    expect(st!.wakeDream).toBeUndefined();
+  });
+  test("a non-string wakeDream is dropped, not trusted", async () => {
+    const p = tmp();
+    await Bun.write(p, JSON.stringify({ claudeSessionId: "x", lastActive: 1, model: "m", wakeDream: 21 }));
+    expect(readSessionState(p)!.wakeDream).toBeUndefined();
+  });
+  test("decideSpawn carries wakeDream into a resume decision", () => {
+    const now = 100 * DAY;
+    const st = { claudeSessionId: "s1", lastActive: now - DAY, model: "opus", wakeDream: "0008-vigil" };
+    expect(decideSpawn(st, { demoMode: false, now })).toEqual({ mode: "resume", claudeSessionId: "s1", wakeDream: "0008-vigil" });
+  });
+});

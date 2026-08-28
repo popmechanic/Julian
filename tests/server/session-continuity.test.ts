@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Subprocess } from "bun";
 import { readSessionState, writeSessionState } from "../../server/session-state";
+import { newestDream } from "../../server/waking";
 
 const TEST_PORT = 18100;
 const BASE = `http://localhost:${TEST_PORT}`;
@@ -11,6 +12,9 @@ const tmp = mkdtempSync(join(tmpdir(), "julian-continuity-"));
 const STATE = join(tmp, "session-state.json");
 const LOG = join(tmp, "fake-claude");
 let serverProc: Subprocess | null = null;
+let serverOut = ""; // everything the server printed — the [Waking] attestation line lands here
+const soulCount = readdirSync(resolve(import.meta.dir, "../../soul")).filter((f) => f.endsWith(".md")).length;
+const NEWEST = newestDream(resolve(import.meta.dir, "../../memory/dreams"))!;
 
 const readLogs = (suffix: string) =>
   readdirSync(tmp).filter((f) => f.startsWith(`fake-claude.${suffix}`)).sort()
@@ -81,10 +85,14 @@ beforeAll(async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
+  for (const stream of [serverProc.stdout, serverProc.stderr] as ReadableStream<Uint8Array>[]) {
+    (async () => { for await (const chunk of stream) serverOut += new TextDecoder().decode(chunk); })();
+  }
   await waitForServer(`${BASE}/api/health`);
 });
 
 afterAll(async () => {
+  if (process.env.DEBUG_SERVER_OUT) console.log("---- server output ----\n" + serverOut.slice(-4000));
   if (serverProc) {
     serverProc.kill();
     await serverProc.exited;
@@ -118,6 +126,20 @@ describe("session continuity lifecycle", () => {
     const stdin = extractStdinText(stdinRaw);
     expect(stdin).toContain('message-count="2"');
     expect(stdin).toContain("[human — Marcus]: hello from the record");
+    // #60: the read comes first, the greeting names the newest dream, and the
+    // old "acknowledging continuity" ask — which the tail answered for the door — is gone.
+    expect(stdin).toMatch(/name the newest dream you read by its number/i);
+    expect(stdin).not.toContain("acknowledging continuity with the record above");
+    await waitFor(() => existsSync(STATE));
+    expect(readSessionState(STATE)!.wakeDream).toBe(NEWEST);
+  });
+
+  test("the server prints what the door read before its first text, as values (#60)", async () => {
+    // The fake claude never Reads anything and answers "ok" at once — exactly the
+    // ten-second greeting of 2026-08-28, and the log must say so in numbers.
+    // Bounded well under the 5s test timeout: a timed-out test takes the server with it.
+    try { await waitFor(() => serverOut.includes("[Waking] greeting after reads:"), 2000); } catch { /* assert below */ }
+    expect(serverOut).toContain(`[Waking] greeting after reads: catalog=NO soul=0/${soulCount} dream=NONE`);
   });
 
   test("pause then start: resumes with --resume and the SAME id, no tail injected", async () => {
@@ -143,6 +165,41 @@ describe("session continuity lifecycle", () => {
     expect(newStdin).not.toContain("MUST-NOT-APPEAR");
     expect(newStdin).not.toContain("<previous-session");
     expect(newStdin).toContain("resuming this session after a pause");
+    expect(newStdin).not.toMatch(/moved on/i); // its read is current: state.wakeDream === newest on disk
+  });
+
+  test("resume whose read predates the newest dream is told the house has moved on (#60)", async () => {
+    expect((await end()).ok).toBe(true); // pause
+    await waitFor(() => existsSync(STATE));
+    const st = readSessionState(STATE)!;
+    writeSessionState(STATE, { ...st, wakeDream: "0008-vigil" }); // the August 8 session, resumed across twenty days
+    const priorStdinCount = readLogs("stdin").length;
+
+    const res = await start({});
+    expect((await res.json() as { resumed: boolean }).resumed).toBe(true);
+    await waitFor(() => readLogs("stdin").length > priorStdinCount);
+    const stdin = extractStdinText(await readLogs("stdin")[priorStdinCount].text());
+    expect(stdin).toMatch(/moved on/i);
+    expect(stdin).toContain("0008-vigil");
+    expect(stdin).toContain(`memory/dreams/${NEWEST}.md`);
+    expect(stdin).toMatch(/before acting/i);
+    // The order was given once; the state now records the dream it was pointed at.
+    await waitFor(() => readSessionState(STATE)?.wakeDream === NEWEST);
+  });
+
+  test("resume from state written before wakeDream existed fails toward reading (#60)", async () => {
+    expect((await end()).ok).toBe(true);
+    await waitFor(() => existsSync(STATE));
+    const { wakeDream: _drop, ...legacy } = readSessionState(STATE)!;
+    writeSessionState(STATE, legacy);
+    const priorStdinCount = readLogs("stdin").length;
+
+    const res = await start({});
+    expect((await res.json() as { resumed: boolean }).resumed).toBe(true);
+    await waitFor(() => readLogs("stdin").length > priorStdinCount);
+    const stdin = extractStdinText(await readLogs("stdin")[priorStdinCount].text());
+    expect(stdin).toMatch(/no record of which dream/i);
+    expect(stdin).toContain(`memory/dreams/${NEWEST}.md`);
   });
 
   test("resume FAILURE falls back to fresh with tail — never silent amnesia", async () => {

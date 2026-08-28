@@ -11,9 +11,15 @@ export interface SessionState {
   claudeSessionId: string;
   lastActive: number; // epoch ms
   model: string;
+  // The newest dream on disk when this session's waking read happened (#60).
+  // Absent on state written before the field existed — read as "unknown",
+  // which fails toward re-reading, never toward "nothing's changed".
+  wakeDream?: string;
 }
 
-export type SpawnDecision = { mode: "fresh" } | { mode: "resume"; claudeSessionId: string };
+export type SpawnDecision =
+  | { mode: "fresh" }
+  | { mode: "resume"; claudeSessionId: string; wakeDream?: string };
 
 export function readSessionState(path: string): SessionState | null {
   try {
@@ -23,7 +29,9 @@ export function readSessionState(path: string): SessionState | null {
       typeof parsed?.lastActive === "number" &&
       typeof parsed?.model === "string"
     ) {
-      return { claudeSessionId: parsed.claudeSessionId, lastActive: parsed.lastActive, model: parsed.model };
+      const st: SessionState = { claudeSessionId: parsed.claudeSessionId, lastActive: parsed.lastActive, model: parsed.model };
+      if (typeof parsed.wakeDream === "string" && parsed.wakeDream) st.wakeDream = parsed.wakeDream;
+      return st;
     }
     return null;
   } catch {
@@ -56,5 +64,7 @@ export function decideSpawn(
   if (opts.demoMode || !state) return { mode: "fresh" };
   const ageDays = (opts.now - state.lastActive) / 86_400_000;
   if (ageDays > RESUME_EXPIRY_DAYS) return { mode: "fresh" };
-  return { mode: "resume", claudeSessionId: state.claudeSessionId };
+  return state.wakeDream
+    ? { mode: "resume", claudeSessionId: state.claudeSessionId, wakeDream: state.wakeDream }
+    : { mode: "resume", claudeSessionId: state.claudeSessionId };
 }

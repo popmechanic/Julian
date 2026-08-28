@@ -401,19 +401,39 @@ If there are merge conflicts after stash pop, report them to the user.
 `/opt/julian/.env` is **not** in git — `git pull` never updates it. A VM
 provisioned before a variable was added to Step P6 still has the old file, so
 the newest code plus the oldest `.env` bakes a bundle that is missing exactly
-the variable the new code needs. Run this check on every Update, and run it
-**before** the Step U2 rebuild — the instance `.env` comes first, the build
-second.
+the variable the new code needs — or, worse, carrying it with an old-house
+value (issue #55: on 2026-08-27 every `VITE_` key was present and every one
+pointed at the dead workers.dev house, and a presence check said `checked`).
+Run this on every Update, **before** the Step U2 rebuild — the instance `.env`
+comes first, the build second. The check prints values, not verdicts:
 
 ```bash
-ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz 'for v in VITE_OIDC_ISSUER VITE_OIDC_CLIENT_ID VITE_SYNC_URL VITE_GATE_URL; do grep -q "^$v=" /opt/julian/.env || echo "MISSING $v"; done; echo checked'
+scp -o StrictHostKeyChecking=accept-new deploy/env-check.sh <vmname>.exe.xyz:/tmp/env-check.sh
+ssh -o StrictHostKeyChecking=accept-new <vmname>.exe.xyz 'bash /tmp/env-check.sh /opt/julian/.env'
 ```
 
-The remote command is single-quoted on purpose: double quotes would expand `$v`
-on the Mac and the loop would test the empty string on every pass.
+Every known-host variable is printed with its value and one word beside it:
 
-- **`checked` alone**: the instance `.env` is current. Continue to Step U2.
-- **Any `MISSING <var>` line**: repair the file before going further, below.
+```
+VITE_OIDC_ISSUER=https://souls.exe.xyz OK
+VITE_SYNC_URL=https://sync.julian.soul.store OK
+VITE_GATE_URL=https://gate.julian.soul.store OK
+BROKER_URL=https://gate.julian.soul.store OK
+VITE_OIDC_CLIENT_ID=<id> present
+```
+
+- **Exit 0, every line `OK`/`present`**: the instance `.env` is current. Continue to Step U2.
+- **Any `WRONG (expected host …)`**: an old-house URL. Edit that line in place
+  (`sed -i 's#^VAR=.*#VAR=https://…#' /opt/julian/.env`) — never append a
+  second copy.
+- **Any `MISSING <var>`**: append the reported lines, below.
+- **Any `DUPLICATE`**: the last line wins in a build; delete the stale copies
+  until one remains, then re-run the check.
+- **Exit 2**: the file could not be read — the box is not provisioned; stop.
+
+The same script runs against the Mac's own `.env` (`bash deploy/env-check.sh
+.env`) — Bun auto-loads it, and a stale `BROKER_URL` there pins every script
+to the old gate while looking like a lease-rotation failure (#55).
 
 `VITE_SYNC_URL` and `VITE_GATE_URL` are tier T2 public config, identical on
 every instance, so append the reported lines verbatim — but append **only** the
@@ -503,7 +523,7 @@ Confirm the `version` field in the health response matches the current git hash.
 - **git pull merge conflict**: Julian has uncommitted changes. Stash first (see Step U1).
 - **Instance in registry but VM gone**: Remove the entry from `deploy/instances.json` and re-run — it will take the Provision path.
 - **`BUNDLE SMOKE FAILED` from Step P6e**: the bundle was baked without a required `VITE_*` URL. Fix `/opt/julian/.env` (Step P6 on Provision, Step U1b on Update), re-run the Step P6d build, then re-run the check. Never wave it through — the app looks healthy and syncs nowhere.
-- **App loads and signs in but nothing syncs**: almost always an old instance `.env`. Run the Step U1b check; a VM provisioned before `VITE_SYNC_URL` existed needs the line added and the SPA rebuilt.
+- **App loads and signs in but nothing syncs**: almost always an old instance `.env`. Run the Step U1b check (`deploy/env-check.sh` — it prints the values); a VM provisioned before `VITE_SYNC_URL` existed needs the line added, one with an old-house URL needs it edited, and the SPA rebuilt either way.
 - **Sign-in fails with redirect_uri not registered**: run the Step P6c registration script for this VM.
 - **401 on `/tokens/with-email`**: Missing OIDC JWT configuration. Check Pocket ID admin panel for proper token template setup.
 - **VM creation fails**: Check exe.dev status, retry once.
