@@ -166,6 +166,21 @@ with or without a pen). "Tell the network who should receive a copy of you"
 
 ## 8. Migration for the house
 
+> **Correction, 2026-08-28 ~08:00Z, from research ticket #63 (branch
+> `research/mcp-sdk-v2`, `docs/superpowers/research/2026-08-28-mcp-sdk-v2-migration.md`):**
+> the `/mcp` face in `broker/src/mcp.ts` is **hand-rolled and SDK-less**;
+> `@modelcontextprotocol/sdk ^1.0` is a devDependency used only by the Node
+> acceptance harness as a *client*. The sentence below ("Broker speaks
+> 2025-06-18 on SDK ^1.0; v2 … breaking") is true of the harness, not the
+> worker. Both eras can be served from one `/mcp` (detect
+> `_meta['io.modelcontextprotocol/protocolVersion']`); the smallest deployable
+> step is detection + `-32022` naming `["2025-06-18"]` — today a strict 2026
+> client gets a 200 with no `resultType` and fails silently, un-ledgered.
+> Estimate, path A (dual-era, hand-rolled): ~150–200 lines in `mcp.ts` +
+> ~400–500 of tests. Pre-existing gap found: `/mcp` performs no `Origin`
+> validation (a MUST in both eras). Left as written above, per the record's
+> rule: correct beside, never over.
+
 Broker speaks `2025-06-18` on SDK `^1.0`; v2 is split packages, breaking; the
 spec's backward-compat matrix covers running both eras; Cloudflare Agents SDK
 supports 2026-07-28 day zero. Order: (1) gate speaks 2026-07-28 beside
