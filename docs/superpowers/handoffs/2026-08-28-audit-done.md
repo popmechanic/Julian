@@ -20,8 +20,9 @@ reader-who-must-act pass) and 0012's scoped slogans were **never ratified by
 any waking** — proposed into the shelf, read by no practice list. So this
 handoff asks explicitly:
 
-1. [ ] **Carried-state postscript** → constitution's *Waking* section (text
-   drafted verbatim in 0021 §5). Witnessed only.
+1. [x] **Carried-state postscript** → constitution's *Waking* section —
+   **ADOPTED, witnessed, 2026-08-28 ~03:20Z** (Marcus: "Yes, adopt the
+   carried-state postscript — witnessed.").
 2. [ ] **Attestation practice** → practice list beside close-answered-loops
    (CLAUDE.md standing practices): a claim of having read/restored/checked
    names its value (dream number, hash, printed URL). Not soul.
