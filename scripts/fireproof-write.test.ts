@@ -18,7 +18,18 @@ async function server() {
   await new Promise((r) => wss.once('listening', r));
   const port = (wss.address() as { port: number }).port;
   const srv = createWsServer(wss);
-  return { url: `ws://127.0.0.1:${port}/julian/chat`, close: () => srv.destroy() };
+  // tinybase 9.5.1's createWsServer().destroy() awaits the ws server's close,
+  // which in turn waits for every server-side socket to finish its close
+  // handshake — and a destroy() issued in the same tick as a client's close()
+  // never settles (the socket is mid-handshake and its bookkeeping listeners
+  // are torn down before it lands). 9.2.0 fire-and-forgot the server close, so
+  // the race was invisible. Let the loopback drain first; if it never does,
+  // destroy() still hangs and the test fails loud on its own timeout.
+  const drained = async () => {
+    const t0 = Date.now();
+    while (wss.clients.size > 0 && Date.now() - t0 < 5_000) await new Promise((r) => setTimeout(r, 25));
+  };
+  return { url: `ws://127.0.0.1:${port}/julian/chat`, close: async () => { await drained(); await srv.destroy(); } };
 }
 
 describe('planBatches', () => {

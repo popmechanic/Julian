@@ -7,6 +7,10 @@ import { createStreamStore } from 'julian-shared/schema';
 const FRAGMENT_SIZE = 262144; // must match app/src/lib/store.ts and sync/src/do.ts
 
 const wss = new WebSocketServer({ port: 0 });
+// port: 0 binds asynchronously — address() is null until 'listening' fires, so
+// reading it synchronously would throw under load. Same guard as the sibling
+// loopback suites (reconnect.test.ts, fireproof-write.test.ts).
+await new Promise((resolve) => wss.once('listening', resolve));
 const port = (wss.address() as { port: number }).port;
 const srv = createWsServer(wss);
 const url = `ws://127.0.0.1:${port}/julian/chat`;
