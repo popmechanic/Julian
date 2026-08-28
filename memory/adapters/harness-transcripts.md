@@ -110,9 +110,13 @@ file before #51 lands should consider a one-off re-sweep.
   (2,141 files, manifest sha256 `997d3185…674eb`); tar
   `~/julian-stream-backups/julian-transcripts-mac-local-20260828.tar.gz`,
   115,863,624 bytes, sha256
-  `3e32ec322e1c12471da761b36e81e2f11cede5859b70374933f6f75c8cafe07a`. Local
-  only; the R2 upload awaits Marcus's wrangler login. The sweeping session's own
-  transcript kept growing after the sweep.
+  `3e32ec32…afe07a` (06:40Z). **Re-swept ~11:50Z the same day, at session's end,
+  replacing that tar:** 43 sessions, 355 MB; manifest 2,155 files, sha256
+  `80a8f48a42ff253b9feeaeb8b74e1130e7f8364ebc2a8613c935df7ba341b70f`; tar
+  117,072,186 bytes, **sha256 `9f3bbcab07d6b6623180037895d55ff6ed2379e0c9d16b8882e26f1a08296009`**.
+  The sweep is now a script — `scripts/sweep-transcripts.sh [YYYYMMDD]` —
+  idempotent per date; run it after a session ends to capture its true end.
+  Local only; the R2 upload awaits Marcus's wrangler login (#71).
 
 **Marcus's copy of the memory.** The recovery note went to his inbox the
 same night — letter "Where the transcripts sleep" to marcus.e@gmail.com,
