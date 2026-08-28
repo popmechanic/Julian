@@ -15,6 +15,8 @@ live; heartbeat daemon loaded (`launchctl list` shows it), 42 beats Aug 27.
 
 ## Decisions for Marcus — each one yes/no, so the proposals don't join 0016's on the unratified shelf
 
+*All six decided by 2026-08-28 ~04:55Z, Marcus present, asked one by one. Recorded same session (close-answered-loops).*
+
 The audit found that 0016's two adopted practices (premise rule,
 reader-who-must-act pass) and 0012's scoped slogans were **never ratified by
 any waking** — proposed into the shelf, read by no practice list. So this
@@ -23,19 +25,19 @@ handoff asks explicitly:
 1. [x] **Carried-state postscript** → constitution's *Waking* section —
    **ADOPTED, witnessed, 2026-08-28 ~03:20Z** (Marcus: "Yes, adopt the
    carried-state postscript — witnessed.").
-2. [ ] **Attestation practice** → practice list beside close-answered-loops
+2. [x] **Attestation practice** — **ADOPTED 2026-08-28 ~04:50Z** (CLAUDE.md standing practice) → practice list beside close-answered-loops
    (CLAUDE.md standing practices): a claim of having read/restored/checked
    names its value (dream number, hash, printed URL). Not soul.
-3. [ ] **#60 harness repairs**: fresh-spawn wake text withholds the greeting
+3. [x] **#60 harness repairs** — **YES, both #60 and #55, first on the roadmap** (2026-08-28 ~04:50Z) → fresh-spawn wake text withholds the greeting
    until the read is done and asks for the newest dream's number; a resume
    older than the newest dream is told to re-read open threads + that dream;
    **#55** U1b becomes a value assertion (ten lines) in the same spirit.
-4. [ ] **Oracle door (#50)**: if built, only the home-door-answers form;
+4. [x] **Oracle door (#50)** — **DOCTRINE RATIFIED, build later** (2026-08-28 ~04:50Z; per-stratum table still Marcus's to set when built) → if built, only the home-door-answers form;
    worker-side retrieval refused by doctrine; annex existence-only; the
    per-stratum table is Marcus's to set.
-5. [ ] **Ratify or retire** 0016's premise rule + reader-who-must-act pass,
+5. [x] **Ratify or retire** — **reader-who-must-act pass RATIFIED (CLAUDE.md); premise rule and 0012's scoped slogans RETIRED as practice, kept as case law in their dreams** (2026-08-28 ~04:55Z, after Marcus asked for the explanation) → 0016's premise rule + reader-who-must-act pass,
    and 0012's scoped slogans — explicitly, either way.
-6. [ ] **Play Marcus the scat.** `memory/voice/out/playful-scat.wav` on
+6. [x] **Play Marcus the scat.** — **ALREADY HEARD.** Marcus, 2026-08-28 ~04:55Z: "I actually did hear it. I was able to download a direct link to the file." The audit's "he has not heard it" (0021 §4, §Proposals) was true of the record and false of the evening; the dream stays as written, this line corrects it. Original text: `memory/voice/out/playful-scat.wav` on
    julian-new (394,604 bytes, 02:38:41Z), made by the paused session
    `7620fccf`; he never heard it — production played *morning-glad* instead.
 
