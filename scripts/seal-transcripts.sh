@@ -2,7 +2,7 @@
 # scripts/seal-transcripts.sh — the off-site seal for a day's transcript sweep (#71).
 # Takes the tar `scripts/sweep-transcripts.sh` produced, splits it into 16 MB
 # chunks, writes parts.txt (per-chunk sha256) and a README, uploads every
-# object to the locked bucket under transcripts/, streams each one back and
+# object to the locked bucket under transcripts/seal-<stamp>/, streams each one back and
 # digest-matches it, reassembles the re-downloaded chunks and matches the
 # whole-tar digest, deletes the re-downloads, and re-reads the bucket lock.
 # No digest match, no done — the script exits non-zero at the first mismatch.
@@ -18,7 +18,8 @@ DAY=""; DRY=0
 for a in "$@"; do case "$a" in --dry-run) DRY=1;; *) DAY="$a";; esac; done
 DAY="${DAY:-$(date -u +%Y%m%d)}"
 BUCKET="julian-fireproof-archive"
-PREFIX="transcripts"
+STAMP=$(date -u +%Y%m%dT%H%MZ)
+PREFIX="transcripts/seal-$STAMP"   # one prefix per seal; a same-day re-seal never collides with locked objects
 BK="$HOME/julian-stream-backups"
 TAR="$BK/julian-transcripts-mac-local-$DAY.tar.gz"
 MAN="$BK/transcript-archive-MANIFEST-$DAY-mac-local.txt"
