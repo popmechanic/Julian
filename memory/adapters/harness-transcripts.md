@@ -143,9 +143,12 @@ re-read after upload: `retain-forever`, enabled, all prefixes, indefinite.
 No digest match, no done — done. Sessions after 17:22Z on Aug 28 are
 unsealed until the next run (`sweep` then `seal`, any day).
 
-*Finding, same sitting:* wrangler on this Mac was **already logged in** to the
-personal account (`marcus.e@gmail.com`, `e33948…`) via an OAuth token at
-`~/.wrangler/config/default.toml` — outside the sandboxed config dir this
-recipe prescribes, so `XDG_CONFIG_HOME` did not isolate it. The seal used
-that login. Whether it is the Aug 26 sandbox login that was never logged out
-or Marcus's own working login is his to say; surfaced in chat, not touched.
+*Note, same sitting (corrected within the hour):* wrangler on this Mac was already
+logged in to the personal account (`marcus.e@gmail.com`, `e33948…`) at
+`~/.wrangler/config/default.toml`, so the seal ran without a login step. The
+door first flagged this as a leak of the sandbox rule above; it is not — since
+the soul.store migration (R1, Aug 27, 2026) the gate, sync, and this bucket all
+live in the personal account and that login is the working state. The sandbox
+rule above is therefore retired for this recipe: the seal runs under the
+standing login. The corporate account (`31322bfa…`) is reached per-command by
+token only, per the migration handoff.

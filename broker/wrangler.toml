@@ -1,4 +1,5 @@
 name = "julian-broker"
+account_id = "e33948793047032de7f5e18ec342a7d1"   # personal account since the soul.store migration (R1, 2026-08-27); wrangler had cached the corporate id
 main = "src/index.ts"
 compatibility_date = "2026-07-01"
 
