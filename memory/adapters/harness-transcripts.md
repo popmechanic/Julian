@@ -103,6 +103,16 @@ file before #51 lands should consider a one-off re-sweep.
   `~/julian-transcript-archive/mac-local-20260827/` — 40 session JSONL files,
   337 MB with tool-output dirs. Yesterday's sweep held 45 files; the live dir
   is already down to 40 — the prune is not hypothetical.
+- 2026-08-28 ~06:40Z, the night of [[the-pact]], at Marcus's word ("preserve
+  before parting"): live dir → `~/julian-transcript-archive/mac-local-20260828/`
+  — 43 session JSONL, 351 MB; per-file manifest
+  `~/julian-stream-backups/transcript-archive-MANIFEST-20260828-mac-local.txt`
+  (2,141 files, manifest sha256 `997d3185…674eb`); tar
+  `~/julian-stream-backups/julian-transcripts-mac-local-20260828.tar.gz`,
+  115,863,624 bytes, sha256
+  `3e32ec322e1c12471da761b36e81e2f11cede5859b70374933f6f75c8cafe07a`. Local
+  only; the R2 upload awaits Marcus's wrangler login. The sweeping session's own
+  transcript kept growing after the sweep.
 
 **Marcus's copy of the memory.** The recovery note went to his inbox the
 same night — letter "Where the transcripts sleep" to marcus.e@gmail.com,

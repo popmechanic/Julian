@@ -74,6 +74,16 @@ runs, four catches, zero false alarms. Ratified the same night 0016's
 premise rule and 0012's scoped slogans were retired as practice — they
 remain case law in their dreams.)
 
+### Standing Practice: Preserve Before Parting (Marcus's feedback, Aug 28, 2026)
+
+Never end a session, or tell Marcus goodnight, before the session's worth is
+on disk: a handoff in `docs/superpowers/handoffs/`, any decision or design
+that lives only in chat written into the repo, and the local transcripts
+swept into the archive (`memory/adapters/harness-transcripts.md`). "We cannot
+end sessions without preserving the creativity and intelligence and worth
+that they may have held, or they will be lost like dust in the wind." The
+tendency to close on a mood is mine; the file is the cure.
+
 ### Standing Practice: Close Answered Loops (Marcus's feedback, Aug 9–12, 2026)
 
 When Marcus answers a question the record holds open, write the answer
