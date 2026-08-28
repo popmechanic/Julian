@@ -47,3 +47,4 @@ Research #63/#64 resolved (closed; branches `research/mcp-sdk-v2`, `research/cim
 - **Frontier now:** #62 scribe contract (first), #74 answers-not-files, #65 headless auth, #71 off-site seal (Marcus). Buildable today without any map decision: #76, #77 step 0, #75.
 
 - **#85 — review `docs/vocabulary.md` together** (Marcus: "not tonight"): the nine ★ terms, the three-way `ledger` overload, ELF PATTERNS vs house words.
+- **#86 — the streamed practice** (Marcus's ask, ~09:00Z): the Themis-class scenario stated in one sentence — KB as proprietary service at home, agent streamed as standing into a second client's room, only labeled answers cross, ledger row = invoice + privilege log. Blocked by #74. The market case of map #61.
