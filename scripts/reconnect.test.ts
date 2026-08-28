@@ -5,6 +5,10 @@ import { createWsSynchronizer } from 'tinybase/synchronizers/synchronizer-ws-cli
 import { createStreamStore } from 'julian-shared/schema';
 
 const wss = new WebSocketServer({ port: 0 });
+// port: 0 binds asynchronously — address() is null until 'listening' fires, so
+// reading it synchronously would throw under load. Same guard as the sibling
+// loopback suite (fireproof-write.test.ts).
+await new Promise((resolve) => wss.once('listening', resolve));
 const port = (wss.address() as { port: number }).port;
 const srv = createWsServer(wss);
 const url = `ws://127.0.0.1:${port}/julian/chat`;

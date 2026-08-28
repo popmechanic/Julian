@@ -13,6 +13,7 @@ export default defineConfig({
       'fireproof-map.test.ts',
       'fireproof-write.test.ts',
       'stream-import-fireproof.test.ts',
+      'reconnect.test.ts',
     ],
   },
 });
