@@ -376,6 +376,44 @@ describe('JulianSyncDO', () => {
       });
     });
 
+    // The two tests above call the override directly; this one proves the
+    // WIRE — that tinybase's WsServerDurableObject actually invokes it. A
+    // malformed frame reaches the DO through the real message path: the base
+    // class's payload decoder rejects it, calls onIgnoredError (our class-only
+    // log), and then closes the sender with 1007 (9.3.0+ behaviour). On 9.2.0,
+    // where no such hook exists, this test fails — which is the point.
+    test('the base class invokes the override on a malformed frame, then closes 1007', async () => {
+      await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
+        const pair = new WebSocketPair();
+        const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
+        (instance as unknown as { ctx: DurableObjectState }).ctx.acceptWebSocket(server, [`t-${crypto.randomUUID()}`, 'julian/chat']);
+        client.accept();
+        const closed = new Promise<{ code: number; reason: string } | null>((resolve) => {
+          const timer = setTimeout(() => resolve(null), 2_000);
+          client.addEventListener('close', (evt) => {
+            clearTimeout(timer);
+            const e = evt as unknown as { code: number; reason: string };
+            resolve({ code: e.code, reason: e.reason });
+          });
+        });
+        const logged: string[] = [];
+        const orig = console.warn;
+        console.warn = (...args: unknown[]) => { logged.push(args.map(String).join(' ')); };
+        try {
+          await instance.webSocketMessage(server, 'not a sync-protocol frame');
+        } finally {
+          console.warn = orig;
+        }
+        const line = logged.find((l) => l.includes('[sync-do] ignored protocol error'));
+        expect(line).toBeDefined();                            // the hook fired through the base class
+        expect(line).toContain('Error');                       // the class travels
+        expect(line).not.toContain('not a sync-protocol frame'); // the payload never does
+        const close = await closed;
+        expect(close).not.toBeNull();                          // and the sender was disconnected
+        expect(close!.code).toBe(1007);
+      });
+    });
+
     test('a non-Error value logs a class name, not its stringified content', async () => {
       await runInDurableObject(stub(), async (instance: JulianSyncDO) => {
         const logged: string[] = [];
