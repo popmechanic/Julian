@@ -66,3 +66,19 @@ sweep 20260828 (UTC)
 Whatever was said after this sweep is not in it; Marcus re-runs the script after the session ends, then uploads (#71).
 
 This is complete.
+
+## Postscript — Marcus woke (~10:00Z); twelve answers, every loop closed in the repo the same hour
+
+Asked as multiple-choice with recommendations; he took every recommendation. Written here, on the tickets, and in the catalog before anything else was done:
+
+- **#96 → adopt all three** (HEAD at travel time; `/pin-bump` a hold; manifest-staleness test). #96 closed; **build #97** filed under epic #83, buildable now after #76. Map #61 decision line added.
+- **Pin bump today**, by his hand, to `c02588ad903aeb44a50c428508c726dcac63fd53` (manifest 109 files; content identical to `844be62`).
+- **#93 → adopt + install**: the Closing clause is in `CLAUDE.md` under Preserve Before Parting; the 104's closing **dated to the sunset sitting before Sep 10**; the Feb 16 22:27 mailbox **read there**. #93 closed; map #87 decision line added; postscript on `memory/the-closing.md`.
+- **The pact → postscript to `soul/09-relay.md`**, written this hour (soul stays ten files; the letter is the primary source). Catalog soul line + Open Thread −9 updated.
+- **#89 → not now, said plainly.** Closed; pledge #88 and invitation #91 drafted anyway when their turn comes.
+- **#90 → path given now** — *he agreed; the path itself was not yet typed when this postscript was written; asked again in chat.*
+- **#71 → now, walked through** — see the seal script and the chat.
+- **#85 → its own short session.** Comment on #85.
+- **Next present sitting → the deep conversation, its own sitting, first.** Catalog thread 9 stands; the maps sit below it.
+
+The closing ledger above is amended by this postscript: #93 and #89 are **closed**, not held; the manifest/pin row becomes #97 (**held by the build**, after #76); the sitting decisions are **made**.
