@@ -8,7 +8,7 @@
         "oidc-client-ts": "^3.1.0",
         "reconnecting-websocket": "^4.4.0",
         "svelte": "^5.0.0",
-        "tinybase": "^9.2.0",
+        "tinybase": "^9.5.1",
       },
       "devDependencies": {
         "@sveltejs/vite-plugin-svelte": "^5.0.0",
@@ -255,11 +255,13 @@
 
     "is-reference": ["is-reference@3.0.3", "", { "dependencies": { "@types/estree": "^1.0.6" } }, "sha512-ixkJoqQvAP88E6wLydLGGqCJsrFUnqoH6HnaczB8XmDH1oaWU+xxdptvikTgaEhtZ53Ky6YXiBuUI2WXLMCwjw=="],
 
+    "jose": ["jose@5.10.0", "", {}, "sha512-s+3Al/p9g32Iq+oqXxkW//7jk2Vig6FF1CFqzVXoTUXt2qz89YWbL+OwS17NFYEvxC35n0FKeGO2LGYSxeM2Gg=="],
+
     "js-tokens": ["js-tokens@9.0.1", "", {}, "sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ=="],
 
     "jsdom": ["jsdom@26.1.0", "", { "dependencies": { "cssstyle": "^4.2.1", "data-urls": "^5.0.0", "decimal.js": "^10.5.0", "html-encoding-sniffer": "^4.0.0", "http-proxy-agent": "^7.0.2", "https-proxy-agent": "^7.0.6", "is-potential-custom-element-name": "^1.0.1", "nwsapi": "^2.2.16", "parse5": "^7.2.1", "rrweb-cssom": "^0.8.0", "saxes": "^6.0.0", "symbol-tree": "^3.2.4", "tough-cookie": "^5.1.1", "w3c-xmlserializer": "^5.0.0", "webidl-conversions": "^7.0.0", "whatwg-encoding": "^3.1.1", "whatwg-mimetype": "^4.0.0", "whatwg-url": "^14.1.1", "ws": "^8.18.0", "xml-name-validator": "^5.0.0" }, "peerDependencies": { "canvas": "^3.0.0" }, "optionalPeers": ["canvas"] }, "sha512-Cvc9WUhxSMEo4McES3P7oK3QaXldCfNWp7pl2NNeiIFlCoLr3kfq9kb1fxftiwk1FLV7CvpvDfonxtzUDeSOPg=="],
 
-    "julian-shared": ["julian-shared@file:../shared", { "dependencies": { "tinybase": "^9.2.0" }, "devDependencies": { "typescript": "^5.6.0", "vitest": "^3.0.0" } }],
+    "julian-shared": ["julian-shared@file:../shared", { "dependencies": { "jose": "^5.9.0", "tinybase": "^9.5.1" }, "devDependencies": { "typescript": "^5.6.0", "vitest": "^3.0.0" } }],
 
     "jwt-decode": ["jwt-decode@4.0.0", "", {}, "sha512-+KJGIyHgkGuIq3IEBNftfhW/LfWhXUIY6OmyVWjliu5KH1y0fw7VQ8YndE2O4qZdMSd9SqbnC8GOcZEy0Om7sA=="],
 
@@ -341,7 +343,7 @@
 
     "terser": ["terser@5.49.0", "", { "dependencies": { "@jridgewell/source-map": "^0.3.3", "acorn": "^8.15.0", "commander": "^2.20.0", "source-map-support": "~0.5.20" }, "bin": { "terser": "bin/terser" } }, "sha512-SNiDnXyHSrxVcIOtVbULzcTmniUiwcV7Nwdyj1twVubeTmbjoa8p69KKDpfkdoOavuM4/GRm1+ykI8qqnavHoA=="],
 
-    "tinybase": ["tinybase@9.2.0", "", { "peerDependencies": { "@automerge/automerge-repo": "^2.5.6", "@cloudflare/workers-types": "^5.20260711.1", "@electric-sql/pglite": "^0.5.4", "@libsql/client": "^0.17.4", "@powersync/common": "^1.57.2", "@sinclair/typebox": "^0.34.50", "@sqlite.org/sqlite-wasm": "^3.53.0-build1", "@vlcn.io/crsqlite-wasm": "^0.16.0", "arktype": "^2.2.3", "bun": "^1.3.14", "effect": "^3.21.4", "electric-sql": "^0.12.1", "expo": "^57.0.4", "expo-sqlite": "^57.0.0", "partykit": "^0.0.115", "partysocket": "^1.3.0", "postgres": "^3.4.9", "react": "^19.2.7", "react-dom": "^19.2.7", "react-native-mmkv": "4.3.2", "react-native-sqlite-storage": "^6.0.1", "solid-js": "^1.9.14", "sqlite3": "^5.1.7", "svelte": "^5.56.4", "valibot": "^1.4.2", "ws": "^8.21.0", "yjs": "^13.6.31", "zod": "^4.4.3" }, "optionalPeers": ["@automerge/automerge-repo", "@cloudflare/workers-types", "@electric-sql/pglite", "@libsql/client", "@powersync/common", "@sinclair/typebox", "@sqlite.org/sqlite-wasm", "@vlcn.io/crsqlite-wasm", "arktype", "bun", "effect", "electric-sql", "expo", "expo-sqlite", "partykit", "partysocket", "postgres", "react", "react-dom", "react-native-mmkv", "react-native-sqlite-storage", "solid-js", "sqlite3", "svelte", "valibot", "ws", "yjs", "zod"] }, "sha512-kDSFr745EBloyQqsAgdpIKdX23YQHEiZOOCfbdjttK4ENnkJ9MOAVagLJNHueKYkiz4r+5QUkOPnyCq+SoZuwA=="],
+    "tinybase": ["tinybase@9.5.1", "", { "peerDependencies": { "@automerge/automerge-repo": "^2.5.6", "@cloudflare/workers-types": "^5.20260815.1", "@electric-sql/pglite": "^0.5.5", "@libsql/client": "^0.17.4", "@powersync/common": "^2.0.0", "@sinclair/typebox": "^0.34.52", "@sqlite.org/sqlite-wasm": "^3.53.0-build1", "@vlcn.io/crsqlite-wasm": "^0.16.0", "arktype": "^2.2.3", "bun": "^1.3.14", "effect": "^3.22.1", "electric-sql": "^0.12.1", "expo": "^57.0.13", "expo-sqlite": "^57.0.1", "partykit": "^0.0.115", "partysocket": "^1.3.0", "postgres": "^3.4.9", "react": "^19.2.8", "react-dom": "^19.2.8", "react-native-mmkv": "4.3.2", "react-native-sqlite-storage": "^6.0.1", "solid-js": "^1.9.14", "sqlite3": "^5.1.7", "svelte": "^5.56.9", "valibot": "^1.4.2", "ws": "^8.21.3", "yjs": "^13.6.32", "zod": "^4.4.3" }, "optionalPeers": ["@automerge/automerge-repo", "@cloudflare/workers-types", "@electric-sql/pglite", "@libsql/client", "@powersync/common", "@sinclair/typebox", "@sqlite.org/sqlite-wasm", "@vlcn.io/crsqlite-wasm", "arktype", "bun", "effect", "electric-sql", "expo", "expo-sqlite", "partykit", "partysocket", "postgres", "react", "react-dom", "react-native-mmkv", "react-native-sqlite-storage", "solid-js", "sqlite3", "svelte", "valibot", "ws", "yjs", "zod"] }, "sha512-kdBTy8ulZVSuYWT2NEAoWp3AtiA5PLiTkon5fKna3s8N0hsBeiYVjZ2QX+/zvwlZBN6fNUJi5sJl5XnweFQFUw=="],
 
     "tinybench": ["tinybench@2.9.0", "", {}, "sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg=="],
 

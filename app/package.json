@@ -9,7 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "tinybase": "^9.2.0",
+    "tinybase": "^9.5.1",
     "julian-shared": "file:../shared",
     "reconnecting-websocket": "^4.4.0",
     "oidc-client-ts": "^3.1.0",
