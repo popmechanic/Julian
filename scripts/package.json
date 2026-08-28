@@ -6,7 +6,7 @@
     "test": "vitest run && bun test package-manifest.test.ts fireproof-decode.test.ts fireproof-map.test.ts fireproof-write.test.ts stream-import-fireproof.test.ts"
   },
   "dependencies": {
-    "tinybase": "^9.2.0",
+    "tinybase": "^9.5.1",
     "julian-shared": "file:../shared",
     "ws": "^8.18.0",
     "@ipld/car": "^5.4.0",
