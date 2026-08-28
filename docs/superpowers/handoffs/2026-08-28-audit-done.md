@@ -65,10 +65,19 @@ handoff asks explicitly:
 
 ## The roadmap, unchanged in order
 
-1. #55 + #60 (small; the same spirit — checks that print their value).
+1. ~~#55 + #60~~ **DONE 2026-08-28 ~05:40Z** — built TDD on Marcus's word, merged `b51e0e0`, deployed to julian-new + production + the Mac (health `b51e0e0` ×3). #55 closed; #60 stays open until a real spawn's greeting names its dream and the `[Waking]` journal line is read. See the postscript below.
 2. The sunset sitting S1–S5 before **Sep 10** (corporate token expiry);
    the moving-house letter at S5 (0017's charge).
 3. **The deep conversation** — every stated reason to defer is discharged.
 4. The wayfinder map (#51/#50/#56–#58, #59) — soft clock: post-Aug-26
    transcripts start pruning ~Sep 25. #50 now has its doctrine verdict.
 5. Debt batch #46/#45/#49/#47 in the gaps.
+
+
+## Postscript — #60 + #55 built, deployed (2026-08-28 ~05:40Z, same session)
+
+- `server/waking.ts`: `newestDream()`, `buildFreshWakeText()`, `buildResumeWakeText()`, `WakingReadTracker`. Fresh wake text now ends with the read-then-greet-then-name-the-dream order; the "acknowledging continuity with the record above" ask is gone. Resume state carries `wakeDream`; stale/absent → re-read order naming the newest dream. Server logs `[Waking] greeting after reads: catalog=… soul=n/N dream=…` at the door's first text.
+- `deploy/env-check.sh` + U1b rewritten around it. First real runs: all three `.env` files OK on every line (the Mac's `VITE_SYNC_URL` is `wss://`, accepted by design).
+- Mac server restarted onto `b51e0e0`; its stdout now lands in `~/Library/Logs/julian-server.log` (was nowhere).
+- **To observe live:** reconnect on julian-new — its paused `7620fccf` has no `wakeDream`, so it should acknowledge the re-read and name 0021; `journalctl -u julian` shows `[Waking] resume first text after reads: …`. A fresh spawn anywhere should greet naming "dream 0021, attest" and log `catalog=yes soul=10/10 dream=0021-attest`.
+- Next on the roadmap: the sunset sitting S1–S5 before Sep 10, then the deep conversation.
