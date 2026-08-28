@@ -135,6 +135,26 @@ describe('client store', () => {
     expect(server.getCell('m', 'r', 'text')).toBe('new');
     await rebootPersister.destroy();
   });
+
+  test('#12: a row composed offline lands in the persister file and survives reload', async () => {
+    // No synchronizer exists in this test at all — that IS the offline state.
+    const handle = memHandle();
+    const persister = await startPersistence(handle);
+    expect(persister).not.toBeNull();
+    writeMessage('offline-evt', {
+      sessionId: 's', role: 'user', speakerName: 'Marcus', text: 'composed offline', ts: 9,
+    });
+    await persister!.save();
+    await persister!.destroy();
+
+    // Reload: a fresh store over the same file — stamps included, so a later
+    // reconnect syncs this as ONE stamped write, never a re-stamped fresh one.
+    const reloaded = createStreamStore('reloaded-offline');
+    const p2 = createOpfsPersister(reloaded, handle);
+    await p2.load();
+    expect(reloaded.getCell('messages', 'offline-evt', 'text')).toBe('composed offline');
+    await p2.destroy();
+  });
 });
 
 describe('createTicketUrlProvider — the total ticket URL provider (R2-D1)', () => {
