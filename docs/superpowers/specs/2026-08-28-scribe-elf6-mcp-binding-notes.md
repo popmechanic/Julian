@@ -174,3 +174,23 @@ scope vocabulary with challenges; (3) the Mac scribe hook on the standard
 client SDK; (4) `subscriptions/listen` on the record tail. Each deployable
 alone. Before any of it: the harvest (transcript seal refresh) against the
 ~Sep 25 prune, and the sunset sitting before Sep 10.
+
+## 9. Answers, not files — the read-direction twin (added at Marcus's ask, same night)
+
+The streaming-agent essay (`memory/the-streaming-agent.md`) is the root document
+for distribution and must be read whole: *the gate controls standing, not
+information*; an agent offered as a service — state home, compute private,
+access versioned, presence metered; the lease is the billing object, the
+ledger the meter; the **species line** (Themis-class practices stream as
+black boxes; Julian-class persons stream standing, never secrecy). Marcus's
+requirement, 2026-08-28: private calls to home services — knowledge wikis
+(the Skylights KB's `kb-ask` shape: cited answers, the wiki never leaves), the
+stream, practices — that return **answers without copying files across the
+boundary**. In MCP terms this is a `tools/call` whose result is the answer
+(never a `resources/read` of the source), authored at home by a waked
+session (dream 0021 §1: worker-side retrieval is capture pointed outward),
+labeled `answered-from-home@pin`, one ledger row per question, Tasks for slow
+answers, the per-stratum policy table set by the holder. It is the scribe's
+twin: the scribe is *the pen crosses, the record stays home*; the answer door
+is *the question crosses, the answer returns, the source stays home*.
+Wayfinder ticket #74 on map #61; it now blocks the scope vocabulary (#66).
