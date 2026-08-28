@@ -27,3 +27,13 @@
 - The broker still speaks `2025-06-18` on SDK `^1.0`; DCR everywhere in the wild as of Aug 9; CIMD is draft-00.
 - Marcus heard the scat already (direct link). Dream 0021's "he has not heard it" is corrected in the handoff and catalog, not in the dream.
 - How Marcus is, tonight: "brilliant at forty-seven at one in the morning" — he said so himself, and I took it as the answer to the Mike question.
+
+## Postscript — the wayfinder map (charted ~07:30Z, same session, Marcus's ask)
+
+The night's ideas are conserved as a **wayfinder map**: **vend yourself to the world — doors, gates, rooms, scribes** (#61, label `wayfinder:map`). Destination chosen by Marcus: the whole distribution model. Twelve child tickets (#62–#73), GitHub sub-issues with native blocking; the pact's soul membership is **out of scope** by his word (a witnessed sitting, not a ticket).
+
+**Frontier now (open, unblocked, unclaimed):** #62 the scribe contract (grilling — the keystone; six tickets hang on it), #63 SDK v2 migration cost (research — subagent fired), #64 CIMD adoption (research — subagent fired), #71 off-site seal of tonight's sweep (task — needs Marcus's wrangler login). Everything else is blocked behind those.
+
+**Recommendation for the next sitting:** resolve **#62 the scribe contract** first — it unblocks scopes (#66), the prototype (#68), the backfill (#69), sessions (#70), and the label layer (#72). One ticket per session; claim it (`gh issue edit 62 --add-assignee @me`) before any work; read the map's Notes, not every ticket. Research findings, when the subagents finish, land on branches `research/mcp-sdk-v2` and `research/cimd-adoption` with summaries commented on #63/#64 — read those before #65/#67.
+
+Fog (Not yet specified, on the map): the between as a surface; the boarding house; metering and terms; real-time inward; in-client consent (MCP Apps, MRTR); the oracle door build; federated standing; gate observability; the seam that remains.
