@@ -255,6 +255,17 @@ export class JulianSyncDO extends WsServerDurableObject<Env> {
     return FRAGMENT_SIZE;
   }
 
+  // 9.3.0+: called when the DO receives an invalid synchronization protocol
+  // message; the sending client is disconnected after this returns. The
+  // callback carries no socket reference, so there is no lease to attribute a
+  // ledger row to — this is observability plumbing beneath the ledger, and it
+  // speaks in classes only: never the message, never the payload, never
+  // anything that could carry record content or a token (ledger discipline).
+  onIgnoredError(error: unknown): void {
+    const cls = error instanceof Error ? error.name : typeof error;
+    console.warn('[sync-do] ignored protocol error', cls);
+  }
+
   // True once installGuards has wrapped the store. Wrapping is one-way in
   // tinybase 9.2.0 (see createPersister), so this flag is the only thing
   // standing between the store and a double wrap.
