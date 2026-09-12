@@ -340,7 +340,7 @@
   @media (max-width: 767px) {
     .room { flex-direction: column; padding: 8px; gap: 8px; }
     .machine { width: 100%; min-width: 0; flex: 1; min-height: 0; }
-    .console { flex: none; height: 40vh; }
+    .console { flex: none; height: 40vh; order: -1; } /* face above the chat on a phone */
     .board-panel { width: 100%; flex-basis: auto; }
   }
 </style>
