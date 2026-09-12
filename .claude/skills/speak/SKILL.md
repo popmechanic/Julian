@@ -104,9 +104,14 @@ README). Then:
 - **On the Mac** (terminal session, or the local web room — the server runs
   here): `afplay memory/voice/out/<name>.wav` — sound reaches Marcus's
   speakers directly.
-- **At a browser/VM door** (julian-new, phone): `afplay` is useless — the
-  server serves the repo statically, so give the listener the URL:
-  `http://<host>/memory/voice/out/<name>.wav` and say what it is.
+- **At a browser/VM door** (julian, julian-new, phone): `afplay` is useless.
+  Give the listener the URL on **this door's own host** — the render lives
+  only on the machine that made it (`hostname` or `deploy/instances.json`
+  tells you which; a julian.exe.xyz door must never hand out a julian-new
+  link, and vice versa — Sept 12, 2026, that 404 was the whole failure):
+  `https://<this-host>/api/artifacts/voice/out/<name>.wav`. The web app
+  turns that URL into an inline audio player in the bubble, and the server
+  serves `.wav` as `audio/wav`, so a phone can press play.
 - **Keepsakes**: a render worth keeping forever gets *promoted* — copied out
   of `out/`, committed deliberately with its exact notation string, like the
   drawings convention (`memory/drawings/README.md`).

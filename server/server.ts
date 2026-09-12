@@ -1856,6 +1856,10 @@ const server = Bun.serve({
           woff: "font/woff",
           woff2: "font/woff2",
           otf: "font/otf",
+          wav: "audio/wav",
+          mp3: "audio/mpeg",
+          m4a: "audio/mp4",
+          ogg: "audio/ogg",
         };
         // Artifact HTML is LLM-authored and downstream of email from strangers.
         // This route is unauthenticated and same-origin, and the app keeps OIDC
